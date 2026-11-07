@@ -54,11 +54,15 @@ for (const file of resolveEnvFiles()) {
   loadDotenv({ path: file, override: false });
 }
 
-/** 迁移目录：编译后位于 dist/infra/database/migrations */
+/** 迁移目录：编译后位于 dist/infra/database/migrations。
+ *  判定依据是 __dirname 是否处于 dist（而非「migrations 目录是否存在」）——
+ *  源码树里该目录同样存在但只含 .ts；旧判定在 ts-node 下取 *.js 通配，
+ *  匹配 0 个文件，CLI 静默报「No migrations are pending」（联调现场实证，
+ *  数据库除 typeorm_migrations 外零表却显示无待执行迁移）。 */
 function resolveMigrationGlob(): string {
-  const distGlob = path.join(__dirname, 'migrations/*.js');
-  const srcGlob = path.join(__dirname, 'migrations/*.ts');
-  return fs.existsSync(path.join(__dirname, 'migrations')) ? distGlob : srcGlob;
+  const inDist = __dirname.split(path.sep).includes('dist');
+  const ext = inDist ? 'js' : 'ts';
+  return path.join(__dirname, `migrations/*.${ext}`);
 }
 
 export function buildDataSourceOptions(): DataSourceOptions {
