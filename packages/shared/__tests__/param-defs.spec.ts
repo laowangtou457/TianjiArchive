@@ -97,6 +97,14 @@ describe('PR-P8 生效模式边界：borrow 类恒为 judgment，结构上不可
 });
 
 describe('assertParamDefs 拦截误配：把 borrow 改成直读必须抛错', () => {
+  // 断言形态统一为「类型 + 内容」双断言（TESTING-GUIDELINES §2）：
+  //   ① `toThrow(ParamDefConfigError)` 锁定错误**类型**——保证这不是偶发的
+  //      TypeError / 运行时异常被误当成"自检生效"；
+  //   ② `toThrow(/正则/)` 锁定错误**内容**——保证拦的是**这一类**误配，
+  //      而不是碰巧被另一条规则拦下（否则删掉目标规则用例仍绿）。
+  // 只认内容不认类型，将来 assertParamDefs 改成"聚合错误返回"时会静默失效；
+  // 只认类型不认内容，则某条规则被删后仍可能因别处抛同类型错误而假绿。
+
   it('borrow + read-immediate → 抛 ParamDefConfigError 且提示 D-1', () => {
     const bad = baseDef({ effectiveMode: ParamEffectiveMode.READ_IMMEDIATE });
     expect(() => assertParamDefs([bad])).toThrow(ParamDefConfigError);
@@ -106,27 +114,36 @@ describe('assertParamDefs 拦截误配：把 borrow 改成直读必须抛错', (
   it('borrow + retention → 同样拒绝（判定生效与存量失效不可混用）', () => {
     const bad = baseDef({ effectiveMode: ParamEffectiveMode.RETENTION });
     expect(() => assertParamDefs([bad])).toThrow(ParamDefConfigError);
+    // 文案形如「xxx 的 grp「borrow」不允许 effectiveMode「retention」（允许的分组：...）」
+    expect(() => assertParamDefs([bad])).toThrow(/不允许\s*effectiveMode/);
+    // 必须明确指向 grp×mode 组合违规，而非被别处规则碰巧拦下
+    expect(() => assertParamDefs([bad])).toThrow(/borrow/);
   });
 
   it('security + judgment → 拒绝（安全参数不允许有缓存延迟）', () => {
     const bad = baseDef({ grp: 'security', effectiveMode: ParamEffectiveMode.JUDGMENT });
     expect(() => assertParamDefs([bad])).toThrow(ParamDefConfigError);
+    expect(() => assertParamDefs([bad])).toThrow(/不允许\s*effectiveMode/);
+    expect(() => assertParamDefs([bad])).toThrow(/security/);
   });
 
-  it('key 重复 → 抛错', () => {
+  it('key 重复 → 抛 ParamDefConfigError 且提示重复', () => {
+    expect(() => assertParamDefs([baseDef(), baseDef()])).toThrow(ParamDefConfigError);
     expect(() => assertParamDefs([baseDef(), baseDef()])).toThrow(/重复/);
   });
 
-  it('int 型缺 min/max → 抛错', () => {
+  it('int 型缺 min/max → 抛 ParamDefConfigError 且提示 min/max', () => {
     const bad = baseDef({ min: undefined, max: undefined });
+    expect(() => assertParamDefs([bad])).toThrow(ParamDefConfigError);
     expect(() => assertParamDefs([bad])).toThrow(/min\/max/);
   });
 
-  it('int 型默认值越界 → 抛错', () => {
+  it('int 型默认值越界 → 抛 ParamDefConfigError 且提示不在区间', () => {
+    expect(() => assertParamDefs([baseDef({ default: '999' })])).toThrow(ParamDefConfigError);
     expect(() => assertParamDefs([baseDef({ default: '999' })])).toThrow(/不在区间/);
   });
 
-  it('enum 型默认值不在枚举内 → 抛错', () => {
+  it('enum 型默认值不在枚举内 → 抛 ParamDefConfigError 且提示不在枚举', () => {
     const bad = baseDef({
       type: 'enum',
       default: 'nope',
@@ -134,6 +151,7 @@ describe('assertParamDefs 拦截误配：把 borrow 改成直读必须抛错', (
       min: undefined,
       max: undefined,
     });
+    expect(() => assertParamDefs([bad])).toThrow(ParamDefConfigError);
     expect(() => assertParamDefs([bad])).toThrow(/不在枚举/);
   });
 });
