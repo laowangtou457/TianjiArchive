@@ -744,7 +744,7 @@ Round 3 前：`PARAM_KEY` 硬编码 5 个 key 与架构 §4.3 不一致。
 | 权限变更入口完整性 | ✅ `PERMISSION_MUTATIONS` 单一源（8+1 排除）+ 测试级一致性守卫 20 条 + **独立 CI 静态脚本**（R1 正向/R2 反向/R3 自证，`pnpm ci:check` EXIT=0，反向变异可抓漏） |
 | 更名（泰坦→天玑） | ✅ QA 五点验收通过：路径/包名/零残留/全量复跑/shared 恢复文件抽查 + build/typecheck 独立复跑 |
 | 版本控制 | ✅ git 基线 `902f114` 可用，工作区仅有本报告与 TESTING-GUIDELINES 的文档改动 |
-| 真实中间件联调 | 🟡 **进行中**（Docker 已启动，联调轮执行中，2026-11-07）—— 现场已发现并修复 2 个装配层缺陷：`4118d48`（AccessModule 标 @Global 却未入模块树，容器启动即崩；418 条单测手工构造 service、从不 boot 应用，装配层零覆盖漏检）与 `784db23`（BackupModule 未 import ParamModule，同一根因家族）+ gitignore 无锚点误伤两目录从未入库已补录；MinIO 官方归档停服已摘除（`3e6c5a6` 临时覆盖）。**档号 200×10 压测与正式联调结论待执行后更新** |
+| 真实中间件联调 | 🟡 **进行中**（Docker 已启动，联调轮执行中，2026-11-07）—— 现场已发现并修复 2 个装配层缺陷：`4118d48`（AccessModule 标 @Global 却未入模块树，容器启动即崩；当时 418 条单测手工构造 service、从不 boot 应用，装配层零覆盖漏检）与 `784db23`（BackupModule 未 import ParamModule，同一根因家族）+ gitignore 无锚点误伤两目录从未入库已补录；MinIO 官方归档停服已摘除（`3e6c5a6` 临时覆盖）。**档号 200×10 压测与正式联调结论待执行后更新** |
 
 ### **最终判定：PASS_WITH_RISKS**
 
