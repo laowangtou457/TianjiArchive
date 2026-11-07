@@ -309,6 +309,9 @@ rm -rf volumes/{postgres,wal_archive,esdata,minio,redis}
 | 症状 | 原因 | 处置 |
 |---|---|---|
 | `docker version` 报 `error during connect` | WSL2 未初始化 | 打开 Docker Desktop 等 Engine running |
+| Git Bash 里 `docker: command not found`，或 build 报 `docker-credential-desktop: executable file not found in %PATH%` | Docker Desktop 的 bin 目录（`C:\Program Files\Docker\Docker\resources\bin`）未进 Git Bash PATH | 命令前 `export PATH="/c/Program Files/Docker/Docker/resources/bin:$PATH"`，或改用 PowerShell；不改系统环境变量 |
+| api 构建报 `Cannot find module '.../@nestjs/cli/bin/nest.js'`（症状与依赖缺失一致） | 无 `.dockerignore` 时宿主 node_modules（Windows 绝对路径符号链接）被 COPY 进镜像、覆盖容器内 Linux 版依赖 | 确认 `.dockerignore` 存在且含 `**/node_modules`；`docker compose build --no-cache api` |
+| `pull access denied ... minio/minio ... repository does not exist` | MinIO 开源版已归档停服（dl.min.io 410，Hub 仓库移除），非网络故障 | 联调用 `docker-compose.nominio.override.yml` 摘除；生产对象存储选型须重议（见该文件头注释与联调报告遗留项） |
 | `port is already allocated` | 宿主机端口被占 | 改 `.env` 里 `ES_EXPOSED_PORT` / `WEB_PORT` / `API_PORT` |
 | ES 反复重启，日志 `AccessDeniedException` | `volumes/esdata` 权限 | 见第一节的 chown 命令 |
 | ES healthy 但 `_analyze` 报 `unknown analyzer` | IK 未装上 | `docker compose build --no-cache elasticsearch`，看构建日志里 plugin install 是否成功 |
