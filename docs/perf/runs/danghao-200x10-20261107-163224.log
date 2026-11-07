@@ -1,0 +1,17 @@
+
+> tianji-archive-local@1.0.0 perf:danghao /app
+> pnpm --filter @tianji/api perf:danghao
+
+
+> @tianji/api@1.0.0 perf:danghao /app/apps/api
+> ts-node src/scripts/danghao-concurrency-bench.ts
+
+════════════════ 档号并发压测 ════════════════
+并发度=200，轮数=10，单轮取号=200
+
+全宗：WS；档号规则段数 5，重置周期 YEAR
+档号末段类型：ITEM（序号需可解析，否则第 7 项判据判负）
+/app/apps/api:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @tianji/api@1.0.0 perf:danghao: `ts-node src/scripts/danghao-concurrency-bench.ts`
+Command failed with signal "SIGTERM"
+ ELIFECYCLE  Command failed.

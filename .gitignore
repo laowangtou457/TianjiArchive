@@ -39,6 +39,11 @@ apps/cli-migrator/*.db
 
 # ---------------------------------------------------------------- 日志与系统文件
 *.log
+# 例外：压测原始输出是交付证据链，必须在干净克隆中可取到。
+# 全局 *.log 曾把 docs/perf/runs/ 四份现场日志全部吞掉，而 DEV-PROCESS.md §8.6
+# 与 QA-REPORT.md 明确引用它们（与已修的「gitignore 无锚点炸弹」同属
+# 「文档写了、仓库里没有」缺陷，故此处显式开白名单）。
+!docs/perf/runs/*.log
 npm-debug.log*
 pnpm-debug.log*
 .DS_Store
