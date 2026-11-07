@@ -246,12 +246,12 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api \
 
 **任何一轮出现 `duplicates: [...]` 或 `gaps > 0` 即失败**，脚本会打印具体档号。
 
-> ⚠️ **本压测没有延迟阈值**。`IS_PASS` 是布尔判据（五项全满足），
+> ⚠️ **本压测没有延迟阈值**。`IS_PASS` 是布尔判据（六项全满足），
 > 每轮 `elapsedMs` 只是观测值，**不参与判定**。把耗时当通过标准是常见误写。
 >
-> 另外脚本的 `IS_PASS` 判定式**不包含 `gaps`**（只含 duplicates），
-> 所以即使 `IS_PASS: YES`，也必须人眼确认每轮 `gaps` 为 0。
-> 报告模板 `docs/perf/PERF-TEMPLATE.md` 已把这条列为必填自检项。
+> 判据第 6 项 `totalGaps === 0` 约束**序号连续性**——没有它，序列跳号
+> （档号被"吃掉"但总数凑满）也会报 `IS_PASS: YES`。该项已修入脚本。
+> 报告模板 `docs/perf/PERF-TEMPLATE.md` 给了完整六项定义与构造反例。
 
 **正式压测请用模板出报告**：复制 `docs/perf/PERF-TEMPLATE.md` 为
 `docs/perf/YYYY-MM-DD-danghao-run<N>.md`，环境记录、原始输出、逐轮明细、边界声明缺一不可——

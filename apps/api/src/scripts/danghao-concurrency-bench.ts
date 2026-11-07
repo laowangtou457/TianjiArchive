@@ -161,27 +161,41 @@ async function main(): Promise<void> {
     const dbTotal = Number(dbRows[0]?.total ?? 0);
     const dbDistinct = Number(dbRows[0]?.distinct ?? 0);
 
+    // 断号汇总：各轮 gaps 之和。gaps 定义见单轮计算处
+    // （MAX(序号) - MIN(序号) + 1 - COUNT(*)，反映单轮内的序号空洞数）。
+    const totalGaps = rounds.reduce((sum, r) => sum + r.gaps, 0);
+
     console.log('');
     console.log('────────────── 汇总 ──────────────');
     console.log(`申请成功数（内存）：${totalSuccess}`);
     console.log(`落库总数：${dbTotal}，去重后：${dbDistinct}`);
     console.log(`重号数（内存）：${totalDuplicate}；取号失败：${totalRejected}`);
+    console.log(`断号数（各轮 gaps 合计）：${totalGaps}`);
     console.log(`理论应落库：${CONCURRENCY * ROUNDS}`);
 
+    // 五项判据，缺一不可。
+    // 第 6 项 gaps === 0 不可省：条件 5 只约束「取号总数」，
+    // 无法发现序号跳号（例：单轮拿到 1,2,3,7,8,…,203 共 200 个，
+    // gaps = 3 但 dbTotal 仍凑满，五项全绿 —— 档号被"吃掉"却判定通过）。
+    // 档号缺号与重号同级严重：编号永久空缺，将来可能被误用或对不上账。
     const pass =
       totalDuplicate === 0 &&
       totalRejected === 0 &&
       dbTotal === dbDistinct &&
       dbTotal === totalSuccess &&
-      dbTotal === CONCURRENCY * ROUNDS;
+      dbTotal === CONCURRENCY * ROUNDS &&
+      totalGaps === 0;
 
     console.log('');
     if (pass) {
-      console.log('IS_PASS: YES —— 并发取号零重号，序列连续，全部落库成功');
+      console.log('IS_PASS: YES —— 并发取号零重号、零断号，序列连续，全部落库成功');
     } else {
-      console.log('IS_PASS: NO —— 存在重号/丢号/落库不一致，请检查序列实现与唯一约束');
+      console.log('IS_PASS: NO —— 存在重号/断号/丢号/落库不一致，请检查序列实现与唯一约束');
       for (const r of rounds.filter((x) => x.duplicates.length > 0)) {
         console.log(`  第 ${r.round} 轮重号：${r.duplicates.join(', ')}`);
+      }
+      for (const r of rounds.filter((x) => x.gaps > 0)) {
+        console.log(`  第 ${r.round} 轮断号：gaps=${r.gaps}（序号区间内有空洞）`);
       }
       process.exitCode = 1;
     }
