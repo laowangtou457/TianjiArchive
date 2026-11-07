@@ -107,11 +107,11 @@ export function buildDataSourceOptions(): DataSourceOptions {
   };
 }
 
-/** CLI 迁移入口使用的单例 DataSource */
+/** CLI 迁移入口使用的单例 DataSource。
+ *  注意：TypeORM CLI（migration:run 等）要求 data source 文件**只导出一次** DataSource 实例，
+ *  named + default 双导出会报「must contain only one export of DataSource instance」（联调现场实证）。
+ *  故仅保留 named export，CLI 用 `-d` 引用本文件即可正确解析。 */
 export const AppDataSource = new DataSource(buildDataSourceOptions());
-
-// 支持 typeorm CLI 直接 -d 引用
-export default AppDataSource;
 
 /** 判断路径是否为绝对路径（供脚本使用） */
 export function ensureAbsolute(p: string): string {
