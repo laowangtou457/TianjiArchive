@@ -97,6 +97,14 @@ async function main(): Promise<void> {
   }
   const { id: fondsId, fonds_no: fondsNo } = fondsRow[0];
 
+  // seed 写入的档号规则首段为 CATALOG（目录号），renderDanghao strict 模式要求非空。
+  // 著录 DTO 的 catalogNo 由业务填；压测夹具此前漏传，导致 2000 次「档号段「目录号」取值为空」。
+  // 这里取库中真实门类 code（不伪造数据），与线上著录的输入形态一致。
+  const categoryRows = (await AppDataSource.query(
+    `SELECT code FROM category ORDER BY created_at ASC LIMIT 1`,
+  )) as Array<{ code: string }>;
+  const catalogNo = String(categoryRows[0]?.code ?? fondsNo);
+
   const resolved = await ruleService.resolveRule(fondsId, null);
   console.log(
     `全宗：${fondsNo}；档号规则段数 ${resolved.template.segments.length}，重置周期 ${resolved.resetCycle}`,
@@ -148,6 +156,12 @@ async function main(): Promise<void> {
               categoryId: null,
               year,
               retention: Retention.PERM,
+              catalogNo,
+              // 固定同一卷：seed 规则为「目录号-年度-保管期限-卷号-件号」。
+              // 若不传 volumeNo，每个并发事务会各自新取卷号、件号恒为 1，
+              // 末段序号全相同 → 断号判据出现负值（联调现场实证）。
+              // 压测目标「同一作用域下 N 并发取连续号」要求同卷内竞争件序列。
+              volumeNo: 1,
             });
             // 落库：唯一索引是最后一道防线
             await manager.query(
