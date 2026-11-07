@@ -176,11 +176,13 @@ async function main(): Promise<void> {
       }
 
       // 卷级模板说明（仅记录在参数中，供界面提示）
+      // 列名以 InitSchema 为准：param_key / param_value（不是 key / value）；
+      // param_value 是 text 列，存 JSON 保留完整结构，界面侧 JSON.parse 后使用。
       await manager.query(
-        `INSERT INTO system_param (key, value, label, secret)
+        `INSERT INTO system_param (param_key, param_value, label, secret)
          VALUES ('danghao.volumeTemplate', $1, '案卷档号模板', FALSE)
-         ON CONFLICT (key) DO NOTHING`,
-        [DEFAULT_VOLUME_TEMPLATE],
+         ON CONFLICT (param_key) DO NOTHING`,
+        [JSON.stringify(DEFAULT_VOLUME_TEMPLATE)],
       );
 
       console.log('✔ 初始化完成');
