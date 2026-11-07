@@ -226,8 +226,70 @@
 | B2 | `@Cron` 无法异步读库 | 心跳每分钟 + 自实现 cron 表达式匹配；非法表达式退化为每小时第 5 分钟并告警 |
 | B3 | CAS 层未被单元测试覆盖 | QA 的 mock `manager` 只有 `create/save/update`，无法验证 `affected` 分支。**需集成测试覆盖**，我在上轮已向 QA 说明 |
 | B4 | C-3 出厂默认值即触发提示 | 30 份 × 20GB > 500GB 是 `blocking: false` 的容量提示，属**有意保留**（容量为估算值，不应硬拦） |
-| B5 | **`packages/shared` 是恢复的副本，非原物** | 目录迁移时该包因硬链接被 robocopy 跳过而丢失，已从 `apps/api/node_modules/@titan/shared` 副本恢复 16 文件（`params.ts` MD5 一致，含全部最新特性）。构建/测试/类型全绿证明可用，但**无 git 基线可 diff**，无法逐字节证明与原物相同。**建议有副本者做一次 diff** |
+| B5 | `packages/shared` 曾丢失，现为恢复副本 | 目录迁移时该包因硬链接被 robocopy 跳过而丢失，已从 `apps/api/node_modules/@titan/shared` 副本恢复 16 文件。**行为级证据已足够**：396 用例（含 shared 自身 72+ 条与一致性比对）全绿，team-lead 已接受，不再要求字节级 diff。**自本次起已有 git 基线（`902f114`），此后任何丢失/误改都有 diff 可依** |
 | B6 | IK 镜像构建依赖网络或离线 zip | `infra/elasticsearch/Dockerfile` 优先读 `infra/elasticsearch/ik/*.zip`，否则联网下载。内网环境须预置 zip，详见 `docs/DEPLOY.md` §3 |
+
+---
+
+## §10A 升级影响清单（存量部署须知）
+
+> 本次更名（泰坦 → 天玑）不只改显示文字，**部分运行时标识也变了**。
+> 存量环境**不能直接原地升级**，须按本节逐项处理。
+
+### A. 必须处理的 4 项（不做会连不上或登不进）
+
+| # | 变更项 | 旧值 → 新值 | 影响 | 处置 |
+|---|---|---|---|---|
+| 1 | **DB 用户名** | `titan` → `tianji` | 新容器用 `tianji` 连接，旧库若只有 `titan` 角色则认证失败 | 存量库执行 `ALTER ROLE titan RENAME TO tianji;`（或建新角色并授权）。**库名 `tianji_archive` 未变** |
+| 2 | **MinIO 别名 / root 用户** | `mc alias` `titan` → `tianji`；`MINIO_ACCESS_KEY` 缺省 `titan_minio` → `tianji_minio` | 备份/恢复脚本用的是新别名；旧 alias 配置在 `~/.mc/config.json` 里已失效 | 运维端重新 `mc alias set tianji ...`；若改了 root 用户需重建 bucket 权限 |
+| 3 | **前端 localStorage key** | `titan.accessToken` / `.refreshToken` / `.sidebarCollapsed` → `tianji.*` | **已登录用户的 token「消失」，会被踢回登录页** | ⚠️ **这是预期行为，不是 bug**。升级说明里必须写一句：升级后需重新登录一次。旧 key 不会被自动迁移（避免把旧系统的凭证带进新系统） |
+| 4 | **默认管理员口令** | `Titan@2024` → `Tianji@2024` | 仅影响 `pnpm seed` 新建的管理员；**已在用旧口令改过密的账号不受影响** | 新环境用新口令首登后立即改密；存量环境无需处理 |
+
+### B. 无需处理但需知晓的 5 项
+
+| # | 变更项 | 说明 |
+|---|---|---|
+| 5 | 容器名 / 服务名前缀 | `titan-postgres` → `tianji-postgres` 等 9 个。`docker compose` 内部自洽，但**运维的监控/日志采集若按旧容器名匹配需同步改** |
+| 6 | Docker 网络名 | `titan-net` → `tianji-net`。同上 |
+| 7 | 备份文件名前缀 | `titan_{scope}_*.dump` → `tianji_{scope}_*.dump`。**历史备份文件不重命名**，恢复脚本按新规则只找新的；旧备份需手工指定路径恢复 |
+| 8 | 包名 / import 路径 | `@titan/*` → `@tianji/*`。仅影响二次开发者，运行时无感（已随镜像整体替换） |
+| 9 | ES 自定义词典 | 词典内已含「天玑档案」。**存量 ES 若挂载了旧词典目录，需同步更新 `custom_dict.dic` 并重新加载**，否则"天玑"可能被切碎 |
+
+### C. 升级操作顺序（存量环境）
+
+```bash
+# 1. 停旧服务
+docker compose down
+
+# 2. 改库用户名（存量数据保留）
+docker compose up -d postgres
+docker compose exec postgres psql -U postgres -c "ALTER ROLE titan RENAME TO tianji;"
+
+# 3. 重新配 MinIO 别名
+mc alias set tianji http://localhost:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+
+# 4. 更新 .env（对照新 .env.example，至少补 6 个 *_EXPOSED_PORT）
+cp .env.example .env && vi .env
+
+# 5. 拉新镜像 / 构建（改过名，必须重建）
+docker compose build && docker compose up -d
+
+# 6. 跑迁移（幂等）
+docker compose exec api pnpm migration:run
+```
+
+> 第 4 步特别注意：新 `.env.example` 新增了 `POSTGRES_EXPOSED_PORT` / `MINIO_EXPOSED_PORT` /
+> `MINIO_CONSOLE_EXPOSED_PORT` / `REDIS_EXPOSED_PORT` / `API_EXPOSED_PORT` / `ES_VERSION` /
+> `IK_VERSION` / `ES_JAVA_OPTS`。不补的话 compose 会走缺省值（能起，但本机端口冲突时改不动）。
+
+### D. 用户侧通知模板（建议直接用）
+
+> **系统升级通知**
+> 系统已更名为「天玑档案管理系统」。本次升级影响：
+> 1. 升级后**需重新登录**（安全凭证标识已更新，属正常现象）
+> 2. 界面标题、产品名已更新为新名称
+> 3. 原有档案数据、借阅记录、权限配置**全部保留，无需迁移**
+> 4. 如遇登录异常，请清理浏览器缓存后重试；仍有问题联系管理员
 
 ---
 
@@ -299,7 +361,44 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api \
 
 ---
 
-## §13 文件清单（本次工作涉及）
+## §13 版本控制基线
+
+自本轮起项目已纳入 git，**此后任何"丢失/误改"都有 diff 可依**。
+
+| 项 | 值 |
+|---|---|
+| 仓库根 | `E:\TianjiArchive` |
+| 分支 | `main` |
+| 基线提交 | `902f114` `chore: 建立 git 基线（天玑档案管理系统 v1.0.0）` |
+| 纳入版本 | 236 个文件 / 53,485 行 |
+| 换行策略 | `core.autocrlf=false`（避免 Windows 换行污染 diff） |
+
+### 排除规则（`.gitignore`）
+
+| 类别 | 排除项 | 理由 |
+|---|---|---|
+| 依赖与产物 | `node_modules/` `dist/` `build/` `coverage/` `.turbo/` `*.tsbuildinfo` `packages/shared/.build/` | 可重建，且体量大 |
+| 环境与密钥 | `.env` `.env.local` `.env.*.local` | **含真实口令，绝不入库**（`.env.example` 是模板，必须入库） |
+| 运行时卷 | `volumes/` `data/` | PG/ES/MinIO/Redis 数据 + WAL，属运行时状态 |
+| 备份产物 | `backups/` `*.dump` `*.sql.gz` `*.tar.gz` `*.zip` | 归档文件，且可能含敏感数据 |
+| 迁移临时 | `apps/cli-migrator/*.sqlite` `.tianji-migrate.db` | 断点状态库，每台机器不同 |
+| 系统/编辑器 | `*.log` `.DS_Store` `Thumbs.db` `.idea/` `.vscode/*` | 噪声 |
+
+### 工作包提交流程（约定）
+
+```
+每个工作包完成后：
+  1. pnpm run ci:check && pnpm run test     # 门禁通过才提交
+  2. git add -A
+  3. git commit -m "<type>: <工作包名>（<一句话要点>）"
+```
+
+提交信息约定：`feat` / `fix` / `refactor` / `docs` / `chore` / `test`，
+正文里写清「改了什么 + 为什么 + 验证情况」，便于后续 `git log` 回溯决策依据。
+
+---
+
+## §14 文件清单（本次工作涉及）
 
 ### 新建
 
@@ -308,16 +407,18 @@ scripts/ci-check-permission-mutations.cjs          CI 静态自检（R1 正向 /
 docs/DELIVERY-CHECKLIST.md                         本文件
 docs/DEPLOY.md                                     部署与压测手册
 infra/elasticsearch/ik/.gitkeep                    IK 离线包目录（修构建缺陷）
+.git/                                              git 仓库（基线 902f114）
 ```
 
 ### 修改
 
 ```
+.gitignore                                                  重写（补全 6 类排除规则）
 package.json                                                新增 ci:check / ci:check:perm-mutations
 apps/cli-migrator/src/cli.ts                                新增 --batch-max-rows
-packages/shared/src/params.ts                              import.batch_max_rows 的 consumer 说明边界
+packages/shared/src/params.ts                               import.batch_max_rows 的 consumer 说明边界
 apps/api/__tests__/permission-mutations.consistency.spec.ts 组 4 换成真断言（18→20 tests）
-.env.example                                                补 ES_VERSION / IK_VERSION / ES_JAVA_OPTS / ES_EXPOSED_PORT
+.env.example                                                补 6 个 *_EXPOSED_PORT + ES_VERSION/IK_VERSION/ES_JAVA_OPTS
 ```
 
 ### 更名涉及（151 个文件）
@@ -328,6 +429,7 @@ apps/api/__tests__/permission-mutations.consistency.spec.ts 组 4 换成真断�
 
 ---
 
-**最后更新**：更名 + D 包 + E 包 + CI 自检 + 边界登记 + 部署准备全部完成。
+**最后更新**：更名 + D 包 + E 包 + CI 自检 + 边界登记 + 部署准备 + **git 基线**全部完成。
 `pnpm run ci:check` / `build` / `typecheck` / `test` 四项全绿（396 passed + 2 skipped，107/107 参数断言）。
+git 基线：`902f114`（236 文件 / 53,485 行），工作区干净。
 Docker 侧待 WSL2 初始化完成后执行启动与压测。
