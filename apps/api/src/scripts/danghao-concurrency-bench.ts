@@ -23,6 +23,7 @@ import { Fonds } from '../infra/database/entities/fonds.entity';
 import { OrgNode } from '../infra/database/entities/org-node.entity';
 import { Category } from '../infra/database/entities/category.entity';
 import { Retention } from '@tianji/shared';
+import { evaluatePass } from './danghao-bench-judge';
 
 /** 并发度（同时申请档号的协程数） */
 const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY ?? 100));
@@ -38,6 +39,7 @@ interface BenchRound {
   gaps: number;
   elapsedMs: number;
 }
+
 
 /** 建探针表 */
 async function ensureProbeTable(): Promise<void> {
@@ -173,24 +175,29 @@ async function main(): Promise<void> {
     console.log(`断号数（各轮 gaps 合计）：${totalGaps}`);
     console.log(`理论应落库：${CONCURRENCY * ROUNDS}`);
 
-    // 六项判据，缺一不可。
-    // 第 6 项 totalGaps === 0 不可省：条件 5 只约束「取号总数」，
-    // 无法发现序号跳号（例：单轮拿到 1,2,3,7,8,…,203 共 200 个，
-    // gaps = 3 但 dbTotal 仍凑满，前五项全绿 —— 档号被"吃掉"却判定通过）。
-    // 档号缺号与重号同级严重：编号永久空缺，将来可能被误用或对不上账。
-    const pass =
-      totalDuplicate === 0 &&
-      totalRejected === 0 &&
-      dbTotal === dbDistinct &&
-      dbTotal === totalSuccess &&
-      dbTotal === CONCURRENCY * ROUNDS &&
-      totalGaps === 0;
+    // 判据逻辑集中在纯函数 evaluatePass 里（可单测、可读、无 DB 依赖）。
+    // 此处只负责把统计量喂进去、把结论打印出来。
+    const verdict = evaluatePass({
+      totalDuplicate,
+      totalRejected,
+      dbTotal,
+      dbDistinct,
+      totalSuccess,
+      concurrency: CONCURRENCY,
+      rounds: ROUNDS,
+      totalGaps,
+    });
 
     console.log('');
-    if (pass) {
+    if (verdict.pass) {
       console.log('IS_PASS: YES —— 并发取号零重号、零断号，序列连续，全部落库成功');
     } else {
       console.log('IS_PASS: NO —— 存在重号/断号/丢号/落库不一致，请检查序列实现与唯一约束');
+      // 1) 逐项判据失败原因（判定层，说明"哪条闸门没过"）
+      for (const reason of verdict.reasons) {
+        console.log(`  ✖ 判据未满足：${reason}`);
+      }
+      // 2) 逐轮明细（诊断层，说明"具体是哪一轮、哪个档号"）
       for (const r of rounds.filter((x) => x.duplicates.length > 0)) {
         console.log(`  第 ${r.round} 轮重号：${r.duplicates.join(', ')}`);
       }
