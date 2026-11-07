@@ -58,13 +58,21 @@ for (const file of resolveEnvFiles()) {
  *  判定依据是 __dirname 是否处于 dist（而非「migrations 目录是否存在」）——
  *  源码树里该目录同样存在但只含 .ts；旧判定在 ts-node 下取 *.js 通配，
  *  匹配 0 个文件，CLI 静默报「No migrations are pending」（联调现场实证，
- *  数据库除 typeorm_migrations 外零表却显示无待执行迁移）。 */
-function resolveMigrationGlob(): string {
-  const inDist = __dirname.split(path.sep).includes('dist');
+ *  数据库除 typeorm_migrations 外零表却显示无待执行迁移）。
+ *  纯函数化（dirname 入参）以便单测双分支，防回归见
+ *  __tests__/data-source.migrations.spec.ts。 */
+export function migrationGlobFor(dirname: string): string {
+  // 按两种路径分隔符切分：调用方可能传入 POSIX 风格路径（跨平台脚本/
+  // 单测），仅按 path.sep 切分在 Windows 上会漏判（本守卫 spec 实测捕获）
+  const inDist = dirname.split(/[\\/]/).includes('dist');
   const ext = inDist ? 'js' : 'ts';
   // 仅匹配时间戳前缀的迁移文件；目录内的 seed-data.ts（共享种子构建函数，非迁移）
   // 会被 *.ts 通配误纳，导致 TypeORM 报「migration name is wrong」（联调现场实证）
-  return path.join(__dirname, `migrations/[0-9]*.${ext}`);
+  return path.join(dirname, `migrations/[0-9]*.${ext}`);
+}
+
+function resolveMigrationGlob(): string {
+  return migrationGlobFor(__dirname);
 }
 
 export function buildDataSourceOptions(): DataSourceOptions {
