@@ -27,6 +27,9 @@ COPY --from=build /repo/packages/shared ./packages/shared
 COPY --from=build /repo/apps/api ./apps/api
 COPY --from=build /repo/package.json ./package.json
 COPY --from=build /repo/pnpm-workspace.yaml ./pnpm-workspace.yaml
+# tsconfig.base.json 必须随包进运行层：迁移/seed/压测均经 ts-node 执行，
+# apps/api/tsconfig.json 以 "../../tsconfig.base.json" 相对路径继承它（联调现场 TS5083 实证）
+COPY --from=build /repo/tsconfig.base.json ./tsconfig.base.json
 EXPOSE 3000
 HEALTHCHECK --interval=20s --timeout=10s --retries=10 --start-period=40s \
   CMD curl -fsS http://127.0.0.1:3000/api/health || exit 1
