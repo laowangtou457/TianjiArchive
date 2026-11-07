@@ -16,12 +16,15 @@ packages/shared/.build/
 
 # ---------------------------------------------------------------- 运行时数据卷
 # docker compose 的宿主机挂载目录（PG/ES/MinIO/Redis 数据 + WAL 归档）
-volumes/
-data/
+# 注意：以下目录模式必须锚定根路径（前导 /），否则无锚点的 backup/
+# 会匹配任意深度同名目录——曾致 apps/api/src/modules/backup 整个模块
+# 从未入库（2026-11-07 联调发现）。
+/volumes/
+/data/
 
 # ---------------------------------------------------------------- 备份产物
-backups/
-backup/
+/backups/
+/backup/
 *.dump
 *.dump.gz
 *.sql.gz
