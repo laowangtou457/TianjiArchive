@@ -82,7 +82,10 @@ function makeManagerStub(ruleRow: typeof ITEM_RULE_ROW) {
     query: async (sql: string) => {
       const normalized = sql.replace(/\s+/g, ' ').trim();
       if (normalized.startsWith('INSERT INTO danghao_sequence')) return [];
-      if (normalized.startsWith('UPDATE danghao_sequence')) return [{ next_value: '1' }];
+      if (normalized.startsWith('UPDATE danghao_sequence')) {
+        // 生产真实形态（缺陷 #12）：UPDATE RETURNING 返回 [rows, rowCount] 双层
+        return [[{ next_value: '1' }], 1];
+      }
       throw new Error(`manager.query 未模拟的 SQL: ${normalized}`);
     },
   } as unknown as EntityManager;

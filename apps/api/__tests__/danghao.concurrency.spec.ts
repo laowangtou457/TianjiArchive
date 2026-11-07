@@ -11,9 +11,18 @@
  *
  * ⚠️ 风险提示：该模拟**不能**证明 PostgreSQL 行锁在真实并发下的行为（死锁检测、事务隔离级别、
  * 序列冲突重试路径），真实结论仍需在有 Docker 的环境跑 perf:danghao 脚本。
+ *
+ * ⚠️ 替身形态（缺陷 #12 教训）：FakeSequenceTable.query 的 UPDATE 分支**必须**
+ * 返回 TypeORM PostgresQueryRunner 的真实双层形态 `[[rows], rowCount]`。
+ * 此前所有 mock 都返回单层数组，与生产路径不一致，导致 430 条单测全绿却
+ * 挡不住「UPDATE RETURNING 双层返回 → parseInt(undefined) → NaN → 取值异常」
+ * 的确定性生产故障。本项目第三例「假绿」，mock 形态须与驱动实测对齐。
  */
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DanghaoSequenceService } from '@api/modules/danghao/sequence.service';
+import {
+  DanghaoSequenceService,
+  extractQueryRows,
+} from '@api/modules/danghao/sequence.service';
 import { buildScopeKey, DEFAULT_DANGHAO_TEMPLATE, renderDanghao } from '@tianji/shared';
 
 /**
@@ -50,11 +59,13 @@ class FakeSequenceTable {
       return [];
     }
     if (normalized.startsWith('UPDATE danghao_sequence')) {
+      // 生产形态：PostgresQueryRunner.js:198-209 对 UPDATE/DELETE 返回
+      // result.raw = [raw.rows, raw.rowCount]（双层）。SELECT 才是单层。
       return this.withLock(scopeKey, async () => {
         const current = this.rows.get(scopeKey);
-        if (current === undefined) return [];
+        if (current === undefined) return [[], 0] as unknown as Array<Record<string, string>>;
         this.rows.set(scopeKey, current + 1);
-        return [{ next_value: String(current) }];
+        return [[{ next_value: String(current) }], 1] as unknown as Array<Record<string, string>>;
       });
     }
     if (normalized.startsWith('SELECT next_value FROM danghao_sequence')) {
@@ -257,5 +268,100 @@ describe('withRetry —— 事务重试策略', () => {
     const service = new DanghaoSequenceService(dataSource as never);
     await expect(service.withRetry(async () => 'x', 1)).rejects.toThrow('deadlock');
     expect(attempt).toBe(1);
+  });
+});
+
+// ============================================================================
+// 缺陷 #12 防回归：TypeORM PostgresQueryRunner 的 UPDATE RETURNING 双层返回
+//
+// 生产实测（容器内真 AppDataSource）：
+//   manager.query('SELECT 2 AS y')                       → [{y:2}]                 单层
+//   manager.query('UPDATE ... RETURNING next_value-1')  → [[{next_value:'1'}],1]  双层
+// 修复前：nextInTransaction 直接取 rows[0].next_value → undefined → NaN →
+// 「取值异常」，2000/2000 取号失败（生产著录路径全挂）。
+// 变异验证：把 nextInTransaction/reserve 改回直接取 rows[0].next_value，
+// 本 describe 的双层主用例与上面全部 mock 已改双层的既有用例都会红。
+// ============================================================================
+describe('缺陷 #12：UPDATE RETURNING 双层返回归一化', () => {
+  /** 构造只回答 INSERT/UPDATE 两类 SQL 的 manager 桩（形态可注入） */
+  function managerWithUpdateResult(raw: unknown) {
+    const seen: string[] = [];
+    const manager = {
+      query: async (sql: string) => {
+        const normalized = sql.replace(/\s+/g, ' ').trim();
+        seen.push(normalized.split(' ')[0] ?? '');
+        // INSERT 走 PostgresQueryRunner default 分支：单层空行数组
+        if (normalized.startsWith('INSERT')) return [];
+        return raw;
+      },
+    };
+    return { manager, seen };
+  }
+
+  it('extractQueryRows：双层取内层行数组，单层原样，空/异常形态 fail-closed', () => {
+    expect(extractQueryRows<{ next_value: string }>([[{ next_value: '7' }], 1])).toEqual([
+      { next_value: '7' },
+    ]);
+    expect(extractQueryRows<{ next_value: string }>([{ next_value: '42' }])).toEqual([
+      { next_value: '42' },
+    ]);
+    expect(extractQueryRows([[], 0])).toEqual([]);
+    expect(extractQueryRows([])).toEqual([]);
+    expect(extractQueryRows(null)).toEqual([]);
+    expect(extractQueryRows('garbage')).toEqual([]);
+  });
+
+  it('nextInTransaction 主用例：真实双层结构解析出正整数（修复前的红点）', async () => {
+    const raw = [[{ next_value: '7' }], 1];
+    // 正向证据：夹具本身确实是双层（防止 mock 悄悄退化成单层让断言空转）
+    expect(Array.isArray(raw[0])).toBe(true);
+    const { manager, seen } = managerWithUpdateResult(raw);
+    const service = new DanghaoSequenceService({} as never);
+
+    const value = await service.nextInTransaction(manager as never, 'S');
+
+    expect(value).toBe(7);
+    expect(Number.isInteger(value)).toBe(true);
+    expect(value).toBeGreaterThan(0);
+    expect(seen).toEqual(['INSERT', 'UPDATE']);
+  });
+
+  it('nextInTransaction 单层形态兼容（旧 mock / 其他驱动形态不回归）', async () => {
+    const { manager } = managerWithUpdateResult([{ next_value: '42' }]);
+    const service = new DanghaoSequenceService({} as never);
+
+    expect(await service.nextInTransaction(manager as never, 'S')).toBe(42);
+  });
+
+  it('UPDATE 双层但零行 → NO_LOCKED 锁定失败，不静默返回', async () => {
+    const { manager } = managerWithUpdateResult([[], 0]);
+    const service = new DanghaoSequenceService({} as never);
+
+    await expect(service.nextInTransaction(manager as never, 'S')).rejects.toThrow('锁定失败');
+  });
+
+  it('reserve 同样归一化双层：返回正整数，零行不再静默回落到 1', async () => {
+    const dataSourceWith = (raw: unknown) => {
+      const { manager } = managerWithUpdateResult(raw);
+      return {
+        transaction: async (cb: (m: unknown) => Promise<unknown>) => cb(manager),
+      };
+    };
+
+    const okService = new DanghaoSequenceService(
+      dataSourceWith([[{ start_value: '11' }], 1]) as never,
+    );
+    expect(await okService.reserve('S', 5)).toBe(11);
+
+    const emptyService = new DanghaoSequenceService(dataSourceWith([[], 0]) as never);
+    await expect(emptyService.reserve('S', 5)).rejects.toThrow('预取锁定失败');
+  });
+
+  it('peek 走 SELECT 单层形态，无需改动（回归确认）', async () => {
+    const service = new DanghaoSequenceService({
+      query: async () => [{ next_value: '9' }],
+    } as never);
+
+    expect(await service.peek('S')).toBe(9);
   });
 });
