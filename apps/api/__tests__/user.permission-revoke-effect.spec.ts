@@ -11,9 +11,13 @@
  *   命中不查库 / 失效范围 / 降级回源）。单实例结论完整，多实例不影响其有效性，
  *   **不标**「多实例待补」。
  *
- * **B 类·生效类**（`B:` 前缀）：测「撤权后真的不能再访问」。单实例验证通过，
- *   多实例语义（版本号 INCR + pub/sub 广播）属**待补**项，需工程师 E 包实装后
- *   在同一进程起两个实例共享同一 FakeRedis 补测。
+ * **B 类·生效类**（`B:` 前缀）：测「撤权后真的不能再访问」。单实例验证通过；
+ *   多实例语义（版本号 INCR + pub/sub 广播）由 **T 类**覆盖（原 2 条 `it.skip` 已启封）。
+ *
+ * **T 类·多实例双通道**（`T:` 前缀）：测「同一 Redis 上的两个实例」的失效语义。
+ *   拆成 T1 版本号通道 / T2 广播通道 / T3 端到端，让两条通道**各自可独立变红**。
+ *   关键：不能只用「B 读到新值」断言 —— 版本号通道会让它无条件变绿，
+ *   从而掩护广播通道整体失效（搭便车假绿）。详见 T 类头部说明。
  *
  * **R 类·风险实证**（`R:` 前缀）：证明「不做主动失效会怎样」。
  *   C-5 裁定后，此类用例**证明的是风险存在，不是合规项**——
@@ -21,8 +25,8 @@
  *   「300s 窗口是设计可接受的」。C-5 达标线是 invalidate 调用链 100% 覆盖。
  *
  * ## 两种漏法的区别（报告中分两栏，不可混为一谈）
- *  - 多实例漏 = 广播没发出去（版本号/广播通道失效）
- *  - 调用链漏 = invalidate 压根没被调用（PERMISSION_MUTATIONS 遗漏入口）
+ *  - 多实例漏 = 广播没发出去（版本号/广播通道失效）→ T 类覆盖
+ *  - 调用链漏 = invalidate 压根没被调用（PERMISSION_MUTATIONS 遗漏入口）→ 一致性测试覆盖
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CACHE_KEY } from '@api/common/constants/enums';
@@ -43,8 +47,10 @@ class FakeRedis {
   public counters = new Map<string, number>();
   /** pub/sub 广播记录（多实例失效通道），供 B 类用例断言 */
   public published: Array<{ channel: string; message: string }> = [];
-  /** 已订阅的通道 → 回调（模拟第二个实例的订阅者） */
+  /** 已订阅的通道 → 回调（供测试自建订阅者使用；生产路径请用 duplicate()） */
   public subscribers = new Map<string, Array<(channel: string, message: string) => void>>();
+  /** 所有 duplicate() 出的订阅连接在 publish 时收到的广播钩子 */
+  public broadcastHooks: Array<(channel: string, message: string) => void> = [];
 
   public async getJson<T>(key: string): Promise<T | null> {
     const hit = this.store.get(key);
@@ -99,6 +105,8 @@ class FakeRedis {
     this.published.push({ channel, message });
     // 投递给本 FakeRedis 上的所有订阅者（可模拟「跨实例」）
     for (const cb of this.subscribers.get(channel) ?? []) cb(channel, message);
+    // 投递给所有 duplicate() 出的真实订阅连接（走 onModuleInit 的系统）
+    for (const hook of this.broadcastHooks) hook(channel, message);
   }
 
   public async get(key: string): Promise<string | null> {
@@ -108,6 +116,71 @@ class FakeRedis {
 
   public async set(key: string, value: string): Promise<void> {
     this.store.set(key, value);
+  }
+
+  // -------------------------------------------------------------- pub/sub 接口
+  /**
+   * 复刻 `RedisService.duplicateForSubscribe()`：返回一条独立的订阅专用连接。
+   *
+   * 注意方法名：生产代码调的是服务层的 `duplicateForSubscribe()`，
+   * 它内部才调 ioredis 的 `client.duplicate()`。本夹具直接替换整个 RedisService，
+   * 因此必须暴露**服务层**的方法名，否则 `onModuleInit` 会抛 TypeError
+   * 并被它自己的 try/catch 静默吞掉（订阅悄无声息地没建立，用例却可能假绿）。
+   *
+   * 返回的对象共享本 FakeRedis 的广播总线（正如真实 Redis 的多条连接共享
+   * 同一 PUBSUB 总线），但拥有独立的订阅记录与监听器。
+   *
+   * **为什么要实现它**：`UserService.onModuleInit` 走的是
+   * `duplicateForSubscribe()` → `.subscribe()` → `.on('message')`。
+   * 若不实现这套接口，多实例用例只能用测试里自建的替身回调去「模拟」广播消费，
+   * 那样断言的只是替身的行为，**生产代码里的 `handlePermissionInvalidate`
+   * 被整个删掉用例依然全绿**（实测过：变异后 0 红）。实现了才能真正打到生产路径。
+   */
+  public duplicateForSubscribe(): FakeRedisSubscriber {
+    const sub = new FakeRedisSubscriber(this);
+    this.duplicated.push(sub);
+    return sub;
+  }
+
+  /** `duplicateForSubscribe()` 产生的订阅连接（供用例断言/清理） */
+  public duplicated: FakeRedisSubscriber[] = [];
+}
+
+/**
+ * 订阅专用连接，只实现 `UserService` / `ParamService` 实际用到的那几个方法：
+ * `subscribe` / `unsubscribe` / `on` / `quit`。
+ */
+class FakeRedisSubscriber {
+  /** 该连接当前订阅的通道 */
+  public readonly channels = new Set<string>();
+  /** `'message'` 事件的监听器 */
+  public readonly messageHandlers: Array<(channel: string, message: string) => void> = [];
+
+  public constructor(private readonly owner: FakeRedis) {
+    // 挂到 owner 的广播注册表：owner.publish 时会回调到这些 handler
+    this.owner.broadcastHooks.push((channel: string, message: string) => {
+      if (!this.channels.has(channel)) return;
+      for (const h of this.messageHandlers) h(channel, message);
+    });
+  }
+
+  public async subscribe(channel: string): Promise<void> {
+    this.channels.add(channel);
+  }
+
+  public async unsubscribe(channel: string): Promise<void> {
+    this.channels.delete(channel);
+  }
+
+  /** 复刻 ioredis 的 EventEmitter 接口（仅 `message` 事件被使用） */
+  public on(event: 'message', handler: (channel: string, message: string) => void): this {
+    if (event === 'message') this.messageHandlers.push(handler);
+    return this;
+  }
+
+  public async quit(): Promise<void> {
+    this.channels.clear();
+    this.messageHandlers.length = 0;
   }
 }
 
@@ -132,12 +205,34 @@ function keyOf(userId: string, version = 0): string {
   return `${CACHE_KEY.PERMISSION}${userId}:v${version}`;
 }
 
+/** 模拟「数据库中的真实权限」的可变状态 */
+interface FakeDb {
+  level: SecurityLevel;
+  roles: string[];
+}
+
+function newFakeDb(initial: { level: SecurityLevel; roles: string[] }): FakeDb {
+  return { level: initial.level, roles: [...initial.roles] };
+}
+
 /**
  * 构造 UserService，并把「数据库中的真实权限」放在可变状态里，
  * 以便模拟「管理员撤权 → 库中权限变了」的场景。
+ *
+ * ## `sharedDb` 参数（多实例测试专用）
+ *
+ * 生产里两个 api 容器连的是**同一个 PostgreSQL**，因此「库中权限」是全局唯一的一份。
+ * 默认每次调用都新建一份 FakeDb，适合单实例用例（A/B 类）；
+ * 多实例用例（T 类）必须传同一个 `sharedDb`，否则两个实例各持一份库，
+ * 出现「A 侧撤权只改了 a.db，B 回源重建仍读到自己那份旧 b.db」的**夹具假红**。
+ * 这类错误极易被误读为「生产代码失效」，实测踩过一次，故显式参数化。
  */
-function makeService(initial: { level: SecurityLevel; roles: string[] }, redis = new FakeRedis()) {
-  const db = { level: initial.level, roles: [...initial.roles] };
+function makeService(
+  initial: { level: SecurityLevel; roles: string[] },
+  redis = new FakeRedis(),
+  sharedDb?: FakeDb,
+) {
+  const db: FakeDb = sharedDb ?? newFakeDb(initial);
 
   const repo = {
     findOne: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id })),
@@ -278,7 +373,7 @@ describe('A 类｜缓存机制（多实例不影响其有效性）', () => {
 // B 类 · 生效类：撤权后是否真的不能再访问
 // 标注：单实例验证通过；多实例语义（版本号 INCR + pub/sub）待工程师 E 包后补测
 // ============================================================================
-describe('B 类｜撤权生效（单实例验证通过，多实例广播待补）', () => {
+describe('B 类｜撤权生效（单实例；多实例语义见 T 类）', () => {
   let h: ReturnType<typeof makeService>;
 
   beforeEach(() => {
@@ -352,56 +447,167 @@ describe('B 类｜撤权生效（单实例验证通过，多实例广播待补�
     expect(h.buildSnapshot).toHaveBeenCalledTimes(3);
   });
 
-  // ---------------------------------------------------------------- 多实例（待补）
-  it.skip('B【多实例待补】节点 A 撤权 → 节点 B 的进程内缓存必须被广播清掉', async () => {
-    // 待工程师 E 包（版本号 + pub/sub）实装后启用。
-    // 构造：同一 FakeRedis 上挂两个 UserService 实例（共享 Redis，各自持有 localSnapshotCache）。
-    // 断言链：
-    //  1) 节点 B getSnapshot → 命中并写入 B 的 localSnapshotCache
-    //  2) 节点 A invalidateSnapshot（INCR perm_ver + publish perm:invalidate）
-    //  3) 节点 B **不重建 Redis 连接、不清本地缓存**，直接 getSnapshot
-    //  4) 必须读到新权限 —— 两条通道任一失效都应使本用例变红：
-    //     · 版本号通道：B 计算 key 时 version 已 +1 → 旧 key 天然失配
-    //     · 广播通道：B 收到 perm:invalidate 后清掉了 v{n} 的进程内缓存
-    // 注意：只用单个实例是测不出来的（本地缓存命中会掩盖广播缺失）→ 假绿高发区。
-    const redisA = new FakeRedis();
-    const a = makeService({ level: SecurityLevel.SECRET, roles: ['R-ARCHIVIST'] }, redisA);
-    const b = makeService({ level: SecurityLevel.SECRET, roles: ['R-ARCHIVIST'] }, redisA);
+  // ------------------------------------------------- 多实例双通道（已启封 · 见文末 T 类）
+  // 原 2 条 `it.skip`（「多实例待补」）已拆为下方 T 类 3 条真实用例。
+  // 不保留原第 1 条的「读新值」形态，原因见 T1/T2 头部说明：
+  // 仅断言「B 读到新值」无法区分是哪条通道生效 —— 版本号通道会让它无条件变绿，
+  // 从而掩护「广播通道整个失效」，属搭便车假绿。拆开后两通道各自可独立变红。
+});
 
-    // 模拟 B 已订阅广播通道（onModuleInit 的等价物）
-    redisA.subscribers.set(CACHE_KEY.PERMISSION_CHANNEL, [
-      (_c, msg) => {
-        const payload = JSON.parse(msg) as { userIds?: string[]; all?: boolean };
-        const localB = (b.service as unknown as { localSnapshotCache: Map<string, unknown> })
-          .localSnapshotCache;
-        if (payload.all || !Array.isArray(payload.userIds)) {
-          localB.clear();
-          return;
-        }
-        for (const uid of payload.userIds) {
-          for (const k of [...localB.keys()]) {
-            if (k.startsWith(`${CACHE_KEY.PERMISSION}${uid}:v`)) localB.delete(k);
-          }
-        }
-      },
-    ]);
+// ============================================================================
+// T 类 · 多实例双通道（C-5：版本号通道 vs 广播通道）
+// ============================================================================
+//
+// ## 构造：同进程双实例，共享同一 FakeRedis
+//
+// 两个 `UserService` 实例各持一份 `localSnapshotCache`，但 `perm_ver:{id}`
+// 计数键与 `perm:{id}:v{n}` 数据键都在同一个 FakeRedis 上 —— 这正是生产里
+// 两个 api 容器连同一个 Redis 的等价形态。**不需要第二个容器**：多实例的
+// 本质差异是「进程内缓存不共享」，用两个实例对象即可精确复现。
+//
+// ## 关键前提：键位分离模型
+//
+// `getSnapshot` 的 key 由 `perm_ver:{id}` 实时算出：
+//
+//     version = getCounter('perm_ver:u-1')   // 0 → 1
+//     cacheKey = `perm:u-1:v${version}`      // perm:u-1:v0 → perm:u-1:v1
+//
+// 所以版本号 +1 之后，**即便广播完全丢失**，B 也会因为算出全新的 key
+// 而落空并回源重建。结论：
+//   · 「B 读到新值」**不能**证明广播通道有效 —— 版本号通道会无条件兜住；
+//   · 要证明广播有效，必须直接断言**进程内缓存被清空**这个副作用本身（T2）。
+//
+// ## 两通道的职责分工（断言必须各自指向自己的闸门）
+//
+// | 通道        | 机制                              | 单独失效时的后果            | 覆盖用例 |
+// |-------------|-----------------------------------|-----------------------------|----------|
+// | 版本号通道  | `INCR perm_ver:{id}` → key 换名   | 跨实例仍读到旧权限（越权）  | T1       |
+// | 广播通道    | `publish perm:invalidate` → 清本地 | Redis 多打一次（性能退化）  | T2       |
+//
+// 注意 T2 单独失效**不会**造成越权（T1 会兜住），它的价值是省掉一次 Redis 回源。
+// 因此 T2 不能用「读到新值」来断言，只能断言缓存被清空。
+describe('T 类｜多实例双通道（版本号 vs 广播）', () => {
+  /** 取某实例的进程内缓存（私有字段，测试专用视图） */
+  function localCacheOf(service: UserService): Map<string, unknown> {
+    return (service as unknown as { localSnapshotCache: Map<string, unknown> }).localSnapshotCache;
+  }
 
-    // 1) B 先读一次，进入本地缓存
+  /** 取某实例的 db 可变状态（`makeService` 返回值里的 db 引用） */
+  type Handle = ReturnType<typeof makeService>;
+
+  /**
+   * 让 `target` 走**真实的** `onModuleInit` 订阅权限失效通道。
+   *
+   * 走生产代码路径是本用例组的关键：最初版本在测试里手写一个回调来「模拟」
+   * 广播消费，结果变异验证（禁用 `handlePermissionInvalidate`）**0 红** ——
+   * 因为断言打的是替身而非生产代码。现在 FakeRedis 实现了 `duplicate()`
+   * + `subscribe/on/quit`，`onModuleInit` 原样跑通，生产逻辑被真正覆盖。
+   *
+   * 若将来 `onModuleInit` 的订阅姿势改变（例如改用 `psubscribe`），
+   * FakeRedis 缺少对应方法会直接抛错，属显式失败而非静默假绿。
+   */
+  async function subscribeReal(redis: FakeRedis, target: Handle): Promise<void> {
+    await target.service.onModuleInit();
+  }
+
+  /** 建两个共享同一 Redis + 同一「数据库」的实例（A = 操作方，B = 旁观方） */
+  function makeCluster(): { redis: FakeRedis; db: FakeDb; a: Handle; b: Handle } {
+    const redis = new FakeRedis();
+    // 关键：共享 db —— 生产里两个容器连同一个 PostgreSQL，权限数据全局唯一
+    const db = newFakeDb({ level: SecurityLevel.SECRET, roles: ['R-ARCHIVIST'] });
+    const a = makeService({ level: SecurityLevel.SECRET, roles: ['R-ARCHIVIST'] }, redis, db);
+    const b = makeService({ level: SecurityLevel.SECRET, roles: ['R-ARCHIVIST'] }, redis, db);
+    return { redis, db, a, b };
+  }
+
+  // ---------------------------------------------------------------- T1 版本号通道
+  it('T1: 广播全部丢失时，版本号通道仍保证 B 读到最新权限', async () => {
+    // 【本用例在测哪道闸门】版本号通道（`INCR perm_ver`）。
+    // 构造上**刻意不挂任何订阅者** —— 等价于 pub/sub 全链路故障、消息全部丢失。
+    // 此时 B 仍必须读到新权限，因为 key 里含版本号，旧 key 天然失配。
+    // 若这条变红 → 说明「撤权即时生效」在广播故障时会退化为 300s 越权窗口。
+    const { redis, db, a, b } = makeCluster();
+    // 前置：确认真没有订阅者，否则本用例退化为 T3（测不出广播丢失下的兜底）
+    expect(
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      redis.subscribers.get(CACHE_KEY.PERMISSION_CHANNEL) ?? [],
+      'T1 必须无订阅者：广播全丢是本用例的构造前提',
+    ).toHaveLength(0);
+
+    // 1) B 先读一次 → 快照进入 B 的进程内缓存（v0）
     expect((await b.service.getSnapshot('u-1')).maxSecurityLevel).toBe(SecurityLevel.SECRET);
+    expect(localCacheOf(b.service).has(keyOf('u-1', 0)), 'B 本地缓存应有 v0').toBe(true);
 
-    // 2) A 侧撤权
-    a.db.level = SecurityLevel.PUBLIC;
+    // 2) A 侧撤权：INCR perm_ver → 1，publish 无人接收（无订阅者）
+    db.level = SecurityLevel.PUBLIC;
     await a.service.invalidateSnapshot('u-1');
 
-    // 3) B 侧立即再读
+    // 3) B 立即再读 —— 版本号已是 v1，v0 key 失配 → 回源重建
     const onB = await b.service.getSnapshot('u-1');
-    expect(onB.maxSecurityLevel, '节点 B 也必须立即看到降级后的密级').toBe(SecurityLevel.PUBLIC);
+    expect(onB.maxSecurityLevel, '版本号通道必须独立兜住，不依赖广播').toBe(SecurityLevel.PUBLIC);
+
+    // 4) 反向确认「广播确实没参与」：v0 是 A 主动 del 掉的（清理职责），
+    //    不是 B 的订阅者清掉的（B 根本没订阅）。这条排除「B 靠别的途径生效」。
+    expect(
+      redis.subscribers.get(CACHE_KEY.PERMISSION_CHANNEL) ?? [],
+      '全程不得有订阅者介入',
+    ).toHaveLength(0);
   });
 
-  it.skip('B【多实例待补】广播投递失败时，版本号通道仍应保证正确性', async () => {
-    // 待 E 包实装后启用。断言：即使 perm:invalidate 广播全部丢失，
-    // 因为 key 含版本号，节点 B 下一次读取也必然落空并重建 → 权限仍正确。
-    // 这条区分「广播是锦上添花」与「广播是唯一手段」，避免过度依赖 pub/sub。
+  // ---------------------------------------------------------------- T2 广播通道
+  it('T2: 广播必须真的清掉 B 的进程内缓存（断言副作用，不断言读值）', async () => {
+    // 【本用例在测哪道闸门】广播通道（`publish perm:invalidate` → 清进程内缓存）。
+    //
+    // ⚠️ 断言设计的核心：**不能断言「B 读到新值」**。
+    //    因为版本号通道会让 B 无条件读到新值（见 T 类头部说明），
+    //    那种写法在 `handlePermissionInvalidate` 被整个删除后仍然全绿 —— 假绿。
+    //    本用例直接断言「B 的 localSnapshotCache 被清空」这个**广播独有的副作用**，
+    //    它是唯一能把广播通道单独钉死的可观测点。
+    const { redis, db, a, b } = makeCluster();
+    await subscribeReal(redis, b); // 走真实 onModuleInit 订阅
+
+    // ---- 前置断言：先证明试验台搭对了，否则后面的断言会空转 ----------------
+    // 若 B 读完之后本地缓存里根本没有 v0，那么「清空」断言必然通过，
+    // 但什么也没验证到（空 Map 天然满足 toHaveLength(0)）。
+    expect((await b.service.getSnapshot('u-1')).maxSecurityLevel).toBe(SecurityLevel.SECRET);
+    expect(
+      localCacheOf(b.service).has(keyOf('u-1', 0)),
+      '前置：B 首次读取后本地缓存必须存在 v0，否则本用例无法证明任何事',
+    ).toBe(true);
+    expect(localCacheOf(b.service).size, '前置：本地缓存非空').toBeGreaterThan(0);
+
+    // ---- 动作：A 撤权（INCR + publish）------------------------------------
+    db.level = SecurityLevel.PUBLIC;
+    await a.service.invalidateSnapshot('u-1');
+
+    // ---- 断言：广播的副作用（缓存被清空），而非「B 读到新值」 --------------
+    expect(
+      localCacheOf(b.service).size,
+      'B 收到 perm:invalidate 后进程内缓存必须被清空（广播通道的唯一可观测职责）',
+    ).toBe(0);
+    expect(localCacheOf(b.service).has(keyOf('u-1', 0)), 'v0 必须已被清除').toBe(false);
+  });
+
+  // ---------------------------------------------------------------- T3 端到端
+  it('T3【端到端】两通道并存，B 必须立即看到降级后的权限', async () => {
+    // 【本用例在测哪道闸门】组合正确性 —— 用户视角的最终结论。
+    // T1/T2 各自只覆盖一条通道，理论上仍存在「两条各自对、组合起来错」的空间
+    // （例如广播把新 key 也误删、或清缓存与重建发生竞态）。
+    // 本条按生产真实形态（双通道都在）验证：撤权后 B 的下一次读取必须是新权限。
+    //
+    // 注意它的断言**不能替代** T1/T2：这条绿不代表两通道各自有效，
+    // 只有 T1 红时才是兜底失效，只有 T2 红时才是广播失效，本条只负责「合起来对」。
+    const { redis, db, a, b } = makeCluster();
+    await subscribeReal(redis, b);
+
+    expect((await b.service.getSnapshot('u-1')).maxSecurityLevel).toBe(SecurityLevel.SECRET);
+
+    db.level = SecurityLevel.PUBLIC;
+    await a.service.invalidateSnapshot('u-1');
+
+    const onB = await b.service.getSnapshot('u-1');
+    expect(onB.maxSecurityLevel, '节点 B 必须立即看到降级后的密级').toBe(SecurityLevel.PUBLIC);
+    expect(onB.roles, '角色也必须随之收敛').toEqual(['R-ARCHIVIST']);
   });
 });
 
