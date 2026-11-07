@@ -171,4 +171,13 @@ describe('computeRoundGaps｜单轮断号计算', () => {
     const r = computeRoundGaps(['x-001', 'x-001', 'x-002']);
     expect(r.gaps).toBe(0);
   });
+
+  it('共存：解析失败存在时，真断号也不得被掩盖（gaps=1 且 unparsableCount=1）', () => {
+    // fail-closed 之后最该确认的性质：解析失败与真跳号同场出现时，
+    // 断号必须照常检出（gaps=1），解析失败独立上报（unparsableCount=1）。
+    // 若实现把不可解析者计入区间（或反之丢弃整轮），这条会红。
+    const r = computeRoundGaps(['1-2024-A-30-0001-001', '1-2024-A', '1-2024-A-30-0001-003']);
+    expect(r.gaps, '001 与 003 之间缺 002，跳号照常检出').toBe(1);
+    expect(r.unparsableCount, '解析失败独立上报，不与断号混算').toBe(1);
+  });
 });
