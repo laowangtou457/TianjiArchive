@@ -1,0 +1,36 @@
+# =============================================================================
+# Docker 构建上下文排除清单
+#
+# 为什么必须有此文件（实战根因，2026-11-07 联调）：
+#   仓库曾无 .dockerignore，宿主（Windows + Git Bash）的 node_modules 会
+#   整体进入构建上下文，并在 Dockerfile 的 `COPY apps/api apps/api` 等指令处
+#   覆盖容器内由 pnpm install 刚装好的 Linux 版 node_modules。
+#   宿主 pnpm 符号链接指向 Windows 绝对路径（/e/TianjiArchive/...），
+#   在 Linux 容器内全部失效 → `Cannot find module .../nest.js`。
+#   症状与「依赖没装上」完全一致，但 deps 阶段单独验证依赖完好——
+#   是 COPY 把宿主目录盖掉了容器目录，属于上下文污染，非依赖缺失。
+#
+# 教训：任何多阶段 COPY 源码目录的 Dockerfile，都必须配 .dockerignore，
+#       否则宿主产物（node_modules/dist/构建缓存）必然泄漏进镜像。
+# =============================================================================
+
+# 依赖与构建产物（各包独立安装，镜像内自行 pnpm install / build）
+**/node_modules
+**/dist
+
+# 数据卷与运行时产物（体积大、宿主持有、容器内自管理）
+volumes
+
+# 版本控制与本地配置
+.git
+.gitignore
+**/.DS_Store
+
+# 日志与临时文件
+*.log
+/tmp
+
+# 测试与覆盖率产物（不进镜像）
+coverage
+**/*.spec.ts
+**/__tests__
