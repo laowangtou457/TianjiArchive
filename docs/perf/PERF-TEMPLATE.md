@@ -71,15 +71,55 @@ git rev-parse HEAD          # 填完整 hash
 git status --short          # 必须为空（有未提交改动则该报告标记为「非基线」）
 ```
 
+**双锚定采集命令**（在**宿主机仓库根**执行，`dist` 取容器内实际运行的那份）：
+
+```bash
+# source 锚：仓库工作区里的 TS 源码
+sha256sum apps/api/src/scripts/danghao-concurrency-bench.ts \
+          apps/api/src/scripts/danghao-bench-judge.ts
+
+# dist 锚：容器里真实被执行的那份编译产物（必须从容器内取，不能取宿主机 dist）
+docker compose exec api sha256sum \
+  apps/api/dist/scripts/danghao-concurrency-bench.js \
+  apps/api/dist/scripts/danghao-bench-judge.js
+```
+
 | 项 | 填写 |
 |---|---|
 | commit hash | |
 | 工作区是否 clean | |
 | 压测脚本路径 | `apps/api/src/scripts/danghao-concurrency-bench.ts` |
-| 脚本 sha256 | `sha256sum apps/api/src/scripts/danghao-concurrency-bench.ts` |
 
-> 记 sha256 的理由：脚本一旦被修改（比如判据被放宽），同样的 commit hash
-> 会有不同的压测语义。hash + sha256 双锚定才能保证"这份报告对应的确实是这套判据"。
+**source 锚（TS 源码 · 供审计与 diff）**
+
+| 文件 | sha256 |
+|---|---|
+| `src/scripts/danghao-concurrency-bench.ts` | |
+| `src/scripts/danghao-bench-judge.ts` | |
+
+**dist 锚（容器内实际执行的 JS 产物 · 证明跑的就是这份源码）**
+
+| 文件 | sha256 |
+|---|---|
+| `apps/api/dist/scripts/danghao-concurrency-bench.js` | |
+| `apps/api/dist/scripts/danghao-bench-judge.js` | |
+
+| 一致性核对 | 结果 |
+|---|---|
+| 宿主 `git status --short` 为空（源码 == HEAD） | ☐ |
+| 容器内 `dist` 由本次 `docker compose build` 产出，非挂载的旧文件 | ☐ |
+| 本次 `docker compose build` 无缓存命中提示「CACHED」（否则可能沿用旧层） | ☐ |
+
+> **为什么必须双锚**：commit hash 只锚住「提交」，锚不住「实际执行的东西」。
+> 两类错配它都抓不出来——
+> ①判据被放宽但没提交（源码脏）→ 同一个 hash 跑出不同语义；
+> ②源码改了但容器没重建（旧 `dist`）→ 报告证明的是一份已不存在的代码。
+> **source 锚供人审计（可读、可 diff），dist 锚回答「这份报告对应的确实是这套判据」。**
+> 只锚 source 会漏掉 ②，那是「报告看着严谨、实际证明的对象错了」，与静默空转同族。
+>
+> **dist 必须从容器内取**：仓库无 `.dockerignore`，宿主机 `apps/api/dist` 与容器内同名路径
+> 是两个独立文件。在宿主机 `sha256sum dist/...` 得到的是本地构建产物，与容器里跑的那份
+> 可能不同，锚了等于没锚。
 
 ---
 
@@ -318,7 +358,7 @@ IS_PASS: ________（YES / NO）
 - [ ] Docker 全局内存上限已记
 - [ ] 数据基线（全宗数/规则数/fonds_no/规则段数）齐全
 - [ ] commit hash + 工作区 clean 已确认
-- [ ] 压测脚本 sha256 已记
+- [ ] **双锚已记**：source sha256（2 个 TS 文件）+ dist sha256（容器内 2 个 JS 产物），且三行一致性核对已勾
 - [ ] CONCURRENCY / ROUNDS 已记，理论总量已算
 - [ ] **原始输出完整粘贴，含 stderr**
 - [ ] 逐轮明细表已填满 10 行
