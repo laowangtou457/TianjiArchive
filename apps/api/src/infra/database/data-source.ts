@@ -62,7 +62,9 @@ for (const file of resolveEnvFiles()) {
 function resolveMigrationGlob(): string {
   const inDist = __dirname.split(path.sep).includes('dist');
   const ext = inDist ? 'js' : 'ts';
-  return path.join(__dirname, `migrations/*.${ext}`);
+  // 仅匹配时间戳前缀的迁移文件；目录内的 seed-data.ts（共享种子构建函数，非迁移）
+  // 会被 *.ts 通配误纳，导致 TypeORM 报「migration name is wrong」（联调现场实证）
+  return path.join(__dirname, `migrations/[0-9]*.${ext}`);
 }
 
 export function buildDataSourceOptions(): DataSourceOptions {
