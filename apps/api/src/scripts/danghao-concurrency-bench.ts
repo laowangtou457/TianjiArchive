@@ -173,10 +173,10 @@ async function main(): Promise<void> {
     console.log(`断号数（各轮 gaps 合计）：${totalGaps}`);
     console.log(`理论应落库：${CONCURRENCY * ROUNDS}`);
 
-    // 五项判据，缺一不可。
-    // 第 6 项 gaps === 0 不可省：条件 5 只约束「取号总数」，
+    // 六项判据，缺一不可。
+    // 第 6 项 totalGaps === 0 不可省：条件 5 只约束「取号总数」，
     // 无法发现序号跳号（例：单轮拿到 1,2,3,7,8,…,203 共 200 个，
-    // gaps = 3 但 dbTotal 仍凑满，五项全绿 —— 档号被"吃掉"却判定通过）。
+    // gaps = 3 但 dbTotal 仍凑满，前五项全绿 —— 档号被"吃掉"却判定通过）。
     // 档号缺号与重号同级严重：编号永久空缺，将来可能被误用或对不上账。
     const pass =
       totalDuplicate === 0 &&
