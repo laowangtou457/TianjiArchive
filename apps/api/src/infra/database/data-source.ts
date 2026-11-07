@@ -71,6 +71,11 @@ export function migrationGlobFor(dirname: string): string {
   return path.join(dirname, `migrations/[0-9]*.${ext}`);
 }
 
+/** 迁移通配唯一入口：所有 migrations 配置必须经 migrationGlobFor 生成。
+ *  QA 残余观察（2026-11-07）：若调用方绕过本函数另写 selector，
+ *  data-source.migrations.spec.ts 的双分支用例不会红（它打的是纯函数本体）。
+ *  当前调用方仅此一处，风险面小；若将来增至多处，升级为准静态约束
+ *  （导出收敛或 lint 限制裸写 migrations glob）。 */
 function resolveMigrationGlob(): string {
   return migrationGlobFor(__dirname);
 }
