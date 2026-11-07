@@ -246,6 +246,17 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api \
 
 **任何一轮出现 `duplicates: [...]` 或 `gaps > 0` 即失败**，脚本会打印具体档号。
 
+> ⚠️ **本压测没有延迟阈值**。`IS_PASS` 是布尔判据（五项全满足），
+> 每轮 `elapsedMs` 只是观测值，**不参与判定**。把耗时当通过标准是常见误写。
+>
+> 另外脚本的 `IS_PASS` 判定式**不包含 `gaps`**（只含 duplicates），
+> 所以即使 `IS_PASS: YES`，也必须人眼确认每轮 `gaps` 为 0。
+> 报告模板 `docs/perf/PERF-TEMPLATE.md` 已把这条列为必填自检项。
+
+**正式压测请用模板出报告**：复制 `docs/perf/PERF-TEMPLATE.md` 为
+`docs/perf/YYYY-MM-DD-danghao-run<N>.md`，环境记录、原始输出、逐轮明细、边界声明缺一不可——
+只写「IS_PASS: YES」而无原始输出的结论不可审计。
+
 ### 5.4 压测不通过时的排查顺序
 
 1. 看 `danghao_rule` 的 `next_value` 是否被别的进程也改（多实例并发时无法保证）
@@ -317,3 +328,160 @@ rm -rf volumes/{postgres,wal_archive,esdata,minio,redis}
 | `ES_EXPOSED_PORT` | `9200`（若冲突改 9201） | |
 | 磁盘 | ≥ 20 GB 空闲 | 镜像约 6 GB + 数据卷 |
 | 首次 `docker compose build` | 留 15 分钟 | IK 构建 + 4 个应用镜像 |
+
+---
+
+## 九、每步失败怎么回滚
+
+> 原则：**先判定「能不能修」，再决定「修还是退」**。
+> 能修的问题不要回滚（回滚一次的成本远高于修一次）；
+> 但**数据已被写坏**的情况下不要硬修，直接退到干净基线。
+>
+> 回滚粒度由小到大共 4 级，按需选用，**不要一上来就用最重的那级**：
+>
+> | 级别 | 动作 | 影响 | 耗时 |
+> |---|---|---|---|
+> | L1 | 重启单个服务 | 该服务中断，数据不动 | ~30s |
+> | L2 | 重建单个镜像 | 该服务中断，数据不动 | 3–8 min（ES）/ 1–2 min（其它） |
+> | L3 | 清空指定数据卷重来 | **该服务数据丢失** | 2–5 min |
+> | L4 | 全清（`down -v` + 删 volumes） | **全部数据丢失** | 10–15 min |
+
+### 9.1 逐步骤失败处置表
+
+#### 步骤 1：`docker compose build`
+
+| 失败现象 | 判定 | 回滚/处置 | 级别 |
+|---|---|---|---|
+| `failed to connect to dockerDesktopLinuxEngine` | 引擎未起，不是构建问题 | 打开 Docker Desktop 等 Engine running，无需回滚 | — |
+| IK 构建 `plugin install` 失败 / 下载 404 | 网络或版本号错 | 走 §3.2 路径 A（放离线 zip 到 `infra/elasticsearch/ik/`）后重建 | L2（仅 elasticsearch） |
+| `COPY ik/ ... not found` | build context 缺目录 | 确认 `infra/elasticsearch/ik/.gitkeep` 存在 | — |
+| `no space left on device` | 磁盘满 | `docker system prune -f` 清悬空镜像/构建缓存；**不要** `-a`（会删掉在用镜像） | — |
+| `pnpm install` 阶段失败 | 依赖或 registry 问题 | 查构建日志的网络段；必要时在 Dockerfile 里换 registry | L2 |
+
+> **构建失败不影响已运行的旧容器**（build 与 up 是两件事）。
+> 若正在跑旧版本而新 build 失败，**旧版本继续可用**，可以从容排查，不必急着 down。
+
+#### 步骤 2：`docker compose up -d`
+
+| 失败现象 | 判定 | 回滚/处置 | 级别 |
+|---|---|---|---|
+| `port is already allocated` | 宿主机端口被占 | 改 `.env` 里 `*_EXPOSED_PORT` 后 `up -d`；**先 `docker compose down` 再 up**，否则旧容器仍占端口 | L1 |
+| `minio-init` 退出码非 0 | 建桶失败 | 正常应为 `exited(0)`。非 0 时看 `docker compose logs minio-init`，多为 MinIO 还没 ready → 单独 `docker compose restart minio-init` | L1 |
+| ES 反复重启 | 多为 `volumes/esdata` 权限 | 见 §1 的 chown 命令。**若 chown 无效**，说明 esdata 已损坏 → L3 清空重建 | L1 / L3 |
+| api 一直 `unhealthy` | 依赖没全 healthy | `docker compose logs api` 看连不上哪个。**先等 ES（start_period 60s）**，别急着判死 | — |
+| api 报 `JWT_ACCESS_SECRET` 长度不足 | 口令没改或太短 | 改 `.env`，`docker compose up -d api` 重建容器（env 变更需重建而非 restart） | L1 |
+| 整体起不来且无明确错误 | 状态混乱 | `docker compose down`（**不带 -v**，数据保留）后重新 `up -d` | L1 |
+
+> **关键区别**：`restart` 不重读 `.env`，`up -d` 才会。改环境变量后必须
+> `docker compose up -d <service>`（compose 会检测到配置变化并重建容器）。
+
+#### 步骤 3：`docker compose exec api pnpm migration:run`
+
+| 失败现象 | 判定 | 回滚/处置 | 级别 |
+|---|---|---|---|
+| `relation "xxx" already exists` | 卷里有旧数据但 migration 表为空（如从中途导入） | 先 `SELECT * FROM migrations ORDER BY id;` 核对；**能补记录就补**，不要盲目清库 | — |
+| 某条 migration 执行到一半失败 | 表结构已部分变更 | **不要直接重跑**。先 `SELECT * FROM migrations` 看失败那条是否已登记。未登记但结构已改 → 手工把结构改回去（或从 §10A 的备份恢复），再重跑 | L3（最坏） |
+| `permission denied for schema public` | DB 用户权限 | `ALTER SCHEMA public OWNER TO tianji;` | — |
+| 连接超时 | PG 未 ready | `docker compose exec postgres pg_isready`，等 healthy 再跑 | — |
+
+> **回滚单个 migration 的唯一安全方式是从备份恢复**，因为 TypeORM 的 `down()`
+> 在本项目中只对少数 migration 实现了完整逆操作。生产上不要指望 `migration:revert`。
+>
+> 迁移前务必先备份（§10A 的 C 节有命令）：
+> ```bash
+> docker compose exec postgres pg_dump -U tianji -Fc tianji_archive \
+>   > volumes/backup/pre-migrate-$(date +%Y%m%d-%H%M).dump
+> ```
+
+#### 步骤 4：`docker compose exec api pnpm seed`
+
+| 失败现象 | 判定 | 回滚/处置 | 级别 |
+|---|---|---|---|
+| `duplicate key value violates unique constraint` | 已跑过 seed（非幂等） | **正常现象，说明数据已在**。用 §5.1 的查询确认有数据即可，不必重跑 | — |
+| 找不到全宗 → 后续压测失败 | seed 没跑或跑失败 | 补跑；若报冲突说明部分成功，先清 `fonds` 相关表再跑 | L3（谨慎） |
+| seed 跑到一半失败 | 数据半成品 | **这是最麻烦的状态**：部分表有数据、部分没有。正确做法是 `docker compose down` + 清 `volumes/postgres` + 重新 migration + seed（L4 的 DB 部分） | L3 |
+
+> **seed 非幂等**是已知设计——它假设空库。因此**不要在已有业务数据的库上重跑 seed**，
+> 会污染真实数据。要重置演示数据，走 L3。
+
+#### 步骤 5：IK 验证（`_analyze`）
+
+| 失败现象 | 判定 | 回滚/处置 | 级别 |
+|---|---|---|---|
+| `analyzer [ik_max_word] not found` | IK 未装上 | `docker compose build --no-cache elasticsearch` 重建 | L2 |
+| `_analyze` 返回单字切分（「天」「玑」分开） | IK 装了但词典没生效 | 检查 `custom_dict.dic` 是否挂载/打进镜像；重启 ES 让词典重载 | L1 |
+| `_analyze` 返回整串不切 | 用了 `standard` 分析器 | 检查 mapping 是否写了 `analyzer: ik_max_word` | — |
+| ES 返回 503 | 尚未 ready | 等 `_cluster/health` 变 green/yellow 再试 | — |
+
+> **IK 是功能性问题，不是数据问题**：装不上不影响已有数据，可以先用
+> `standard` 分析器跑通全流程，事后再补 IK。检索质量会差，但系统可用。
+
+#### 步骤 6：`perf:danghao`
+
+| 失败现象 | 判定 | 回滚/处置 | 级别 |
+|---|---|---|---|
+| `数据库中没有全宗，请先执行 seed` | 前置缺失 | 补跑 seed，**不需要回滚任何东西** | — |
+| `IS_PASS: NO` + 有重号 | 序列实现缺陷 | **不是环境问题，是代码问题**。按 §5.4 排查；`perf_danghao_probe` 已被 finally 的 DROP 清掉，需要证据就改脚本保留表 | — |
+| `IS_PASS: NO` + 有取号失败 | 锁竞争/超时 | 看 `✖ 取号失败` 的具体异常；多为 `CONCURRENCY` 过高超过 PG `max_connections` | — |
+| 连接数耗尽 `too many clients` | PG 连接池上限 | 降 `CONCURRENCY`；或调高 PG `max_connections`（需重建 postgres 容器） | L1 |
+| 脚本中途崩溃 | 见 stderr | 脚本 `finally` 会尝试 DROP 探针表并 destroy 数据源；若没跑完，手工 `DROP TABLE IF EXISTS perf_danghao_probe;` | — |
+
+> **压测失败不需要回滚环境**——它是只读+独立探针表的测试，不碰业务数据
+> （唯一写入是 `perf_danghao_probe`，脚本自己会清）。
+> 唯一副作用是 `danghao_sequence.next_value` 被真实推进了，
+> 若要让档号从头开始，需手工 `UPDATE danghao_sequence SET next_value = 1;`
+> ——**仅在测试环境这么做，生产环境绝不允许档号回退**。
+
+### 9.2 完整重置（从零开始）
+
+适用于：状态已不可信、或要交付一个干净环境给下一个人。
+
+```bash
+cd /e/TianjiArchive
+
+# 1) 先备份（如果数据有任何保留价值）
+docker compose exec postgres pg_dump -U tianji -Fc tianji_archive \
+  > volumes/backup/before-reset-$(date +%Y%m%d-%H%M).dump
+
+# 2) 停容器（-v 会删 named volume，本项目用 host mount 所以主要靠第 3 步）
+docker compose down
+
+# 3) 清数据卷（这步不可逆）
+rm -rf volumes/{postgres,wal_archive,esdata,minio,redis}
+mkdir -p volumes/{postgres,wal_archive,esdata,minio,redis,backup}
+
+# 4) 重建并启动
+docker compose up -d
+
+# 5) 重跑迁移与种子
+docker compose exec api pnpm migration:run
+docker compose exec api pnpm seed
+
+# 6) 冒烟
+curl -s http://localhost:3000/api/health | jq
+```
+
+> **备份目录 `volumes/backup` 不要删**——第 3 步刻意没包含它，就是留给备份的。
+
+### 9.3 回滚决策速查
+
+```
+出问题
+  │
+  ├─ 错误信息明确指向某个服务？──是──→ 该服务 L1 restart，不行再 L2 rebuild
+  │
+  ├─ 数据可能已被写坏？（迁移半途/seed 半途）──是──→ 从备份恢复，或 L3 清该卷
+  │     └─ 没有备份？──→ 先尝试只清受影响表；不行再 L4
+  │
+  ├─ 只是配置问题（端口/口令/变量）？──是──→ 改 .env + up -d（不是 restart）
+  │
+  └─ 状态完全不可信 ──→ L4 完整重置
+```
+
+**三个反模式（不要做）**：
+
+1. **`docker compose restart` 期待环境变量生效** —— 不会生效，必须 `up -d`
+2. **`docker compose down -v` 后才发现没备份** —— `-v` 不可逆，先备份再动
+3. **在已有业务数据的库上重跑 seed** —— seed 非幂等，会污染真实数据
+
+---
