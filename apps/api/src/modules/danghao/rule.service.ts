@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { EntityManager, IsNull, Repository } from 'typeorm';
 import {
   assertValidTemplate,
   buildScopeKey,
@@ -145,15 +145,30 @@ export class DanghaoRuleService {
 
   /**
    * 匹配规则：门类专属 > 全宗默认 > 兜底内置模板。
+   * @param fondsId 全宗 ID
+   * @param categoryId 门类 ID（null/undefined 表示取全宗默认规则）
+   * @param manager 可选事务管理器。**档号生成路径（generateItemDanghao /
+   *   generateVolumeDanghao）必须传入**：调用方已持有事务连接，若此处再经
+   *   全局连接（this.ruleRepo）读规则，会申请**第二条**池连接——并发超过
+   *   池上限时全体持连接等连接，自死锁（联调现场实证，缺陷 #11：
+   *   pg_stat_activity 20 会话 idle in transaction / last query START
+   *   TRANSACTION / ClientRead）。传 manager 后规则读与取号同事务，
+   *   单连接完成，也保证「取号时读到的规则 = 提交时生效的规则」。
    * @returns 规则实体（可能为合成的兜底规则，id 为空字符串）
    */
-  public async resolveRule(fondsId: string, categoryId?: string | null): Promise<{
+  public async resolveRule(
+    fondsId: string,
+    categoryId?: string | null,
+    manager?: EntityManager,
+  ): Promise<{
     template: DanghaoTemplate;
     resetCycle: ResetCycle;
     ruleId: string | null;
   }> {
+    // 生成路径走事务内的 repository；非事务路径（preview/控制器）保持全局连接
+    const ruleRepo = manager ? manager.getRepository(DanghaoRule) : this.ruleRepo;
     if (categoryId) {
-      const byCategory = await this.ruleRepo.findOne({
+      const byCategory = await ruleRepo.findOne({
         where: { fondsId, categoryId, active: true },
       });
       if (byCategory) {
@@ -164,7 +179,7 @@ export class DanghaoRuleService {
         };
       }
     }
-    const byFonds = await this.ruleRepo.findOne({
+    const byFonds = await ruleRepo.findOne({
       where: { fondsId, categoryId: IsNull(), active: true },
       order: { createdAt: 'DESC' },
     });
@@ -269,10 +284,12 @@ export class DanghaoRuleService {
 
   /**
    * 生成件级档号（在给定事务内取号）。
-   * @param manager 事务管理器（由 ArchiveService 传入，保证取号与 INSERT 同事务）
+   * @param manager 事务管理器（由 ArchiveService 传入，保证取号与 INSERT 同事务）。
+   *   规则解析与机构代码读取**也必须经该 manager**（缺陷 #11）：否则在已持
+   *   事务连接的情况下申请第二条池连接，并发超过池上限即自死锁。
    */
   public async generateItemDanghao(
-    manager: import('typeorm').EntityManager,
+    manager: EntityManager,
     params: {
       fondsId: string;
       fondsNo: string;
@@ -284,12 +301,12 @@ export class DanghaoRuleService {
       volumeNo?: number;
     },
   ): Promise<{ danghao: string; volumeNo: number; itemNo: number; scopeKey: string }> {
-    const resolved = await this.resolveRule(params.fondsId, params.categoryId);
+    const resolved = await this.resolveRule(params.fondsId, params.categoryId, manager);
     const template = resolved.template;
     const resetCycle = resolved.resetCycle;
 
     const retentionCode = this.retentionCode(params.retention ?? Retention.PERM);
-    const orgCode = params.orgCode ?? (await this.firstOrgCode(params.fondsId)) ?? 'BGS';
+    const orgCode = params.orgCode ?? (await this.firstOrgCode(params.fondsId, manager)) ?? 'BGS';
 
     const ctx: DanghaoContext = {
       fondsNo: params.fondsNo,
@@ -335,9 +352,11 @@ export class DanghaoRuleService {
 
   /**
    * 生成卷级档号（在给定事务内取号）。
+   * @param manager 事务管理器。同 generateItemDanghao：规则/机构读取必须经该
+   *   manager，禁止在持有事务连接时再申请全局连接（缺陷 #11 自死锁）。
    */
   public async generateVolumeDanghao(
-    manager: import('typeorm').EntityManager,
+    manager: EntityManager,
     params: {
       fondsId: string;
       fondsNo: string;
@@ -348,12 +367,12 @@ export class DanghaoRuleService {
       catalogNo?: string | null;
     },
   ): Promise<{ danghao: string; volumeNo: number; scopeKey: string }> {
-    const resolved = await this.resolveRule(params.fondsId, params.categoryId);
+    const resolved = await this.resolveRule(params.fondsId, params.categoryId, manager);
     const template = {
       ...resolved.template,
       segments: this.volumeSegmentsOnly(resolved.template.segments),
     };
-    const orgCode = params.orgCode ?? (await this.firstOrgCode(params.fondsId)) ?? 'BGS';
+    const orgCode = params.orgCode ?? (await this.firstOrgCode(params.fondsId, manager)) ?? 'BGS';
     const ctx: DanghaoContext = {
       fondsNo: params.fondsNo,
       catalogNo: params.catalogNo ?? '',
@@ -409,9 +428,11 @@ export class DanghaoRuleService {
     return 'Y';
   }
 
-  /** 取全宗第一个机构代码作为默认机构段（未指定时） */
-  private async firstOrgCode(fondsId: string): Promise<string | null> {
-    const org = await this.orgRepo.findOne({
+  /** 取全宗第一个机构代码作为默认机构段（未指定时）。
+   *  @param manager 档号生成路径传入的事务管理器（缺陷 #11：禁止二次取全局连接） */
+  private async firstOrgCode(fondsId: string, manager?: EntityManager): Promise<string | null> {
+    const orgRepo = manager ? manager.getRepository(OrgNode) : this.orgRepo;
+    const org = await orgRepo.findOne({
       where: { fondsId },
       order: { sort: 'ASC', code: 'ASC' },
     });

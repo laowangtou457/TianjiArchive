@@ -15,6 +15,15 @@
  *     只要有重号，唯一约束会立刻抛 23505，脚本捕获并统计；
  *   - 双重校验：内存去重 + 数据库落库去重计数，两者都一致才算通过。
  *
+ * 历史缺陷 #11（2026-11-07 联调现场，自死锁挂起 18 分钟）：
+ *   档号生成的规则解析曾走全局 repository——任务已持事务连接时再申请第二条
+ *   池连接，CONCURRENCY(200) > 池上限(20) 时全体持连接等连接，栅栏式自死锁
+ *   （pg_stat_activity：20 会话 idle in transaction / ClientRead，last query
+ *   START TRANSACTION）。修复在 rule.service.ts（生成路径全部改经事务 manager，
+ *   单连接完成）。本脚本的第二道防线是**轮级看门狗**：任何原因导致一轮超时
+ *   未完成即打印诊断并退出（exit 2），绝不再静默挂起（「工具不喊疼」家族）。
+ *   生成路径已单连接化，并发大于池上限是合法场景（任务排队等连接），不再受限。
+ *
  * 本文件只负责「采集 + 打印」，不含任何判据算式：
  *   序号提取 / 断号计算 / 通过判据全部在 `danghao-bench-judge.ts`（纯函数、可单测）。
  */
@@ -27,11 +36,14 @@ import { OrgNode } from '../infra/database/entities/org-node.entity';
 import { Category } from '../infra/database/entities/category.entity';
 import { Retention } from '@tianji/shared';
 import { computeRoundGaps, evaluatePass } from './danghao-bench-judge';
+import { armWatchdog } from './danghao-bench-watchdog';
 
 /** 并发度（同时申请档号的协程数） */
 const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY ?? 100));
 /** 轮数 */
 const ROUNDS = Math.max(1, Number(process.env.ROUNDS ?? 5));
+/** 单轮看门狗超时（毫秒）：到点未完成即报错退出（exit 2），防止静默挂起 */
+const ROUND_WATCHDOG_MS = Math.max(30_000, Number(process.env.ROUND_WATCHDOG_MS ?? 300_000));
 
 interface BenchRound {
   round: number;
@@ -96,6 +108,14 @@ async function main(): Promise<void> {
   await ensureProbeTable();
   await AppDataSource.query('TRUNCATE perf_danghao_probe');
 
+  // 池上限诊断：生成路径已单连接化（缺陷 #11 修复），并发 > 池上限是合法场景
+  // （多余任务排队等空闲连接），但如实打印两边数值，挂起时排查有据。
+  const poolMax = Number((AppDataSource.options.extra as { max?: number } | undefined)?.max ?? 10);
+  console.log(`连接池上限=${poolMax}，单轮看门狗=${ROUND_WATCHDOG_MS}ms`);
+  if (CONCURRENCY > poolMax) {
+    console.log(`提示：并发 ${CONCURRENCY} > 池上限 ${poolMax}，任务将排队等连接（合法，修复后不再死锁）；若单轮超看门狗仍未完成请查 exit 2 诊断`);
+  }
+
   const year = Number(process.env.BENCH_YEAR ?? new Date().getFullYear());
   const rounds: BenchRound[] = [];
   let totalSuccess = 0;
@@ -107,6 +127,17 @@ async function main(): Promise<void> {
     for (let round = 1; round <= ROUNDS; round += 1) {
       const started = Date.now();
       const tasks: Array<Promise<string>> = [];
+
+      // 轮级看门狗（缺陷 #11 第二道防线）：任何原因挂起都必须喊疼退出，
+      // 不允许再出现「18 分钟零进展、只能人工 SIGTERM」的工具沉默。
+      const disarm = armWatchdog(ROUND_WATCHDOG_MS, () => {
+        console.error(
+          `✖ 第 ${round} 轮超过 ${ROUND_WATCHDOG_MS}ms 未完成——疑似挂起，watchdog 终止（exit 2）。` +
+            `历史缺陷 #11 形态：并发(${CONCURRENCY}) > 连接池上限(${poolMax}) 且事务内二次取连接。` +
+            `若生成路径已修复仍触发，请查 pg_stat_activity 与本轮堆栈。`,
+        );
+        process.exit(2);
+      });
 
       for (let i = 0; i < CONCURRENCY; i += 1) {
         tasks.push(
@@ -129,6 +160,7 @@ async function main(): Promise<void> {
       }
 
       const settled = await Promise.allSettled(tasks);
+      disarm();
       const generated: string[] = [];
       let rejected = 0;
       for (const s of settled) {
