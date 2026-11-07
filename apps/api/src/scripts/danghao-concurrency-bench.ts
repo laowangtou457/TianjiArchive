@@ -14,6 +14,9 @@
  *   - 每个并发在独立事务里取号并写入探针表 perf_danghao_probe（danghao 唯一索引），
  *     只要有重号，唯一约束会立刻抛 23505，脚本捕获并统计；
  *   - 双重校验：内存去重 + 数据库落库去重计数，两者都一致才算通过。
+ *
+ * 本文件只负责「采集 + 打印」，不含任何判据算式：
+ *   序号提取 / 断号计算 / 通过判据全部在 `danghao-bench-judge.ts`（纯函数、可单测）。
  */
 import { AppDataSource } from '../infra/database/data-source';
 import { DanghaoRuleService } from '../modules/danghao/rule.service';
@@ -23,7 +26,7 @@ import { Fonds } from '../infra/database/entities/fonds.entity';
 import { OrgNode } from '../infra/database/entities/org-node.entity';
 import { Category } from '../infra/database/entities/category.entity';
 import { Retention } from '@tianji/shared';
-import { evaluatePass } from './danghao-bench-judge';
+import { computeRoundGaps, evaluatePass } from './danghao-bench-judge';
 
 /** 并发度（同时申请档号的协程数） */
 const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY ?? 100));
@@ -37,9 +40,12 @@ interface BenchRound {
   distinct: number;
   duplicates: string[];
   gaps: number;
+  /** 本轮无法解析为序号的档号数（第 7 项判据的分量） */
+  unparsableCount: number;
+  /** 本轮无法解析的档号样本，用于失败时定位 */
+  unparsable: string[];
   elapsedMs: number;
 }
-
 
 /** 建探针表 */
 async function ensureProbeTable(): Promise<void> {
@@ -83,6 +89,9 @@ async function main(): Promise<void> {
   console.log(
     `全宗：${fondsNo}；档号规则段数 ${resolved.template.segments.length}，重置周期 ${resolved.resetCycle}`,
   );
+  // 末段类型直接决定序号能否被解析（第 7 项判据的预防性提示，不属于判据本身）
+  const lastSegmentType = resolved.template.segments[resolved.template.segments.length - 1]?.type ?? '(空)';
+  console.log(`档号末段类型：${lastSegmentType}（序号需可解析，否则第 7 项判据判负）`);
 
   await ensureProbeTable();
   await AppDataSource.query('TRUNCATE perf_danghao_probe');
@@ -92,6 +101,7 @@ async function main(): Promise<void> {
   let totalSuccess = 0;
   let totalRejected = 0;
   let totalDuplicate = 0;
+  let totalUnparsable = 0;
 
   try {
     for (let round = 1; round <= ROUNDS; round += 1) {
@@ -131,11 +141,8 @@ async function main(): Promise<void> {
 
       const uniqueSet = new Set(generated);
       const duplicates = generated.filter((d, i) => generated.indexOf(d) !== i);
-      const lastNums = [...uniqueSet]
-        .map((d) => Number.parseInt(d.split('-').pop() ?? '0', 10))
-        .filter((n) => Number.isFinite(n))
-        .sort((a, b) => a - b);
-      const gaps = lastNums.length > 1 ? lastNums[lastNums.length - 1] - lastNums[0] + 1 - lastNums.length : 0;
+      // 断号与解析失败都在纯函数里算，脚本不重复实现（单一算式来源）
+      const { gaps, unparsableCount, unparsable } = computeRoundGaps(generated);
       const elapsedMs = Date.now() - started;
 
       rounds.push({
@@ -145,15 +152,18 @@ async function main(): Promise<void> {
         distinct: uniqueSet.size,
         duplicates: [...new Set(duplicates)],
         gaps,
+        unparsableCount,
+        unparsable,
         elapsedMs,
       });
 
       totalSuccess += generated.length;
       totalRejected += rejected;
       totalDuplicate += duplicates.length;
+      totalUnparsable += unparsableCount;
 
       console.log(
-        `第 ${round} 轮：成功 ${generated.length}/${CONCURRENCY}，去重 ${uniqueSet.size}，重号 ${duplicates.length}，断号 ${gaps}，拒绝 ${rejected}，耗时 ${elapsedMs}ms`,
+        `第 ${round} 轮：成功 ${generated.length}/${CONCURRENCY}，去重 ${uniqueSet.size}，重号 ${duplicates.length}，断号 ${gaps}，解析失败 ${unparsableCount}，拒绝 ${rejected}，耗时 ${elapsedMs}ms`,
       );
     }
   } finally {
@@ -163,7 +173,7 @@ async function main(): Promise<void> {
     const dbTotal = Number(dbRows[0]?.total ?? 0);
     const dbDistinct = Number(dbRows[0]?.distinct ?? 0);
 
-    // 断号汇总：各轮 gaps 之和。gaps 定义见单轮计算处
+    // 断号汇总：各轮 gaps 之和。gaps 定义见 computeRoundGaps
     // （MAX(序号) - MIN(序号) + 1 - COUNT(*)，反映单轮内的序号空洞数）。
     const totalGaps = rounds.reduce((sum, r) => sum + r.gaps, 0);
 
@@ -173,6 +183,7 @@ async function main(): Promise<void> {
     console.log(`落库总数：${dbTotal}，去重后：${dbDistinct}`);
     console.log(`重号数（内存）：${totalDuplicate}；取号失败：${totalRejected}`);
     console.log(`断号数（各轮 gaps 合计）：${totalGaps}`);
+    console.log(`序号解析失败数：${totalUnparsable}`);
     console.log(`理论应落库：${CONCURRENCY * ROUNDS}`);
 
     // 判据逻辑集中在纯函数 evaluatePass 里（可单测、可读、无 DB 依赖）。
@@ -186,13 +197,14 @@ async function main(): Promise<void> {
       concurrency: CONCURRENCY,
       rounds: ROUNDS,
       totalGaps,
+      totalUnparsable,
     });
 
     console.log('');
     if (verdict.pass) {
       console.log('IS_PASS: YES —— 并发取号零重号、零断号，序列连续，全部落库成功');
     } else {
-      console.log('IS_PASS: NO —— 存在重号/断号/丢号/落库不一致，请检查序列实现与唯一约束');
+      console.log('IS_PASS: NO —— 存在重号/断号/丢号/落库不一致/序号解析失败，请检查序列实现与唯一约束');
       // 1) 逐项判据失败原因（判定层，说明"哪条闸门没过"）
       for (const reason of verdict.reasons) {
         console.log(`  ✖ 判据未满足：${reason}`);
@@ -203,6 +215,11 @@ async function main(): Promise<void> {
       }
       for (const r of rounds.filter((x) => x.gaps > 0)) {
         console.log(`  第 ${r.round} 轮断号：gaps=${r.gaps}（序号区间内有空洞）`);
+      }
+      for (const r of rounds.filter((x) => x.unparsableCount > 0)) {
+        const sample = r.unparsable.join(', ');
+        const suffix = r.unparsableCount > r.unparsable.length ? ` …（共 ${r.unparsableCount} 个）` : '';
+        console.log(`  第 ${r.round} 轮序号解析失败：${sample}${suffix}（末段无法解析为数字）`);
       }
       process.exitCode = 1;
     }
