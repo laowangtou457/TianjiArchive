@@ -1,0 +1,29 @@
+sequenceDiagram
+    autonumber
+    actor U as 档案管理员
+    participant W as Web
+    participant A as ArchiveController
+    participant D as DanghaoService
+    participant DB as PostgreSQL
+    participant Q as BullMQ
+    participant X as Extractor
+    participant M as MinIO
+    participant ES as Elasticsearch
+    U->>W: 填写件级表单并提交
+    W->>A: POST /api/archives/volumes/:vid/items
+    A->>D: assignDanghao(fondsId, categoryId, ctx)
+    D->>DB: SELECT ... FOR UPDATE danghao_sequence(scope_key)
+    D->>DB: UPDATE next_value+1; COMMIT
+    D-->>A: 档号(唯一约束兜底重试)
+    A->>DB: INSERT archive_item
+    A-->>W: {code:0,data:item}
+    W->>M: 分片直传电子文件(预签名)
+    W->>A: POST /api/files/complete
+    A->>M: 重算 SHA-256 比对
+    A->>DB: INSERT electronic_file(PENDING)
+    A->>Q: enqueue extract(fileId)
+    X->>Q: 消费
+    X->>M: 读原件/写预览与缩略图
+    X->>DB: INSERT document_text; status=OK
+    X->>ES: INDEX 元数据+正文(IK)
+    U->>ES: 全文检索(AccessFilterBuilder 密级/范围过滤 + 高亮 + 分面)

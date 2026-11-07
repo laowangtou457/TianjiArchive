@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/** 全局基础样式（MUI CSSBaseline 已做重置，此处只补充业务相关） */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: #f5f7fb;
+  color: #1a202c;
+  -webkit-font-smoothing: antialiased;
+}
+
+/** 档案号等宽展示，便于核对 */
+.mono {
+  font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+}
+
+/** 检索结果高亮 */
+mark.hl {
+  background-color: #fef3c7;
+  color: #92400e;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/** 打印样式（档案清单打印） */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff;
+  }
+}
+
+/** 高密度列表：行高压缩，避免 1366x768 下滚动过长 */
+.dense-table .MuiTableCell-root {
+  padding: 4px 8px;
+  font-size: 0.8125rem;
+}
+
+/** 拖动上传区域 */
+.upload-dropzone {
+  border: 1px dashed #a0aec0;
+  border-radius: 6px;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.upload-dropzone:hover {
+  border-color: #1a2b7a;
+  background-color: #f7fafc;
+}

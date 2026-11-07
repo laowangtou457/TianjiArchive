@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------- 依赖与构建产物
+node_modules/
+dist/
+build/
+.turbo/
+coverage/
+*.tsbuildinfo
+packages/shared/.build/
+
+# ---------------------------------------------------------------- 环境与密钥
+# .env 含真实口令，绝不入库；.env.example 是模板，必须入库
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------------------------------------------------------------- 运行时数据卷
+# docker compose 的宿主机挂载目录（PG/ES/MinIO/Redis 数据 + WAL 归档）
+volumes/
+data/
+
+# ---------------------------------------------------------------- 备份产物
+backups/
+backup/
+*.dump
+*.dump.gz
+*.sql.gz
+*.tar.gz
+*.tgz
+*.zip
+
+# ---------------------------------------------------------------- 迁移/压测临时文件
+apps/cli-migrator/*.sqlite
+apps/cli-migrator/*.db
+.tianji-migrate.db
+
+# ---------------------------------------------------------------- 日志与系统文件
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------- 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# ---------------------------------------------------------------- 测试与调试
+htmlcov/
+.vitest-cache/
+*.lcov

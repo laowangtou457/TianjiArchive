@@ -1,0 +1,137 @@
+classDiagram
+    class Fonds {
+        +UUID id
+        +string fonds_no
+        +string name
+        +string org_name
+        +int year_start
+        +int year_end
+        +string status
+    }
+    class OrgNode {
+        +UUID id
+        +UUID fonds_id
+        +UUID parent_id
+        +string code
+        +string name
+    }
+    class Category {
+        +UUID id
+        +string code
+        +string name
+        +jsonb field_schema
+    }
+    class DanghaoRule {
+        +UUID id
+        +UUID fonds_id
+        +UUID category_id
+        +jsonb segments
+        +string separator
+        +string reset_cycle
+    }
+    class DanghaoSequence {
+        +UUID id
+        +string scope_key
+        +bigint next_value
+    }
+    class Volume {
+        +UUID id
+        +UUID fonds_id
+        +string danghao
+        +string title
+        +string responsible
+        +int year
+        +string retention
+        +string security_level
+        +string status
+    }
+    class ArchiveItem {
+        +UUID id
+        +UUID volume_id
+        +UUID fonds_id
+        +string danghao
+        +string title
+        +string doc_no
+        +date doc_date
+        +int year
+        +string retention
+        +string security_level
+        +string status
+        +string open_flag
+    }
+    class ElectronicFile {
+        +UUID id
+        +UUID item_id
+        +string object_key
+        +string filename
+        +bigint size
+        +string sha256
+        +string extract_status
+    }
+    class DocumentText {
+        +UUID item_id
+        +UUID file_id
+        +text content
+        +int version
+    }
+    class BorrowOrder {
+        +UUID id
+        +string order_no
+        +UUID applicant_id
+        +UUID item_id
+        +string purpose
+        +string mode
+        +string status
+    }
+    class BorrowApproval {
+        +UUID id
+        +UUID order_id
+        +UUID approver_id
+        +int level
+        +string action
+        +string opinion
+    }
+    class User {
+        +UUID id
+        +string username
+        +string password_hash
+        +int max_security_level
+    }
+    class Role {
+        +UUID id
+        +string code
+        +jsonb permissions
+    }
+    class UserDataScope {
+        +UUID id
+        +UUID user_id
+        +string scope_type
+        +UUID scope_ref_id
+    }
+    class AuditLog {
+        +bigint id
+        +UUID user_id
+        +string action
+        +string object_type
+        +string result
+        +timestamptz created_at
+    }
+    class KbEntry {
+        +UUID id
+        +UUID item_id
+        +string source_danghao
+        +string security_level
+        +text chunk
+        +string embedding_status
+    }
+    Fonds "1" --> "*" OrgNode
+    Fonds "1" --> "*" DanghaoRule
+    Volume "*" --> "1" Fonds
+    Volume "1" --> "*" ArchiveItem
+    ArchiveItem "1" --> "*" ElectronicFile
+    ArchiveItem "1" --> "0..*" DocumentText
+    ArchiveItem "1" --> "*" BorrowOrder
+    BorrowOrder "1" --> "*" BorrowApproval
+    User "*" --> "*" Role
+    User "1" --> "*" UserDataScope
+    ArchiveItem "1" --> "0..*" KbEntry

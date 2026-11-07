@@ -1,0 +1,30 @@
+{
+  "name": "@tianji/cli-migrator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "天玑档案管理系统 —— 存量数据迁移 CLI（Excel 目录 + 文件目录树挂接，断点续传）",
+  "bin": {
+    "tianji-migrate": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "ts-node src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tianji/shared": "workspace:*",
+    "better-sqlite3": "^11.3.0",
+    "commander": "^12.1.0",
+    "exceljs": "^4.4.0",
+    "minio": "^8.0.1",
+    "p-limit": "^3.1.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.7.5",
+    "@types/pg": "^8.11.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.2"
+  }
+}
