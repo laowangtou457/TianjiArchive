@@ -1,0 +1,51 @@
+# =============================================================================
+# 联调临时覆盖：摘除 MinIO（对象存储）
+#
+# 原因（外部既成事实，非本项目缺陷）：
+#   MinIO 开源版已于 2024 年归档停服。实测证据：
+#     - Docker Hub: minio/minio 与 minio/mc 均返回
+#       "pull access denied ... repository does not exist"（仓库级消失，非网络故障）
+#     - dl.min.io: HTTP 410 Gone，页面明示
+#       "The open-source MinIO Server, MinIO Client (mc) and MinIO KES projects
+#        are archived and no longer maintained. MinIO does not provide product
+#        support, security updates, or security advisories for them."
+#     - Docker Hub 缓存代理 docker.m.daocloud.io: minio 镜像返回 denied
+#       （该站本身可用，busybox 可拉；是上游已删，缓存无法变出镜像）
+#
+# 摘除前提（已核查，见 apps/api/src/...）：
+#   档号取号链路 generateItemDanghao → rule.service → sequence.service
+#   为纯 DB 路径（sequence.service 仅依赖 @nestjs/common / typeorm / @tianji/shared），
+#   不触及 S3。压测脚本 danghao-concurrency-bench.ts 亦无 storage 依赖。
+#   api 的 MinioService.onModuleInit 有 try/catch，失败仅 warn 降级，
+#   因此无需改动任何应用代码，API 可正常启动。
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.nominio.override.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.nominio.override.yml exec api ...
+#
+# 影响面（联调报告中须如实记录）：
+#   - /api/health 的 status 会返回 degraded，deps.minio.ok = false（HTTP 仍 200）
+#   - P0 电子文件挂接功能本次「未验证」
+#   - 生产部署前必须重议对象存储选型（MinIO 已无安全更新与安全公告）
+# =============================================================================
+services:
+  # MinIO 服务本体不启动（profiles 未激活时不参与 up）
+  minio:
+    profiles: ['disabled']
+
+  # 桶初始化 sidecar 同样不启动
+  minio-init:
+    profiles: ['disabled']
+
+  # 三处 depends_on 摘除（否则 minio 不 healthy 时这三个服务根本不会被拉起）
+  api:
+    depends_on:
+      minio: !reset null
+
+  extractor:
+    depends_on:
+      minio: !reset null
+
+  backup:
+    depends_on:
+      minio: !reset null
