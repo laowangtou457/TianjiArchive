@@ -760,8 +760,13 @@ cp .env.example .env   # 改 5 个口令
 docker compose build && docker compose up -d
 docker compose exec api pnpm migration:run && docker compose exec api pnpm seed
 docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api pnpm --filter @tianji/api perf:danghao
-# 另需：2 条多实例 skip 启封实跑 + IK 分词冒烟（详见 docs/DEPLOY.md）
+# 另需：IK 分词冒烟（详见 docs/DEPLOY.md）；多实例 C-5 用例已启封为单测 T 类 3 条，无需容器侧操作
 ```
+
+> **压测证据的锚定强度须分两层表述**（工程师核实，QA 独立验证：`apps/api/package.json` `perf:danghao` 实为 `ts-node src/scripts/danghao-concurrency-bench.ts`，仓库无 `.dockerignore`）：
+> 1. **判据层（TS 源码）**：压测脚本跑的是 TS 源码，工作区 clean + commit 锚即足以证明「跑的是 commit X 的判据」；
+> 2. **被测服务层（dist 产物）**：API 服务跑的是 `dist/main.js` 编译产物，「服务跑的是 commit X 的代码」**需额外条件**——`docker compose up -d` 须带 `--build`（防 build 缓存命中旧层），且 dist 锚必须 `docker compose exec api sha256sum dist/main.js` **从容器内取**（宿主机 `apps/api/dist` 与容器内是两个独立文件，取宿主机的锚属「形式完整、语义为空」）。
+> 联调轮压测报告若写「版本已锚定」，必须两行分开写，不得合并成一句。
 联调与压测全部通过后可升级为 **PASS**。
 
 **升级影响须知**：本次更名含运行时标识变更（DB 用户、MinIO 别名、localStorage key、默认口令），存量环境不能原地升级，须按 `docs/DELIVERY-CHECKLIST.md` §10A 执行（QA 已核对该节与代码实际一致）。
