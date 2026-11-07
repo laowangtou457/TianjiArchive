@@ -109,9 +109,18 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api \
 
 ---
 
-## 三、通过判据（脚本内 `IS_PASS` 的完整逻辑）
+## 三、通过判据（`evaluatePass()` 的完整逻辑）
 
-脚本 `danghao-concurrency-bench.ts` 末尾的判定式，六项**全部成立**才算通过：
+判据的权威实现是 **`apps/api/src/scripts/danghao-bench-judge.ts` 导出的纯函数
+`evaluatePass(stats): { pass, reasons }`**（b62bd1f 提取，零依赖、可单测）。
+压测脚本 `danghao-concurrency-bench.ts` 只负责采集统计量并调用它，
+打印 `IS_PASS` 与 `reasons`；判据算式**不在脚本里重复写第二遍**。
+
+> 读报告时认这一处：若本表与 `danghao-bench-judge.ts` 不一致，以源码为准，
+> 且应视为本模板的缺陷（提 issue 修模板）。判据回归测试见
+> `apps/api/__tests__/danghao-bench-judge.spec.ts`（9 条，逐项钉住失败模式）。
+
+六项**全部成立**才算通过：
 
 | # | 条件 | 含义 | 不满足时说明什么 |
 |---|---|---|---|
@@ -119,7 +128,7 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api \
 | 2 | `totalRejected === 0` | 零取号失败 | 锁竞争过激 / 超时 / 唯一约束冲突被捕获 |
 | 3 | `dbTotal === dbDistinct` | 落库后零重号 | **唯一索引没拦住**（最严重） |
 | 4 | `dbTotal === totalSuccess` | 内存成功数与落库数一致 | 事务提交丢失 / 回滚未察觉 |
-| 5 | `dbTotal === CONCURRENCY × ROUNDS` | 全部取号都拿到了 | 有号被静默吞掉（断号） |
+| 5 | `dbTotal === concurrency × rounds` | 全部取号都拿到了 | 有号被静默吞掉（断号） |
 | 6 | `totalGaps === 0`（各轮 `gaps` 合计为 0） | 序号区间内无空洞 | 序列跳号——档号被"吃掉" |
 
 **第 6 项为什么必须有**（曾被遗漏，已修）：条件 5 只约束「取号总数」，
@@ -130,6 +139,10 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api \
 > 修复前状态：`gaps` 变量在脚本里被计算、被打印，却未进入 `pass` 表达式。
 > 这类「算了但没判」的缺口最难发现——输出里明明有 `断号 3` 这个字，
 > 汇总却报 `IS_PASS: YES`。判据必须自洽，不能依赖人眼复核脚本已算出的数。
+>
+> 该漏洞现有回归测试兜住：`danghao-bench-judge.spec.ts` 的
+> 「【f67a60f 反例】跳号凑满总数」一条，把当时的反例原样固化。
+> 若有人删掉第 6 项，这条会红。
 
 **双重校验的设计意图**：条件 1 是应用层自检，条件 3 是数据库层自检。
 只查 1 会漏掉"内存里不重复但落库时被覆盖"（若唯一索引缺失）；
@@ -140,6 +153,11 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api \
 
 `gaps` 字段 = `MAX(序号) - MIN(序号) + 1 - COUNT(*)`。
 探针表每轮 `TRUNCATE` 后重新计数，所以单轮 `gaps` 应为 0。
+
+**判据用的是「各轮合计」`totalGaps`，不是逐轮判断**：因每轮 `gaps` 恒非负
+（不同序号数不会超过区间长度），「合计为 0」⟺「每轮为 0」，两种写法等价。
+`BenchStats` 只携带聚合值，逐轮明细留在脚本的 `rounds[]` 里供诊断输出。
+判据对 `totalGaps !== 0` 判负（而非 `> 0`），因此异常负值同样被拒绝——单测有专项钉住。
 
 **该值已纳入判据第 6 项**（见上表）。同时也逐轮打印、并在汇总处打印合计，
 报告填写时仍建议逐轮核对一遍——不是为了"补判据"，而是为了在失败时
@@ -259,6 +277,6 @@ IS_PASS: ________（YES / NO）
 - [ ] **原始输出完整粘贴，含 stderr**
 - [ ] 逐轮明细表已填满 10 行
 - [ ] 汇总块六个字段逐项核对
-- [ ] **每轮 gaps 已人工确认为 0**（不仅看 IS_PASS）
+- [ ] **每轮 gaps 已人工确认为 0**（判据已自洽，此步为失败时的定位辅助）
 - [ ] 结论写明 IS_PASS 与判据六项的满足情况
 - [ ] 边界声明（单实例/不经 ES/不含 HTTP 层）已写
