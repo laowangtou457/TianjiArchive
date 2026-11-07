@@ -71,7 +71,7 @@
 | 2 | 全量构建 | `pnpm run build` | shared(8 modules) + api/web/cli-migrator/extractor 全 Done | ✅ |
 | 3 | 类型检查 | `pnpm run typecheck` | 4/4 Done，0 error | ✅ |
 | 4 | 代码规范 | `pnpm run lint` | 0 error **0 warning**（`--max-warnings=0`） | ✅ |
-| 5 | 单元/契约测试 | `pnpm run test` | 24 files / **430 passed + 0 skipped** | ✅ |
+| 5 | 单元/契约测试 | `pnpm run test` | 24 files / **436 passed + 0 skipped** | ✅ |
 | 6 | CI 门禁聚合 | `pnpm run ci:check` | 静态自检 + lint 均通过，EXIT=0 | ✅ |
 | 7 | 仓库完整性 | `git ls-files` / `git status` | 全部源码目录在版本控制内；`.gitignore` 目录模式均已根路径锚定（`784db23` 排查：无锚点 `backup/` 曾致 `apps/api/src/modules/backup/` 与 `infra/backup/` 自建库从未入库，干净克隆编译失败） | ✅ |
 | 8 | 构建上下文 | `.dockerignore` | 存在且排除 `**/node_modules` `**/dist` `volumes`（`b26ab71`：缺失时宿主 Windows 符号链接 node_modules 覆盖容器内依赖，api 镜像构建必失败） | ✅ |
@@ -229,7 +229,7 @@
 | B2 | `@Cron` 无法异步读库 | 心跳每分钟 + 自实现 cron 表达式匹配；非法表达式退化为每小时第 5 分钟并告警 |
 | B3 | CAS 层未被单元测试覆盖 | QA 的 mock `manager` 只有 `create/save/update`，无法验证 `affected` 分支。**需集成测试覆盖**，我在上轮已向 QA 说明 |
 | B4 | C-3 出厂默认值即触发提示 | 30 份 × 20GB > 500GB 是 `blocking: false` 的容量提示，属**有意保留**（容量为估算值，不应硬拦） |
-| B5 | `packages/shared` 曾丢失，现为恢复副本 | 目录迁移时该包因硬链接被 robocopy 跳过而丢失，已从 `apps/api/node_modules/@titan/shared` 副本恢复 16 文件。**行为级证据已足够**：当时 396 用例（含 shared 自身 72+ 条与一致性比对）全绿（*注：396 为该项验收当时的口径，当前基线已增至 430，见 §1 第 5 项*），team-lead 已接受，不再要求字节级 diff。**自本次起已有 git 基线（`902f114`），此后任何丢失/误改都有 diff 可依** |
+| B5 | `packages/shared` 曾丢失，现为恢复副本 | 目录迁移时该包因硬链接被 robocopy 跳过而丢失，已从 `apps/api/node_modules/@titan/shared` 副本恢复 16 文件。**行为级证据已足够**：当时 396 用例（含 shared 自身 72+ 条与一致性比对）全绿（*注：396 为该项验收当时的口径，当前基线已增至 436，见 §1 第 5 项*），team-lead 已接受，不再要求字节级 diff。**自本次起已有 git 基线（`902f114`），此后任何丢失/误改都有 diff 可依** |
 | B6 | IK 镜像构建依赖网络或离线 zip | `infra/elasticsearch/Dockerfile` 优先读 `infra/elasticsearch/ik/*.zip`，否则联网下载。内网环境须预置 zip，详见 `docs/DEPLOY.md` §3 |
 
 ---
@@ -433,6 +433,6 @@ apps/api/__tests__/permission-mutations.consistency.spec.ts 组 4 换成真断�
 ---
 
 **最后更新**：更名 + D 包 + E 包 + CI 自检 + 边界登记 + 部署准备 + **git 基线**全部完成。
-`pnpm run ci:check` / `build` / `typecheck` / `test` 四项全绿（**430 passed + 0 skipped**，107/107 参数断言）。
+`pnpm run ci:check` / `build` / `typecheck` / `test` 四项全绿（**436 passed + 0 skipped**，107/107 参数断言）。
 git 基线：`902f114`（236 文件 / 53,485 行），工作区干净。
 Docker 侧待 WSL2 初始化完成后执行启动与压测。
