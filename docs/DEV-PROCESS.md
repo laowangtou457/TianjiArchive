@@ -141,7 +141,7 @@
 
 ---
 
-## 六、缺陷全记录（#1 – #12）
+## 六、缺陷全记录（#1 – #14）
 
 | # | 缺陷 | 严重度 | 根因 | 修复 | 发现阶段 |
 |---|---|---|---|---|---|
@@ -156,9 +156,11 @@
 | 9 | `data-source` 双导出 | 代码缺陷 | named + default 双导出，TypeORM CLI 报「only one export of DataSource instance」 | 移除 default（3 个消费方均 named import，零影响，`65760bf`） | **联调现场** |
 | 10 | 迁移通配静默空跑 | 代码缺陷 | 以「migrations 目录存在」判定取 `*.js`，ts-node 下匹配 0 文件；收窄后 `seed-data.ts` 又被误纳报 migration name is wrong | `4d44a20` 改按 `__dirname` 是否处于 dist 判定；`1f7b5be` 通配收窄 `[0-9]*`；静态守卫 `756acb5` | **联调现场** |
 | 11 | 压测自死锁 | 高·可用性 | 事务持一条池连接后，`resolveRule` 经全局 repository 申请第二条；并发 200 > 池 20 → 全体互等（PG 指纹：20 会话 `idle in transaction` / `ClientRead` / `START TRANSACTION`）。**生产著录路径同隐患** | `a1a0db7`：规则/机构读取全部改经事务 manager 单连接化 + 轮级看门狗 + 6 条防回归（QA 变异：摘 manager 参数恰好红 1 条） | **联调现场** |
-| 12 | UPDATE RETURNING 双层返回致取号全失败 | 阻断·生产路径 | `manager.query()` 对 `UPDATE ... RETURNING` 返回 `[rowsArray, rowCount]`，`sequence.service.ts` 当单层数组取 `rows[0].next_value` → NaN → 「档号序列取值异常」；430 条单测全绿因 mock 返回单层（替身形态与生产路径不一致） | 修复进行中（返回值归一化 + 真实形态 mock + 变异验证） | **联调现场** |
+| 12 | UPDATE RETURNING 双层返回致取号全失败 | 阻断·生产路径 | `manager.query()` 对 `UPDATE ... RETURNING` 返回 `[rowsArray, rowCount]`，`sequence.service.ts` 当单层数组取 `rows[0].next_value` → NaN → 「档号序列取值异常」；430 条单测全绿因 mock 返回单层（替身形态与生产路径不一致） | `eb44173`：新增 `extractQueryRows<T>(raw)` 归一化双层/单层两种返回形态，`nextInTransaction()` / `reserve()` 共用；`reserve()` 零行改抛 `NO_LOCKED` 不再静默回落 1；防回归改用真实双层 mock（另含单层兼容、零行、peek 单层），基线 430→436 | **联调现场** |
+| 13 | 压测夹具漏传目录号 | 中·测试夹具 | seed 档号规则首段为 `CATALOG`，`renderDanghao` strict 模式要求非空；压测脚本未传 `catalogNo` → 2000 次全报「档号段「目录号」取值为空」 | `648540c`：从库中真实 `category.code` 取 `catalogNo` 传入 | **联调现场** |
+| 14 | 压测未固定卷号致断号为负 | 中·测试夹具 | 未传 `volumeNo` 时各并发事务另起新卷、件号恒为 1，末段序号全相同，`gaps = max-min+1-count` 算出 -1；小并发 2×2 即暴露 | `648540c`：固定 `volumeNo: 1`，让 200 并发在同一卷内竞争件序列；先以 2×2 验证 `IS_PASS: YES` 再跑正式压测 | **联调现场** |
 
-> **统计**：12 个缺陷中 **7 个（#6–#12）是联调/压测现场才发现的**，全部处于 430 条单测覆盖不到的装配层、部署层、真实驱动交互层。这是「单测全绿 ≠ 系统能跑」最有力的一组实证，也是本次坚持做真实环境联调的核心价值。
+> **统计**：14 个缺陷中 **9 个（#6–#14）是联调/压测现场才发现的**（#6–#12 处于 430 条单测覆盖不到的装配层、部署层、真实驱动交互层；#13/#14 为压测夹具与生产档号规则不同步所致）。这是「单测全绿 ≠ 系统能跑」最有力的一组实证，也是本次坚持做真实环境联调的核心价值。
 
 ---
 
@@ -213,14 +215,19 @@
 | 修复后重跑 200×10 | 6 秒返回 `IS_PASS: NO`：2000 次取号全失败「档号序列取值异常」；判据正确报警（零重号/零断号/解析失败 0 全部如实，拒绝 2000、落库 0 被判负） |
 | 单并发复现 1×2 | **同样失败** → 确认与并发无关的确定性缺陷 #12 |
 | 探针定位 #12 | `manager.query('UPDATE ... RETURNING')` → `[[{"next_value":"1"}],1]` 双层；SELECT → `[{"y":2}]` 单层；`rows[0].next_value` 为 undefined → NaN |
+| `eb44173` 修复后重跑 200×10 | 取号本身恢复，但 2000 次全报「档号段「目录号」取值为空」→ 定位缺陷 #13（夹具漏传 `catalogNo`） |
+| 小并发 2×2 验证 | 暴露「断号 -1」→ 定位缺陷 #14（未固定卷号）；修正夹具后 `IS_PASS: YES` |
+| **终跑 200×10**（`danghao-200x10-PASS-20261107-173726.log`） | **全绿**：每轮成功 200/200，10 轮共 2000 次取号，落库 2000 / 去重 2000，重号 0 / 断号 0 / 解析失败 0 / 拒绝 0，单轮 383~735ms，`IS_PASS: YES` |
 
 > **重要**：压测报告的价值在首跑与二跑都得到体现——工具没有假装通过。第 6/7 项判据、轮级看门狗、fail-closed 判 NO 三次都按设计生效。
+
+> **证据可得性补录（收尾发现）**：四份现场日志曾被 `.gitignore` 第 41 行全局 `*.log` 吞掉，而本文与 QA-REPORT 均引用它们——与缺陷 #7 的「gitignore 无锚点炸弹」同属「文档写了、仓库里没有」。`833802e` 为 `docs/perf/runs/*.log` 开白名单并补录四份日志（348K / 4139 行，LF 行尾，扫描确认无口令/密钥/令牌）；`git ls-tree -r --name-only HEAD docs/perf/runs/` 实证干净克隆可取。该条按仓库完整性问题处置，不占用源码缺陷编号。
 
 ---
 
 ## 八、版本控制、推送与当前状态
 
-### 8.1 提交链（58 笔，节选关键节点）
+### 8.1 提交链（64 笔，节选关键节点）
 
 ```
 902f114  chore: 建立 git 基线（天玑档案管理系统 v1.0.0）
@@ -244,21 +251,27 @@ a637a56  docs(deploy): 联调实战排障三条
 6d6fed4 / 7fa6cbb / 8955814 / fa3eb04  基线 421/424 同步 + 联调报告
 3e733e8  docs: 基线 421→424 + §七缺陷
 a1a0db7  fix(api): 压测自死锁 #11（424→430）
-1108670 / 5ff5304  docs: 基线 430 同步（当前 HEAD）
+1108670 / 5ff5304  docs: 基线 430 同步
+301e6c0  docs: 新增完整开发过程记录 DEV-PROCESS.md
+eb44173  fix(api): #12 双层返回归一化（430→436）
+16504f9  docs(perf): 并发 > 池上限的判读说明
+1b1ebe8  docs(delivery): 基线 430→436 同步
+648540c  fix(perf): 压测夹具 #13/#14，终跑 200×10 全绿
+833802e  fix(repo): 压测现场日志白名单补录（当前 HEAD）
 ```
 
 ### 8.2 推送
 
-`main` 已推送至 `git@github.com:laowangtou457/TianjiArchive.git`（SSH 直连，`Hi laowangtou457! You've successfully authenticated`）。用户先给定 `TianJi`，后更正为 `TianjiArchive`，以更正后为准。
+`main` 已推送至 `git@github.com:laowangtou457/TianjiArchive.git`（SSH 直连，`Hi laowangtou457! You've successfully authenticated`）。用户先给定 `TianJi`，后更正为 `TianjiArchive`，以更正后为准。收尾两次推送：`301e6c0..648540c`（4 笔联调修复与文档）、`648540c..833802e`（压测日志补录）；`origin/main..HEAD` 为空，工作区 clean。
 
 ### 8.3 终判与升级条件
 
-**当前终判：PASS_WITH_RISKS**（不升级）。签字范围：业务逻辑、权限模型、状态机、档号引擎、完整性校验、审批并发安全、参数化体系、权限撤权机制（单实例）、更名完整性——430 个通过用例 + 107 项参数行为断言 + CI 静态门禁。
+**当前终判：PASS_WITH_RISKS**（升级待 QA 独立复核，尚未改判）。签字范围：业务逻辑、权限模型、状态机、档号引擎、完整性校验、审批并发安全、参数化体系、权限撤权机制（单实例）、更名完整性——436 个通过用例 + 107 项参数行为断言 + CI 静态门禁。
 
-**升级 PASS 的必要条件**：
-1. 缺陷 #12 修复并经 QA 复核；
-2. 200×10 压测原始数据落盘 + 七项判据全绿（第 6/7 项必须绿）；
-3. 现场缺陷全有关闭证据（#6–#11 已闭合）。
+**升级 PASS 的必要条件（前两项已有实证，第三项待回报）**：
+1. 缺陷 #12 修复 —— **已满足**（`eb44173`，真实双层形态防回归 6 条带入，基线 430→436）；
+2. 200×10 压测原始数据落盘 + 七项判据全绿 —— **已满足**（`docs/perf/runs/danghao-200x10-PASS-20261107-173726.log`，第 6/7 项均为 0，四份日志已入库）；
+3. QA 独立复核七项判据、双轨锚定、迁移/seed/IK/health 证据链与 #12/#13/#14 关闭证据并出具升级意见 —— **待回报**（已派发）。
 
 **升级后仍不可签（如实保留）**：
 - MinIO 文件链路（替代选型落地并补文件管线联调前）；
@@ -299,7 +312,7 @@ $DC exec -e CONCURRENCY=200 -e ROUNDS=10 api pnpm perf:danghao
 | Docker | Engine 29.9.2 / Compose v5.6.1；CLI 绝对路径 `/c/Program Files/Docker/Docker/resources/bin/docker.exe` |
 | 服务端口 | api 3000、web 8080、ES 9200、PG 5432、Redis 6379 |
 | 临时覆盖 | `docker-compose.nominio.override.yml`（联调用，主 compose 未改） |
-| 压测日志 | `docs/perf/runs/danghao-200x10-*.log` |
+| 压测日志 | `docs/perf/runs/danghao-200x10-*.log`（4 份已入库，`833802e` 白名单；含终跑全绿日志 `danghao-200x10-PASS-20261107-173726.log`） |
 | 工作区记忆 | `C:\Users\...\WorkBuddy\2026-11-07-09-07-12\.workbuddy\memory\2026-11-07.md` |
 
 ---
