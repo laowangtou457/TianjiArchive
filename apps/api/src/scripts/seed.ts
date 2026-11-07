@@ -18,7 +18,6 @@ import { Category } from '../infra/database/entities/category.entity';
 import { DanghaoRule } from '../infra/database/entities/danghao-rule.entity';
 import { UserDataScope } from '../infra/database/entities/user-data-scope.entity';
 import {
-  DEFAULT_DANGHAO_TEMPLATE,
   DEFAULT_VOLUME_TEMPLATE,
   DanghaoSegmentType,
   ResetCycle,
@@ -26,6 +25,7 @@ import {
   FondsStatus,
   SecurityLevel,
   UserStatus,
+  describeTemplate,
   type DanghaoSegment,
 } from '@tianji/shared';
 import { buildCoreItemFields, buildCoreVolumeFields } from '../infra/database/migrations/seed-data';
@@ -38,7 +38,13 @@ const BCRYPT_ROUNDS = 10;
 /** 文书档案门类编码 */
 const DEFAULT_CATEGORY_CODE = 'WS';
 
-/** 构造文书档案档号段（与 DEFAULT_DANGHAO_TEMPLATE 等价） */
+/**
+ * 构造文书档案档号段（5 段：目录号-年度-保管期限-卷号-件号）。
+ *
+ * 注意：与 `DEFAULT_DANGHAO_TEMPLATE`（6 段：全宗号-年度-机构代码-保管期限-卷号-件号）
+ * **不同**——这里用 `CATALOG`（目录号）取代了 `FONDS`（全宗号），并省略了 `ORG`（机构代码）。
+ * 文书档案按目录著录，不走机构维度；改动任一方时须同步核对此处。
+ */
 function buildDefaultSegments(): DanghaoSegment[] {
   return [
     { type: DanghaoSegmentType.CATALOG, pad: 0 },
@@ -162,7 +168,11 @@ async function main(): Promise<void> {
             active: true,
           }),
         );
-        console.log(`  已创建档号规则（模板 ${DEFAULT_DANGHAO_TEMPLATE}）`);
+        // 打印实际写入的段结构（而非 DEFAULT_DANGHAO_TEMPLATE —— 两者段数不同，
+        // 且对象直接插值只会输出 [object Object]）
+        console.log(
+          `  已创建档号规则（模板 ${describeTemplate({ separator: '-', segments: buildDefaultSegments() })}）`,
+        );
       }
 
       // 卷级模板说明（仅记录在参数中，供界面提示）
