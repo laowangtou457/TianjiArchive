@@ -7,6 +7,7 @@ import { TypeOrmRootModule } from './infra/database/typeorm.module';
 import { EsModule } from './infra/elasticsearch/es.module';
 import { StorageModule } from './infra/storage/storage.module';
 import { QueueModule } from './infra/queue/queue.module';
+import { AccessModule } from './common/access/access.module';
 import { RedisModule } from './infra/redis/redis.module';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -49,6 +50,7 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
     EsModule,
     StorageModule,
     QueueModule,
+    AccessModule,
     HealthModule,
     AuthModule,
     UserModule,
