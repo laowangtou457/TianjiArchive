@@ -75,6 +75,7 @@
 | 6 | CI 门禁聚合 | `pnpm run ci:check` | 静态自检 + lint 均通过，EXIT=0 | ✅ |
 | 7 | 仓库完整性 | `git ls-files` / `git status` | 全部源码目录在版本控制内；`.gitignore` 目录模式均已根路径锚定（`784db23` 排查：无锚点 `backup/` 曾致 `apps/api/src/modules/backup/` 与 `infra/backup/` 自建库从未入库，干净克隆编译失败） | ✅ |
 | 8 | 构建上下文 | `.dockerignore` | 存在且排除 `**/node_modules` `**/dist` `volumes`（`b26ab71`：缺失时宿主 Windows 符号链接 node_modules 覆盖容器内依赖，api 镜像构建必失败） | ✅ |
+| 9 | 证据可得性 | `git ls-tree -r --name-only HEAD docs/perf/runs/` | **干净克隆能取到所有被报告引用的证据文件**：四份压测现场日志全部入库（`833802e` 开 `*.log` 白名单补录，全局 `*.log` 曾使其未入库）；终跑 `danghao-200x10-PASS-20261107-173726.log` 含 `IS_PASS: YES` 与七项判据全部汇总数字；日志共 4134 行、LF、无口令/密钥/令牌（QA 终判复核抽查） | ✅ |
 
 > **skip 已清零**。`user.permission-revoke-effect.spec.ts` 原有 2 条 skip（C-5 多实例双通道）已于 `8166c47` 启封，拆为 3 条真实用例（版本号兜底 / 广播必需 / 端到端）。
 > 本行数据口径为最终基线，来源见 `docs/QA-REPORT.md` §3.1。
@@ -432,7 +433,6 @@ apps/api/__tests__/permission-mutations.consistency.spec.ts 组 4 换成真断�
 
 ---
 
-**最后更新**：更名 + D 包 + E 包 + CI 自检 + 边界登记 + 部署准备 + **git 基线**全部完成。
+**最后更新**：更名 + D 包 + E 包 + CI 自检 + 边界登记 + 部署准备 + **git 基线** + **联调轮（迁移/seed/IK/200×10 压测七项判据全绿）**全部完成；QA 终判复核后升级 **PASS（限定范围）**，残余 MinIO 文件链路与多容器 pub/sub 跨进程两项见 `docs/QA-REPORT.md` §六。
 `pnpm run ci:check` / `build` / `typecheck` / `test` 四项全绿（**436 passed + 0 skipped**，107/107 参数断言）。
 git 基线：`902f114`（236 文件 / 53,485 行），工作区干净。
-Docker 侧待 WSL2 初始化完成后执行启动与压测。

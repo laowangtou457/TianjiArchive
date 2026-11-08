@@ -90,6 +90,7 @@ expect(() => assertParamDefs([bad])).toThrow(/borrow/);
 | checkScope:false 接口跳过密级校验 | 拿 `listItems` 测密级拦截 | 用 `checkScope:true` 的接口（如 `itemDetail`） | 密级防线「看起来失效」，差点误报源码 bug |
 | 方法体 includes 被注释误判 | 裸 `body.includes('invalidateSnapshot')` | 先剥块注释/行注释再正则匹配 | 注释里提一句就误判为「已调用」 |
 | 次序校验遮蔽能力校验 | 在 `currentLevel=1` 单据上测终审权限 | 单据必须先推进到 `currentLevel=2` | 被第一道闸门先拦，测不到目标闸门 |
+| **夹具返回形态与生产驱动不一致** | `manager.query` mock 恒返回单层行数组 `[{next_value:'1'}]` | 按真实驱动返回形态（TypeORM PG 的 UPDATE/DELETE 为 `[[rows],rowCount]` 双层）做**主用例**，另补单层兼容 | 缺陷 #12：该轮 430 条单测全绿但生产 2000 次取号全失败——所有 mock 与生产驱动不同构，测试整组假绿且无任何报错。判据：凡模拟外部系统返回值，先在生产路径打一次探针取真实形态，不要把「我以为的形状」写进夹具 |
 
 **通则一**：测试失败时，先怀疑夹具语义，再怀疑实现；下「源码 bug」结论前，必须用最小复现确认失败路径确实经过目标代码。（最终回归再添一例：用 `new Map()` 充当 `Record` 型 ParamView，`view[key]` 恒 undefined → C-1 假阴性。）
 
@@ -136,7 +137,7 @@ expect(() => assertParamDefs([bad])).toThrow(/borrow/);
 
 ## 6. 基线管理
 
-- 当前基线：**430 总 / 430 通过 / 0 skip**（多实例 C-5 启封 T 类 3 条 + 压测判据单测 19 条 + 装配审计 runner + 迁移发现守卫 + 压测自死锁防回归，skip 清零）。
+- 当前基线：**436 总 / 436 通过 / 0 skip**（多实例 C-5 启封 T 类 3 条 + 压测判据单测 19 条 + 装配审计 runner + 迁移发现守卫 + 压测自死锁防回归 + #12 双层返回归一化 6 条，skip 清零）。
 - 基线数字变动必须说明来源：新增测试组、删并、还是工程师顺手补充；QA 对「莫名其妙的 +N」必须逐条核验，不允许「反正绿了」。
 
 ### 6.1 工具默认行为的静默陷阱（「以为改对了其实没改对」家族）
