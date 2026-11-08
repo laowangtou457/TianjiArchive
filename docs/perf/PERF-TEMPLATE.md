@@ -81,14 +81,15 @@ git rev-parse HEAD          # 填完整 hash
 git status --short          # 必须为空（有未提交改动则该报告标记为「非基线」）
 ```
 
-**双锚定采集命令**（在**宿主机仓库根**执行，`dist` 取容器内实际运行的那份）：
+**双锚定采集命令**（在**宿主机仓库根**执行；`dist` 必须取容器内那份，且属防御锚——见下）：
 
 ```bash
-# source 锚：仓库工作区里的 TS 源码
+# source 锚：仓库工作区里的 TS 源码（perf:danghao 由 ts-node 直接跑它）
 sha256sum apps/api/src/scripts/danghao-concurrency-bench.ts \
           apps/api/src/scripts/danghao-bench-judge.ts
 
-# dist 锚：容器里真实被执行的那份编译产物（必须从容器内取，不能取宿主机 dist）
+# dist 锚：容器内编译产物（必须从容器内取，不能取宿主机 dist）
+# 注意：本次压测执行的是 TS 源码，dist 不参与执行，仅作镜像新鲜度的防御锚
 docker compose exec api sha256sum \
   apps/api/dist/scripts/danghao-concurrency-bench.js \
   apps/api/dist/scripts/danghao-bench-judge.js
@@ -107,29 +108,53 @@ docker compose exec api sha256sum \
 | `src/scripts/danghao-concurrency-bench.ts` | |
 | `src/scripts/danghao-bench-judge.ts` | |
 
-**dist 锚（容器内实际执行的 JS 产物 · 证明跑的就是这份源码）**
+**dist 锚（容器内编译产物 · 防御锚：证明镜像内产物与源码同源，非本次执行体）**
 
 | 文件 | sha256 |
 |---|---|
 | `apps/api/dist/scripts/danghao-concurrency-bench.js` | |
 | `apps/api/dist/scripts/danghao-bench-judge.js` | |
 
-| 一致性核对 | 结果 |
-|---|---|
-| 宿主 `git status --short` 为空（源码 == HEAD） | ☐ |
-| 容器内 `dist` 由本次 `docker compose build` 产出，非挂载的旧文件 | ☐ |
-| 本次 `docker compose build` 无缓存命中提示「CACHED」（否则可能沿用旧层） | ☐ |
+| 一致性核对 | 结果（每次压测重填） | 本次终跑实测（2026-11-07，示例，复制模板请清空） |
+|---|---|---|
+| 宿主 `git status --short` 为空（源码 == HEAD） | ☐ | ☑ QA 独立复算 3 个 source 锚与通报值一致，工作区 clean（QA-REPORT §联调实录第 5 项） |
+| 容器内镜像为本次重建产物（api 服务**无 bind mount**，真实风险是**整镜像过期**，不是「挂载了旧文件」） | ☐ | ☑ 容器内 source hash == 宿主 HEAD（镜像新鲜度佐证，见下） |
+| 本次 `docker compose build` 无缓存命中提示「CACHED」（否则可能沿用旧层） | ☐ | — **未单独留存 build 日志的 CACHED 判定**；以「容器内源码 hash == 宿主 HEAD」这一更强证据替代（QA-REPORT 如实声明），不勾选以免伪造证据 |
+
+> **本次终跑实测回填**（`danghao-200x10-PASS-20261107-173726.log`，`IS_PASS: YES`；
+> 复制本模板生成新报告时请清空本块并重新采集，勿沿用旧值）：
+>
+> | 项 | 实测值 | 证据强度 |
+> |---|---|---|
+> | commit hash | `648540c470345f8d5e653e58ae446d9efd084d59` | 终跑 17:37，晚于该提交（17:35:55）、早于后续文档提交（17:48:19） |
+> | 宿主工作区 | clean | QA 本地 `sha256sum` 独立复算一致 |
+> | source 锚 `danghao-concurrency-bench.ts` | `8dd22e7bbe494b3ef92f070ac151712f2c83bf9ebd62d0b982f11cb7bafe8707` | 宿主本地复算，与 QA 通报前 8 位 `8dd22e7b…` 一致 |
+> | source 锚 `danghao-bench-judge.ts` | `a883e6382af2049273f282fd5193e19ed1c4aca6bedcd5b4c2a31eb50d7bef45` | 同上（`a883e638…`） |
+> | 镜像新鲜度锚 `sequence.service.ts` | `907af8a29d3dad6bc63a4af78b13173fd73f6cf3058bdbc92b923339c769419f` | 宿主复算，与容器内通报值 `907af8a2…` 相同 |
+> | dist 锚 `danghao-concurrency-bench.js` | `7ac38e06…` | team-lead 容器内 `sha256sum` 通报值前 8 位，本地不可重算 |
+> | dist 锚 `danghao-bench-judge.js` | `71d76aa7…` | 同上 |
+>
+> 三点口径如实说明：①`perf:danghao` 实为 `ts-node src/scripts/...`，压测侧跑的是 **TS 源码**，
+> dist 锚是防御锚（证明镜像内编译产物与源码同源），不是「被执行的那份」；
+> ②source/dist 两层锚定强度不同，报告须分开表述，不可合并成一句「版本已锚定」；
+> ③容器内 dist 值本地无法重算，属通报值，复核深度按 QA-REPORT §联调实录声明。
 
 > **为什么必须双锚**：commit hash 只锚住「提交」，锚不住「实际执行的东西」。
 > 两类错配它都抓不出来——
 > ①判据被放宽但没提交（源码脏）→ 同一个 hash 跑出不同语义；
-> ②源码改了但容器没重建（旧 `dist`）→ 报告证明的是一份已不存在的代码。
-> **source 锚供人审计（可读、可 diff），dist 锚回答「这份报告对应的确实是这套判据」。**
+> ②源码改了但容器没重建（**整镜像过期**：容器内 TS 源码与 dist 同时是旧的；
+>   api 服务无 bind mount，风险不是挂载旧文件）→ 报告证明的是一份已不存在的代码。
+> **source 锚供人审计（可读、可 diff），容器内 dist 锚 + 容器内 source hash
+> 回答「镜像与宿主 HEAD 是否同源」。** 两层锚定强度不同，须分开表述，
+> 不可合并成一句「版本已锚定」。
 > 只锚 source 会漏掉 ②，那是「报告看着严谨、实际证明的对象错了」，与静默空转同族。
 >
-> **dist 必须从容器内取**：仓库无 `.dockerignore`，宿主机 `apps/api/dist` 与容器内同名路径
-> 是两个独立文件。在宿主机 `sha256sum dist/...` 得到的是本地构建产物，与容器里跑的那份
-> 可能不同，锚了等于没锚。
+> **dist 必须从容器内取**：api 服务**无 bind mount**，风险不是「挂载了宿主机的旧文件」，
+> 而是**整镜像过期未重建**（源码改了但容器仍跑旧镜像层）。仓库已有 `.dockerignore`
+> （`b26ab71`，排除宿主 `node_modules`/`dist` 污染构建上下文），但宿主机
+> `apps/api/dist` 与容器内同名路径仍是两个独立文件：在宿主机
+> `sha256sum dist/...` 得到的是本地构建产物，与容器里那份可能不同，锚了等于没锚。
+> 镜像新鲜度的可复核证据是「容器内源码 hash == 宿主 HEAD」（见上方回填块）。
 
 ---
 
