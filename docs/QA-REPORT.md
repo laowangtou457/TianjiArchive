@@ -25,12 +25,12 @@
 其余验证（档号引擎、档号不可变、SHA-256 校验、ES 权限过滤、并发唯一性、权限缓存）**全部通过**。
 
 **本轮（Round 3）新增结果**：
-- **缺陷 #5、R6 双双修复并回归通过**，至此 **5 个源码缺陷全部关闭**
+- **缺陷 #5、R6 双双修复并回归通过**，至此 **5 个源码缺陷全部关闭**（三轮当轮口径；后续联调/压测现场新增 #6~#14，最终见 §七）
 - **C-5 权限撤权「版本号 + pub/sub」多实例双通道已实证**（E 包落地 + T 类 3 条用例：T1 版本号通道独立兜底 / T2 广播通道副作用 / T3 端到端，同进程双实例共享 FakeRedis，QA 独立变异验证「禁用广播处理恰好红 T2 一条」）
 - **全套 436 用例：436 通过 / 0 跳过 / 0 失败**（上一基线 291 条 → 436 条。2 条多实例 skip 已启封转真，**skip 清零**；压测判据单测 19 条新增）
 - **全部历史 skip 已清零**：`overdue_remind_days`（5 占位 → 9 真实用例）、QD-1 会话超时（5 skip → 11 全真）、C-5 多实例（2 skip → T 类 3 条真实用例）
 
-**风险不在代码逻辑，而在验证手段**：本机无 Docker，PostgreSQL 行锁、Elasticsearch 真实 DSL 执行、MinIO 真实对象存储、Redis 缓存一致性这四类**只在单元层被 mock 验证，未做真实中间件联调**。这些是我无法签字担保的部分，已在第五节逐条列明。
+**残余风险不在代码逻辑，而在验证范围**：联调轮已完成真实 PG 行锁与 200×10 并发发号、ES 容器与 IK 分词、Redis 单机运行时的实证；**仍不可签两项**：MinIO 文件存储链路（官方镜像归档停服、替代选型待拍板）、多容器 pub/sub 跨进程投递（`--scale api=2` 未跑）；另 IK/health/迁移执行态未独立重跑（本地无容器内执行权限，如实标注复核深度）。逐条见 §五 R1 与 §六联调现场实录。
 
 ---
 
@@ -173,7 +173,7 @@ Error: Command failed: tsc -p E:\TianjiArchive\packages\shared\scripts\tsconfig.
 | `auth.session-timeout` 11 条 | **真绿（含实现侧）** | 强 | 6 条纯逻辑 + 3 条打穿 `issueTokens` 真实落库 + 2 条口径边界；纯逻辑若实现回归仍会绿，故补实现侧 |
 | `param-defs` 16 条 | **真绿** | 强 | 直接校验 `PARAM_DEFS` 单一源，不含运行时分支 |
 | `state-machine` 审批留痕 1 条 | **真绿（断言已校正）** | 中强 | 源码改走 `approvalRepo.save`，断言同步改；若源码改回 `manager.save` 会变红（正确） |
-| `danghao.concurrency` 13 条 | **模拟绿** | 中 | 串行队列模拟 `FOR UPDATE`，无法证明真实 PG 行锁无 ABA（见 R1） |
+| `danghao.concurrency` 19 条（含 #12 +6） | **模拟绿（仅单测层）** | 中 | 单测用串行队列/双层桩模拟，证据强度仅描述单测层；**真实 PG 行锁行为已由终跑 200×10 压测独立佐证**（§六/§五 R1），二者不可互相替代、也不互相抵消 |
 | `storage.minio-contract` 11 条 | **契约绿** | 中 | 只证方法存在与签名，未发真实请求（见 R1） |
 | `file.sha256-integrity` 2GB 边界 1 条 | **逻辑绿** | 中弱 | 仅构造 size 数值，未真实写 2GB（见 R5） |
 
@@ -773,7 +773,7 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api pnpm --filter @tianji/ap
 > 2. **被测服务层（dist 产物）**：`docker compose up -d --build` 防旧层 + dist 锚必须 `docker compose exec api sha256sum` **从容器内取**。
 > 两处锚不同文件：`dist/main.js` 锚被测服务；`dist/scripts/*.js` 锚压测脚本编译产物（本次 ts-node 跑源不执行它，作防御锚）。
 
-**本次双轨锚定取证（team-lead 通报值；QA 独立复算 source 锚一致，dist 锚为容器内值、本地不可重算）**：
+**本次双轨锚定取证（team-lead 通报值；QA 独立复算 source 锚一致，dist 锚为容器内值、本地不可重算；完整 sha256 见 `docs/perf/PERF-TEMPLATE.md` §1.4 `4f0a69e` 回填块）**：
 
 | 层 | 文件 | sha256（通报值前 8 位） | QA 复核 |
 |---|---|---|---|
@@ -784,7 +784,7 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api pnpm --filter @tianji/ap
 | 被测服务层（容器内 dist） | `danghao-concurrency-bench.js` | `7ac38e06…` | 通报值，容器内取；本地不可重算 |
 | 被测服务层（容器内 dist） | `danghao-bench-judge.js` | `71d76aa7…` | 通报值，容器内取；本地不可重算 |
 
-> 报告分「判据层 / 被测服务层」两层写，不合并成一句「版本已锚定」。**复核深度如实声明**：镜像新鲜度由「容器内源码 hash == 宿主 HEAD」佐证，等价性优于单看 build 是否 CACHED；`PERF-TEMPLATE.md` §1.4 三行一致性核对表当前为空白模板（未回填实测结论）；该文件属工程师域、QA 本轮未改动，已在终判回报中建议回填。此处为 QA 报告内的落盘记录。
+> 报告分「判据层 / 被测服务层」两层写，不合并成一句「版本已锚定」。**复核深度如实声明**：镜像新鲜度由「容器内源码 hash == 宿主 HEAD」佐证，等价性优于单看 build 是否 CACHED；`PERF-TEMPLATE.md` §1.4 已由工程师 `4f0a69e` 回填终跑实测（**QA 终判 8c1d803 时点之后完成**）：两个 source 锚与 `sequence.service.ts` 的完整 sha256 落盘（QA 本地复算一致）、dist 锚按通报前 8 位记录并标注「容器内取、本地不可重算」；三行一致性核对表 ①工作区 clean ☑ ②镜像新鲜度 ☑ ③build CACHED 判定**如实不勾**（未单独留存 build 日志，以更强证据替代，不伪造证据），模板「结果」列仍留 ☐ 供每次压测重填（防复制模板继承旧勾的新形态假绿）。三处旧措辞（无 bind mount 的真实风险是整镜像过期、`.dockerignore` 已存在、dist 为防御锚非执行体）一并修正。此处为 QA 报告内的落盘记录，与模板回填同源一致。
 联调与压测已全部通过，**2026-11-07 QA 终判复核后升级为 PASS（限定范围）**，详见下「终判升级评估框架」。
 
 ### 联调现场实录（2026-11-07，终判复核定稿）
