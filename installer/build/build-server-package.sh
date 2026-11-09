@@ -7,7 +7,9 @@
 #   ├── [自解压头] POSIX sh：自校验 sha256 → 释放到 /opt/tianji-installer → exec
 #   └── payload.tar.gz
 #       ├── bin/tianji-installer        静态二进制（GOOS=linux CGO_ENABLED=0）
-#       ├── docker/debs|static/...      变体 A 的 .deb 闭包 / 变体 B 的静态包
+#       ├── docker/debs/...             变体 A 的 .deb 闭包
+#       ├── docker/static/...           变体 B 的 docker-*.tgz + STATIC-MANIFEST.txt
+#       ├── docker/compose/docker-compose  变体 B 的 compose v2 单二进制（规范落点）
 #       ├── common/…                    compose、load-images、smoke、seaweedfs、env.tpl
 #       ├── manifest.json
 #       └── SHA256SUMS.txt
@@ -16,6 +18,11 @@
 #   G1 载荷一致性：payload/common/ 下 5 个文件必须与 offline/、infra/ 的源**逐字节相同**
 #   G2 安装器二进制：必须存在且是 linux/amd64 ELF（不是脚本、不是 darwin 产物）
 #   G3 自解压可用性：产出后立刻用 `sh <run> --verify-only` 自校验 payload sha256
+#
+# 变体 B 额外两道（同样是 fail-closed）：
+#   G1-static：docker-*.tgz 与 compose 单二进制必须与 STATIC-MANIFEST.txt 登记的 sha256 一致
+#   G2-static：compose 二进制与 tgz 内 docker/dockerd 必须都是 linux/amd64 ELF
+#              （变体 B 不经过包管理器，装上去的东西没有任何归属校验，只能在出包侧钉死）
 #
 # 用法：
 #   bash installer/build/build-server-package.sh --variant ubuntu-debian --codename jammy \
@@ -149,6 +156,49 @@ BIN_BYTES="$(wc -c < "${INSTALLER_BIN}" | tr -d ' ')"
 log "G2 PASS：ELF64/amd64，${BIN_BYTES} 字节"
 
 # =============================================================================
+# 变体 B 静态载荷的两道校验（G1/G2 的口径同样适用于静态二进制）
+#
+# 为什么变体 B 也要过闸门：它不经过包管理器，装上去的东西**没有任何归属校验**，
+# 出了问题的表现是「dockerd 起不来」或「exec format error」，都离「包做坏了」很远。
+# 所以在出包这一侧先把 ELF 与 sha256 钉死。
+# =============================================================================
+
+# assert_elf64_amd64 <path> <label>
+#   判据与 G2 相同：magic 7f454c46 + EI_CLASS=02(64) + EI_DATA=01(小端) + e_machine=3e00(x86-64)
+assert_elf64_amd64() {
+  local path="$1" label="$2" hex=''
+  [ -s "${path}" ] || die "${label} 是空文件：${path}"
+  hex="$(od -An -tx1 -N20 "${path}" | tr -d ' \n')"
+  [ "${hex:0:8}" = '7f454c46' ] || die "${label} 不是 ELF（首 4 字节 ${hex:0:8}）：${path}"
+  [ "${hex:8:2}" = '02' ] || die "${label} 不是 64 位 ELF（EI_CLASS=${hex:8:2}）：${path}"
+  [ "${hex:10:2}" = '01' ] || die "${label} 不是小端 ELF（EI_DATA=${hex:10:2}）：${path}"
+  [ "${hex:36:4}" = '3e00' ] || die "${label} 不是 x86-64（e_machine=${hex:36:4}）：${path}"
+  log "  ELF64/amd64 ✓ ${label}"
+}
+
+# verify_static_manifest <dir>
+#   逐文件复核 STATIC-MANIFEST.txt 里登记的 sha256（该清单由 fetch-docker-static.sh 生成，
+#   摘要双源比对后固化）。**只认清单里登记的条目**——多出来的文件不拦，但少一个就 fail。
+verify_static_manifest() {
+  local dir="$1" want='' name='' got='' checked=0
+  [ -f "${dir}/STATIC-MANIFEST.txt" ] || die "缺少 ${dir}/STATIC-MANIFEST.txt（静态载荷无法溯源）"
+  while read -r want name; do
+    name="${name#\*}"
+    [ -n "${name}" ] || continue
+    [ -f "${dir}/${name}" ] || die "STATIC-MANIFEST.txt 登记了 ${name}，但文件不存在（清单与载荷不同步）"
+    got="$(sha256sum "${dir}/${name}" | awk '{print $1}')"
+    got="${got#\\}"   # 去 coreutils 可能加的前导转义反斜杠
+    [ "${got}" = "${want}" ] || die "静态载荷校验失败：${name}
+  期望 ${want}
+  实际 ${got}
+  处置：重新执行 bash installer/build/fetch-docker-static.sh（不要手工拷另一半）"
+    checked=$((checked + 1))
+  done < <(grep -E '^[0-9a-f]{64} ' "${dir}/STATIC-MANIFEST.txt" || true)
+  [ "${checked}" -gt 0 ] || die "${dir}/STATIC-MANIFEST.txt 里没有任何 sha256 条目"
+  log "G1-static PASS：${checked} 个静态载荷文件与清单逐字节一致"
+}
+
+# =============================================================================
 # 组装暂存目录
 # =============================================================================
 STAGE="$(mktemp -d "${OUT_DIR}/.stage.XXXXXX")"
@@ -255,16 +305,34 @@ else
   SRC_STATIC="${SCRIPT_DIR}/payload/kylin-uos/docker-static"
   [ -d "${SRC_STATIC}" ] || die "缺少 static 载荷：${SRC_STATIC}
   先执行： bash installer/build/fetch-docker-static.sh"
-  mkdir -p "${STAGE}/docker/static"
+  verify_static_manifest "${SRC_STATIC}"
+
+  mkdir -p "${STAGE}/docker/static" "${STAGE}/docker/compose"
   cp -p "${SRC_STATIC}"/*.tgz "${STAGE}/docker/static/" 2>/dev/null || die "static 目录没有 .tgz"
-  cp -p "${SRC_STATIC}"/STATIC-MANIFEST.txt "${STAGE}/docker/static/" 2>/dev/null || true
-  if [ -f "${SRC_STATIC}/docker-compose-linux-x86_64" ]; then
-    cp -p "${SRC_STATIC}/docker-compose-linux-x86_64" "${STAGE}/docker/static/docker-compose"
-    chmod 0755 "${STAGE}/docker/static/docker-compose"
-  else
-    die "缺少 compose v2 单二进制：${SRC_STATIC}/docker-compose-linux-x86_64"
-  fi
-  log 'static 载荷已就位（变体 B 安装逻辑本期未实现，仅打包）'
+  cp -p "${SRC_STATIC}/STATIC-MANIFEST.txt" "${STAGE}/docker/static/"
+
+  # compose 单二进制的落点必须与安装器的 BuildPlan 一致：
+  # Layout.ComposePluginPath() = <root>/docker/compose/docker-compose。
+  # 早期脚本放在 docker/static/ 下，安装器仍认（带 WARN），但规范落点是这个。
+  STATIC_TGZ="$(find "${SRC_STATIC}" -maxdepth 1 -name 'docker-*.tgz' | LC_ALL=C sort | tail -1)"
+  [ -n "${STATIC_TGZ}" ] || die "${SRC_STATIC} 下没有 docker-*.tgz"
+  [ -f "${SRC_STATIC}/docker-compose-linux-x86_64" ] \
+    || die "缺少 compose v2 单二进制：${SRC_STATIC}/docker-compose-linux-x86_64"
+  cp -p "${SRC_STATIC}/docker-compose-linux-x86_64" "${STAGE}/docker/compose/docker-compose"
+  chmod 0755 "${STAGE}/docker/compose/docker-compose"
+
+  # G2-static：compose 二进制与 tgz 内的 docker/dockerd 必须都是 linux/amd64 ELF。
+  # tgz 内部的成员要先解出来再验：`tar -xzOf … | od` 会在 od 读够 20 字节就退出，
+  # tar 收 SIGPIPE（141），在 set -o pipefail 下会误报「包坏了」——本仓库已踩过两次。
+  log 'G2-static 静态二进制校验（ELF64/amd64）'
+  assert_elf64_amd64 "${STAGE}/docker/compose/docker-compose" 'docker-compose（compose 插件）'
+  ELF_TMP="$(mktemp "${OUT_DIR}/.elfcheck.XXXXXX")"
+  for member in docker/dockerd docker/docker; do
+    tar -xzOf "${STATIC_TGZ}" "${member}" > "${ELF_TMP}" || die "从 ${STATIC_TGZ##*/} 解出 ${member} 失败"
+    assert_elf64_amd64 "${ELF_TMP}" "${member}（${STATIC_TGZ##*/} 内）"
+  done
+  rm -f "${ELF_TMP}"
+  log 'static 载荷已就位（变体 B 安装逻辑已实现，见 installer/README §6）'
 fi
 
 printf '%s\n' "${VERSION}" > "${STAGE}/VERSION"

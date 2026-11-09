@@ -833,5 +833,12 @@ vm-harness 已用 shell 在麒麟真机上实测六项并回写基线；Go 侧�
 输出形态、kysec 对静态目录的 exectl 判定、systemd 实际执行 `ExecStartPost` 脚本的时机与失败语义、
 以及「不进 PATH 的 docker」在现场运维脚本里的可发现性（需要文档里明确写绝对路径）。
 
+出包侧同步加了两道闸门（`installer/build/build-server-package.sh`，与 G1/G2 同口径 fail-closed）：
+**G1-static** 逐文件复核 `STATIC-MANIFEST.txt` 登记的 sha256（缺清单直接 fail）；
+**G2-static** 校验 compose 单二进制与 tgz 内 `docker/dockerd`、`docker/docker` 都是 ELF64/amd64。
+tgz 成员先解到临时文件再判 ELF——`tar -xzOf … | od` 会在 `od` 读够 20 字节时让 tar 收 SIGPIPE(141)，
+在 `set -o pipefail` 下误报「包坏了」。compose 二进制在包内的规范落点同步改为
+`docker/compose/docker-compose`（与 `Layout.ComposePluginPath()` 一致），旧落点安装器仍认但打 WARN。
+
 
 

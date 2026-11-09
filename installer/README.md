@@ -118,6 +118,20 @@ docker tag  docker.1ms.run/library/ubuntu:22.04 ubuntu:22.04
 | **G2 二进制形态** | 安装器必须是 ELF64 **x86-64**（校验魔数 + `e_machine=0x3e`） | 退出，附交叉编译命令 |
 | **G3 自解压可用性** | 产出后立刻 `TIANJI_VERIFY_SHELL_ONLY=1 sh <run> --verify-only` | 退出并**删除**不完整产物 |
 
+变体 B（`--variant kylin-uos`）额外两道，口径一致：
+
+| 闸门 | 内容 | 为什么变体 B 需要 |
+|---|---|---|
+| **G1-static** | `docker-*.tgz` 与 compose 单二进制必须与 `STATIC-MANIFEST.txt` 登记的 sha256 一致（缺清单直接 fail） | 静态载荷是双源比对后固化摘要的，清单与文件必须同源；少一个文件就 fail（清单与载荷不同步） |
+| **G2-static** | compose 二进制、以及 tgz 内 `docker/dockerd`、`docker/docker` 都必须是 ELF64 **x86-64** | 变体 B 不经过包管理器，装上去的东西没有任何归属校验；一旦放错架构，现场症状是 `exec format error` 或「dockerd 起不来」，离「包做坏了」很远 |
+
+tgz 内的成员要先解到临时文件再判 ELF，**不能** `tar -xzOf … | od`：`od` 读够 20 字节就退出，
+tar 收 SIGPIPE（141），在 `set -o pipefail` 下会误报「包坏了」（本仓库已踩过两次同类坑）。
+
+compose 单二进制在包内的规范落点是 `docker/compose/docker-compose`（与安装器
+`Layout.ComposePluginPath()` 一致）。早期脚本放在 `docker/static/` 下，安装器仍认但会
+打 WARN「旧构建脚本落点，建议重新出包」。
+
 `--images-tar` 若同时存在 `offline/SHA256SUMS`，会强制两者 sha256 **逐字一致**
 （设计 §2.2「必须同源，不允许安装器自己算一遍就当真」）。
 
