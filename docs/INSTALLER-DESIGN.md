@@ -146,6 +146,8 @@ installer/
 ```
 
 > 说明：`server/` 用 Go 为**推荐**方案，理由与替代见 §4.6 与 **Q1**。若改 Python，仅替换 `server/`，`build/`、`payload/`、状态机语义不变。
+>
+> 命名注记（实现期裁定）：Go 侧「读取 manifest / 计算落盘布局 / 判定 OS 与变体匹配 / 逐文件复核 sha256」这一包命名为 `server/internal/buildplan/`，**不与**顶层 `installer/build/`（构建机 shell 脚本）同名——两者同名会让 `.gitignore` 的 `build/` 规则与人的阅读都产生歧义（该规则实际已误伤过一次整个 `installer/build/`）。除此之外 `internal/` 下各包名与上表一致。
 
 ### 2.2 安装包（.run）内部布局
 
