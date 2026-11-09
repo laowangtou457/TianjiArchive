@@ -1,0 +1,4 @@
+time="2026-11-10T01:24:27.632046503+08:00" level=info msg="Starting up"
+time="2026-11-10T01:24:27.637064945+08:00" level=warning msg="could not change group /var/run/docker.sock to docker: group docker not found"
+time="2026-11-10T01:24:27.637246614+08:00" level=info msg="containerd not running, starting managed containerd"
+failed to start containerd: exec: "containerd": executable file not found in $PATH

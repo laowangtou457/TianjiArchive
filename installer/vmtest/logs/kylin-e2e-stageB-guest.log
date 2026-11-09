@@ -1,0 +1,24 @@
+== B 2026-11-09T17:16:25Z tianji-kylin mem=8700MB ==
+== [before 快照] ==
+firewalld: active rc=0
+max_map_count(before): 65530
+ls: cannot access '/usr/local/lib/tianji': No such file or directory
+ls: cannot access '/etc/systemd/system/tianji-docker.service': No such file or directory
+(无 dockerd 进程)
+== [起 web 安装器] ==
+launcher pid=1449
+18080 未就绪
+[tianji-setup] 校验安装包完整性（payload 787bc4b9e7322362132af775600c7fd512e3e5c430a6c19a0b645a169273d61c）
+[tianji-setup] 解包到 /opt/tianji-installer
+[tianji-setup] 启动安装器（variant=kylin-uos version=1.0.0）
+初始化失败: 解析状态文件失败: unexpected end of JSON input
+== B2 2026-11-09T17:18:23Z state 恢复 ==
+-rw------- 1 root root 0 Nov 10 01:04 /var/lib/tianji-install/state.json
+state.json 为空（docker rm -f + cache=unsafe 的数据丢失），移开重建
+18080 就绪（1s）
+== [S1 重放（重建 state）] ==
+{"ok":false,"error":"kylin V10 未登记（版本未知的国产 OS 走 static 变体，风险自担）。请在向导�
+（命中风险自担确认门，确认后重跑 S1）
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tia
+== [发起 S3_DOCKER] ==
+S3 已发起 pid=1965

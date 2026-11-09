@@ -1,0 +1,109 @@
+=== S1_PREFLIGHT 环境体检 开始 ===
+[K0] PASS 发行版识别 —— kylin V10 ()
+        实测: ID=kylin VERSION_ID=V10 VERSION_CODENAME=
+[K1] PASS 内核版本 —— 4.19.90-89.11.v2401.ky10.x86_64（要求 ≥ 4.19，最低 3.10）
+        实测: 4.19.90-89.11.v2401.ky10.x86_64
+[K2] PASS 架构 —— x86_64
+        实测: x86_64
+[K3] PASS overlay2 文件系统 —— 内核支持 overlay（modprobe 成功）
+        实测: modprobe overlay: ok
+/proc/filesystems 含 overlay（modprobe 之后读取）: true
+[K4] PASS cgroup —— tmpfs
+        实测: tmpfs
+[K5] WARN vm.max_map_count —— 65530（要求 ≥ 262144；S3_DOCKER 将自动修复）
+        建议: ES 8 会因 mmap 数量不足直接退出（bootstrap.memory_lock: true）。S3_DOCKER 将写入 /etc/sysctl.d/99-tianji.conf 并 `sysctl --system` 生效，生效后回读核对 ≥ 262144，不满足会在 S3 阻断；想提前修可手工 `sysctl -w vm.max_map_count=262144`
+        实测: 65530
+[K6] WARN memlock ulimit —— 64（期望 unlimited）
+        建议: ES 锁内存可能失败；安装器会写入 /etc/security/limits.d/99-tianji-limits.conf
+[K7] WARN nofile ulimit —— 1024（要求 ≥ 65535）
+        建议: ES 可能报 max file descriptors too low
+[K8] PASS iptables/nft —— iptables=true nft=true
+[K9] PASS 磁盘可用空间 —— 60 GB（要求 ≥ 30，建议 ≥ 60）
+        实测: Avail
+60318306304
+[K10] WARN 内存 —— 8 GB（要求 ≥ 8，建议 ≥ 16）
+        建议: 建议 ≥ 16GB：8GB 能跑但无余量
+        实测: MemTotal:        8909160 kB
+[K11] SKIP dpkg 锁 —— 变体 B 不使用 dpkg，跳过
+[K12] PASS 已有 Docker —— 未安装（将由安装器安装）
+[K13] PASS SELinux/AppArmor —— selinux=disabled apparmor=compiled-but-disabled
+[B1] PASS cgroup 版本 —— cgroup v1（tmpfs）
+        建议: 仅记录。**禁止把 docker 升到 28/29**：28 起 cgroup v1 标记 deprecated
+        实测: tmpfs
+[B2] PASS SELinux 状态 —— Disabled（无需处置）
+        建议: 注意：**不要读 /etc/selinux/config 判断**，它写的是下次启用的目标态，麒麟上会误报 Enforcing
+        实测: getenforce=Disabled
+[B3] N/A  麒麟 kysec 执行控制 —— kysec-utils 未安装（麒麟最小化安装的实测形态：无 getstatus、无 /etc/kysec），判 N/A
+        建议: 无需动作。**这不是「已确认关闭」**，而是「本机没有 kysec 可判」；若现场另装了 kysec-utils，请重跑本项
+        实测: command -v getstatus: (空)
+/etc/kysec: 不存在
+[B4] PASS iptables 后端 —— 后端 legacy
+        建议: 仅记录。docker 直接写 iptables，与 firewalld 会交叠（见 B6）
+        实测: iptables v1.8.5 (legacy)
+iptables-legacy: /usr/sbin/iptables-legacy
+[B5] PASS overlay2 前置（内核 / overlay 模块 / 目标盘 fs） —— 内核 4.19.90-89.11.v2401.ky10.x86_64，overlay 可用，目标盘 xfs
+        建议: xfs 上还需 `xfs_info /var/lib | grep ftype=1`（安装时在数据目录建好后查）
+        实测: uname -r: 4.19.90-89.11.v2401.ky10.x86_64
+modprobe overlay: ok
+/proc/filesystems 含 overlay（modprobe 之后读取）: true
+stat -f /var/lib: xfs
+[B6] WARN firewalld 状态 —— firewalld 正在运行：它会把 docker0 绑进自己的 zone，dockerd 再绑就冲突（统信实测：重启后再起 dockerd 直接失败，报 ZONE_CONFLICT）
+        建议: 处置二选一，均需留痕：①安装时 `systemctl disable --now firewalld`（内网单机 appliance 首选）；②dockerd 配 `--iptables=false` 并自行接管端口管控。**不要用「加 trusted zone」当处置**：那批实验（含 restart 后 SSH 失联）已由二分实验证伪为 QEMU slirp 环境假象，不是 OS 行为
+        实测: running
+系统识别: ID=kylin VERSION_ID=V10 codename=（Kylin Linux Advanced Server V10 (Halberd)）
+=== S1_PREFLIGHT 失败（194ms）: kylin V10 未登记（版本未知的国产 OS 走 static 变体，风险自担）。请在向导勾选「我已确认，风险自担」后继续 ===
+=== S1_PREFLIGHT 环境体检 开始 ===
+[K0] PASS 发行版识别 —— kylin V10 ()
+        实测: ID=kylin VERSION_ID=V10 VERSION_CODENAME=
+[K1] PASS 内核版本 —— 4.19.90-89.11.v2401.ky10.x86_64（要求 ≥ 4.19，最低 3.10）
+        实测: 4.19.90-89.11.v2401.ky10.x86_64
+[K2] PASS 架构 —— x86_64
+        实测: x86_64
+[K3] PASS overlay2 文件系统 —— 内核支持 overlay（modprobe 成功）
+        实测: modprobe overlay: ok
+/proc/filesystems 含 overlay（modprobe 之后读取）: true
+[K4] PASS cgroup —— tmpfs
+        实测: tmpfs
+[K5] WARN vm.max_map_count —— 65530（要求 ≥ 262144；S3_DOCKER 将自动修复）
+        建议: ES 8 会因 mmap 数量不足直接退出（bootstrap.memory_lock: true）。S3_DOCKER 将写入 /etc/sysctl.d/99-tianji.conf 并 `sysctl --system` 生效，生效后回读核对 ≥ 262144，不满足会在 S3 阻断；想提前修可手工 `sysctl -w vm.max_map_count=262144`
+        实测: 65530
+[K6] WARN memlock ulimit —— 64（期望 unlimited）
+        建议: ES 锁内存可能失败；安装器会写入 /etc/security/limits.d/99-tianji-limits.conf
+[K7] WARN nofile ulimit —— 1024（要求 ≥ 65535）
+        建议: ES 可能报 max file descriptors too low
+[K8] PASS iptables/nft —— iptables=true nft=true
+[K9] PASS 磁盘可用空间 —— 60 GB（要求 ≥ 30，建议 ≥ 60）
+        实测: Avail
+60318253056
+[K10] WARN 内存 —— 8 GB（要求 ≥ 8，建议 ≥ 16）
+        建议: 建议 ≥ 16GB：8GB 能跑但无余量
+        实测: MemTotal:        8909160 kB
+[K11] SKIP dpkg 锁 —— 变体 B 不使用 dpkg，跳过
+[K12] PASS 已有 Docker —— 未安装（将由安装器安装）
+[K13] PASS SELinux/AppArmor —— selinux=disabled apparmor=compiled-but-disabled
+[B1] PASS cgroup 版本 —— cgroup v1（tmpfs）
+        建议: 仅记录。**禁止把 docker 升到 28/29**：28 起 cgroup v1 标记 deprecated
+        实测: tmpfs
+[B2] PASS SELinux 状态 —— Disabled（无需处置）
+        建议: 注意：**不要读 /etc/selinux/config 判断**，它写的是下次启用的目标态，麒麟上会误报 Enforcing
+        实测: getenforce=Disabled
+[B3] N/A  麒麟 kysec 执行控制 —— kysec-utils 未安装（麒麟最小化安装的实测形态：无 getstatus、无 /etc/kysec），判 N/A
+        建议: 无需动作。**这不是「已确认关闭」**，而是「本机没有 kysec 可判」；若现场另装了 kysec-utils，请重跑本项
+        实测: command -v getstatus: (空)
+/etc/kysec: 不存在
+[B4] PASS iptables 后端 —— 后端 legacy
+        建议: 仅记录。docker 直接写 iptables，与 firewalld 会交叠（见 B6）
+        实测: iptables v1.8.5 (legacy)
+iptables-legacy: /usr/sbin/iptables-legacy
+[B5] PASS overlay2 前置（内核 / overlay 模块 / 目标盘 fs） —— 内核 4.19.90-89.11.v2401.ky10.x86_64，overlay 可用，目标盘 xfs
+        建议: xfs 上还需 `xfs_info /var/lib | grep ftype=1`（安装时在数据目录建好后查）
+        实测: uname -r: 4.19.90-89.11.v2401.ky10.x86_64
+modprobe overlay: ok
+/proc/filesystems 含 overlay（modprobe 之后读取）: true
+stat -f /var/lib: xfs
+[B6] WARN firewalld 状态 —— firewalld 正在运行：它会把 docker0 绑进自己的 zone，dockerd 再绑就冲突（统信实测：重启后再起 dockerd 直接失败，报 ZONE_CONFLICT）
+        建议: 处置二选一，均需留痕：①安装时 `systemctl disable --now firewalld`（内网单机 appliance 首选）；②dockerd 配 `--iptables=false` 并自行接管端口管控。**不要用「加 trusted zone」当处置**：那批实验（含 restart 后 SSH 失联）已由二分实验证伪为 QEMU slirp 环境假象，不是 OS 行为
+        实测: running
+系统识别: ID=kylin VERSION_ID=V10 codename=（Kylin Linux Advanced Server V10 (Halberd)）
+WARN: 未验证组合，用户已确认风险自担
+=== S1_PREFLIGHT 完成（166ms）===

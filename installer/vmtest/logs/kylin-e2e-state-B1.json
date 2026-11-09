@@ -1,0 +1,74 @@
+{
+  "formatVersion": 1,
+  "product": "tianji-archive",
+  "version": "1.0.0",
+  "variant": "kylin-uos",
+  "arch": "amd64",
+  "createdAt": "2026-11-09T17:18:23.884020588Z",
+  "updatedAt": "2026-11-09T17:21:52.312397517Z",
+  "steps": {
+    "S10_DONE": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S1_PREFLIGHT": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T17:18:24.261664818Z",
+      "finishedAt": "2026-11-09T17:18:24.428196987Z",
+      "exitCode": 0,
+      "output": "环境体检 用时 166ms"
+    },
+    "S2_VERIFY": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T17:20:22.23330946Z",
+      "finishedAt": "2026-11-09T17:20:23.21645007Z",
+      "exitCode": 0,
+      "output": "包完整性 用时 983ms"
+    },
+    "S3_DOCKER": {
+      "status": "FAIL",
+      "startedAt": "2026-11-09T17:21:50.193149505Z",
+      "finishedAt": "2026-11-09T17:21:52.312397273Z",
+      "exitCode": 1,
+      "message": "systemctl enable --now docker 失败: 命令失败（退出码 1）: systemctl enable --now docker\n--- 最后输出 ---\nCreated symlink /etc/systemd/system/multi-user.target.wants/docker.service → /etc/systemd/system/docker.service.\nJob for docker.service failed because the control process exited with error code.\nSee \"systemctl status docker.service\" and \"journalctl -xe\" for details.\nCreated symlink /etc/systemd/system/multi-user.target.wants/docker.service → /etc/systemd/system/docker.service.\nJob for docker.service failed because the control process exited with error code.\nSee \"systemctl status docker.service\" and \"journalctl -xe\" for details."
+    },
+    "S4_IMAGES": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S5_ENV": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S6_UP": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S7_MIGRATE": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S8_SEED": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S9_SMOKE": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    }
+  }
+}

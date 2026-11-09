@@ -1,0 +1,18 @@
+=== S3_DOCKER 安装 Docker 开始 ===
+firewalld 正在运行：dockerd 与它会争 docker0（统信实测 ZONE_CONFLICT，二次启动必失败），执行 disable --now
+Removed /etc/systemd/system/multi-user.target.wants/firewalld.service.
+Removed /etc/systemd/system/dbus-org.fedoraproject.FirewallD1.service.
+firewalld：已 disable --now（停机 + 取消开机自启），前后状态均已留痕（"active" → "inactive"）
+解开 static 包 docker-27.5.1.tgz → /usr/local/lib/tianji/docker-static
+已写入 /usr/local/lib/tianji/docker-static/wait-ready.sh
+compose 插件已安装到 /usr/local/lib/docker/cli-plugins/docker-compose
+已写入 /etc/systemd/system/docker.service（ExecStart=/usr/local/lib/tianji/docker-static/dockerd）
+firewalld: tool=systemctl before="active" after="inactive" —— 已 disable --now（停机 + 取消开机自启），前后状态均已留痕
+=== S3_DOCKER 失败（2.119s）: systemctl enable --now docker 失败: 命令失败（退出码 1）: systemctl enable --now docker
+--- 最后输出 ---
+Created symlink /etc/systemd/system/multi-user.target.wants/docker.service → /etc/systemd/system/docker.service.
+Job for docker.service failed because the control process exited with error code.
+See "systemctl status docker.service" and "journalctl -xe" for details.
+Created symlink /etc/systemd/system/multi-user.target.wants/docker.service → /etc/systemd/system/docker.service.
+Job for docker.service failed because the control process exited with error code.
+See "systemctl status docker.service" and "journalctl -xe" for details. ===
