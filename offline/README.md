@@ -26,7 +26,7 @@
 - **改完必须重建容器**：`docker compose -f docker-compose.offline.yml up -d`；`restart` 不重读 `.env`。
 - **两处 CORS 不要混为一谈**：
   - **API 层 `CORS_ORIGINS`**：origin 白名单，解决以 `http://<局域网IP>:8080` 访问时 `/api` 跨域；默认值仅 `http://localhost:5173` 与 `http://localhost:8080`，需要时追加现场 origin。
-  - **S3 层 `Access-Control-Expose-Headers: ETag`**：SeaweedFS 预签名分片直传，浏览器必须读到 ETag 才能完成分片合并。**配了前者不解决后者**；后者由 SeaweedFS 侧配置承接，是本次交付的头号验证项，结论以 QA 阶段二独立复核为准。
+  - **S3 层 `Access-Control-Expose-Headers: ETag`**：SeaweedFS 预签名分片直传，浏览器必须读到 ETag 才能完成分片合并。**配了前者不解决后者**；后者由 SeaweedFS 侧配置承接，是本次交付的头号验证项，结论以 QA 阶段二独立复核为准。缺该项的典型表现是「分片 PUT 成功、completeMultipart 失败」，排障时勿误归因到 SigV4 签名或对象存储兼容性（见 §七）。
 
 ### 0.2 凭据：demo 阶段用默认值，正式启用前必须全部轮换
 
@@ -231,6 +231,7 @@ R-2 裁定：**seaweedfs 只发布 8333**，master / filer / volume 均不占宿
 | `demo:books` 抽取超时 | `docker compose logs extractor`；确认 extractor 容器健康、Redis 可达、S3 可读 |
 | 备份记录 `minio_status=FAILED` | `docker compose logs backup` 与 `/backup/backup.log`；确认桶已建、aws-cli 可用 |
 | 检索命中数不足 | 确认 ES 索引 `archive_items` 已建且 IK 插件可用；重跑 `demo:books` |
+| 分片 PUT 成功、但 `completeMultipart` 失败 | 先查 S3 层 `Access-Control-Expose-Headers: ETag` 是否生效（浏览器读不到 ETag 就无法汇总分片），用原生 OPTIONS + 真实 PUT 看响应头原值；**勿误判为 SigV4 签名或对象存储兼容性问题**，也不要据此改签名逻辑 |
 
 ---
 
