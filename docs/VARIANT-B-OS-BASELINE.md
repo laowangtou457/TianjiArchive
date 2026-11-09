@@ -170,24 +170,34 @@ Mount-DiskImage -ImagePath 'E:\国产OS镜像\<iso>' -PassThru | Get-Volume
   处置：改 `Permissive` 并在安装报告里显式记录为交付例外（需现场签认），不要静默改。
 - 未验证：统信的默认 SELinux 状态（麒麟已实测 Disabled，见上方校正）。
 
-### 4.4 firewalld 与 docker 的 iptables 共存（高概率，低-中代价）
+### 4.4 firewalld 与 docker 的共存（两版 OS 都必须处理）
 
-> **【实测校正 2026-11-09】** 实测比预想严重，且**原来给的处置是错的**：
-> - `firewall-cmd --reload`：DOCKER 链**没被清**（`grep -c DOCKER` 4→4），SSH 正常；
-> - `systemctl restart firewalld`（dockerd 在跑时）：**SSH 立即不可达且不自愈**；
->   sshd 仍在监听、loopback:22 可连、IP 仍是 10.0.2.15；
-> - 断网 30 秒窗口里从宿主连发 12 次 SSH，窗口结束时 **iptables 所有链的计数都是 0**
->   （包括 `--dport 22 ACCEPT` 和末尾的 `-j REJECT`）→ **不是被防火墙规则丢弃，SYN 根本没进 INPUT**；
-> - 对照实验：**不带 docker** 时 restart firewalld 不掉线；
-> - **把 `docker0` 加进 trusted zone 也没用**（试过，照样断）。
+> **【实测校正 2026-11-09，第二版】** 本节第一版依据的「麒麟上 restart firewalld 后 SSH
+> 失联、trusted zone 无效」**经二分实验证伪，已收回**——那是 QEMU user 网络（slirp）的
+> 环境假象：guest 内一出现第二个网桥接口，hostfwd 就投递不进 guest，与 firewalld/iptables
+> 无关（触发实验：手工 `ip link add docker0` 立刻失联；`--iptables=false --bridge=none`
+> 起 dockerd 存活；重启 guest 恢复）。iptables 计数全 0 也是同一假象（SYN 根本没到协议栈）。
+> **教训已写进 `installer/vmtest/logs/README.md`：slirp 环境里凡涉及「guest 网络行为」的
+> 结论都不能当 OS 结论，要测得换 tap/bridge 网络。**
 >
-> → **处置改为：安装时 `systemctl disable --now firewalld` 并留痕**，
-> 不要再写「加 trusted zone」——那条建议经实测无效，写进手册会误导现场反复试。
+> **真正成立的证据来自统信**（`installer/vmtest/logs/uos-dockerd.txt`）：
+> 首次起 dockerd 成功；**重启系统后再起，daemon 直接失败**——
+>
+> ```
+> … msg="Firewalld: docker zone already exists, returning"
+> failed to start daemon: Error initializing network controller:
+>   error creating default "bridge" network: Failed to program NAT chain:
+>   ZONE_CONFLICT: 'docker0' already bound to a zone
+> ```
+>
+> firewalld 已把 docker0 绑进 zone，dockerd 再绑一次就冲突。这比「端口不通」更严重：
+> **是 dockerd 起不来**。干净证据（保留）：`firewall-cmd --reload` 不清 DOCKER 链
+> （`grep -c DOCKER` 4→4）。
 
-- 两版都带 `firewalld 0.6.6`。docker 直接写 iptables，firewalld 与 docker 的网桥/规则交叠，
-  表现为「装完能用，动一次 firewalld 就失联」。
-- 处置：内网单机 appliance 场景直接停用 firewalld（需留痕），端口管控交由 docker 的
-  publish 与上层网络策略承担。
+- 两版都带 `firewalld 0.6.6`。它会把 docker0 绑进自己的 zone，与 dockerd 编排 NAT 链的
+  动作冲突，表现为「第一次能起，重启后 dockerd 起不来」。
+- 处置（二选一，均需留痕）：安装时 `systemctl disable --now firewalld`；或 dockerd 配置
+  `--iptables=false` 并自行接管端口管控。内网单机 appliance 场景首选前者。
 
 ### 4.5 overlay2 的 xfs `ftype=1`（低概率，中代价）
 - kernel 4.19 支持 overlay2，但若 `/var/lib/docker` 落在 `ftype=0` 的 xfs 上，docker 会
@@ -289,18 +299,37 @@ COMPOSE_CONFIG_OK
 | 3 | cgroup | **v1** | `stat -fc %T /sys/fs/cgroup`→`tmpfs`，12 个 controller 各自挂载 |
 | 4 | iptables | **legacy** | `iptables v1.8.5 (legacy)`；只有 `iptables-legacy`，**无 `iptables-nft` 二进制** |
 | 5 | xfs ftype | **ftype=1** | `xfs_info /` 与 `xfs_info /boot` 均为 1 → overlay2 可用 |
-| 6 | firewalld | **restart 会打断管理面** | 详见 §4.4 校正块；`reload` 无害、`restart` 致命、trusted zone 无效 |
+| 6 | firewalld | `reload` 不清 DOCKER 链（4→4）；麒麟侧「restart 断网」经二分实验证伪为 slirp 环境假象，不当 OS 结论；真正的 OS 级冲突在统信：**dockerd 二次启动 ZONE_CONFLICT 失败**（见 §4.4） |
 
 **附加（原 §7 第 4 项）**：dockerd **27.5.1 在 cgroup v1 上真跑起来了** ——
 `Storage Driver: overlay2`、`Cgroup Version: 1`、`Cgroup Driver: cgroupfs`、
 `Daemon has completed initialization`，**没有退回 vfs**。§3.1「锁 27.5.1」的决定有实测支持。
 
-### 7.2 仍未验证
+### 7.2 统信 UOS 20 1020e —— 六项实测结果
+
+真机安装（QEMU/KVM，**4 分 12 秒装完 576 包，零缺包**，rc=0），证据原文在
+`installer/vmtest/logs/`（`uos-probe.txt` / `uos-dockerd.txt`），提交 `b4c768a`。
+
+| # | 项 | 统信实测 | 与麒麟对照 |
+|---|---|---|---|
+| 1 | SELinux | **Disabled**（`/etc/selinux/config` 也写 disabled，无误导项） | 麒麟 Disabled 但配置写 enforcing |
+| 2 | kysec | **完全没有**（无任何 kysec 包） | 麒麟有 libkysec* 库但未启用 |
+| 3 | cgroup | **v1** | 同 |
+| 4 | iptables | **1.8.5 legacy** | 同 |
+| 5 | xfs ftype | **1** | 同 |
+| 6 | firewalld | **dockerd 二次启动 ZONE_CONFLICT 失败**（见 §4.4） | 麒麟仅 reload 不清链 |
+
+**附加**：dockerd 27.5.1 首次启动同样 overlay2 / cgroup v1 / cgroupfs 正常。
+
+**两版 OS 的共同结论**：SELinux 与 kysec 都不构成障碍；**firewalld 是唯一的 OS 级冲突源**，
+安装器必须处理（disable --now 或 `--iptables=false`，留痕）。
+
+### 7.3 仍未验证
 
 | # | 内容 | 状态 |
 |---|---|---|
-| 1 | 统信 UOS 20 的六项（尤其 SELinux 默认态与 container-selinux 缺口） | 进行中 |
-| 2 | 安装向导在 4.19 内核 + cgroup v1 下的端到端一次通过 | 未开始（依赖变体 B 安装流程实现） |
+| 1 | 安装向导在 4.19 内核 + cgroup v1 下的端到端一次通过 | 未开始（依赖变体 B 安装流程实现，归 #41） |
+| 2 | 「dockerd 在跑 + firewalld 重启后外部端口是否仍通」 | slirp 环境拿不到干净结论，需 tap/bridge 网络（见 `installer/vmtest/logs/README.md` 方法论教训） |
 | 3 | 麒麟装 `kysec-utils` 后是否翻强制态 | 不做（交付场景是最小化安装） |
 
 **真机测试环境已打通**：宿主 Docker Desktop 的 WSL2 内核在容器内暴露 `/dev/kvm`
@@ -310,21 +339,21 @@ daemon 重启的窗口里会消失，加速器必须在每次运行时实测选�
 
 ---
 
-## 8. 麒麟真机实测对本文的校正汇总
+## 8. 真机实测对本文的校正汇总（麒麟 + 统信）
 
 本节存在的目的：**留档「推断 vs 实测」的差异**，避免后面有人照着 §2–§4 的推断去实施。
 凡与本节冲突，一律以本节为准。
 
 | # | 原文推断（§2–§4） | 实测 | 影响 |
 |---|---|---|---|
-| 1 | 「RHEL8 系默认 `iptables-nft`，Docker 27 支持 nft backend」 | 麒麟是 **legacy**，且**没有** `iptables-nft` 二进制 | 任何依赖 nft 语法/后端假设的脚本与文档都要改；preflight 必须记录实际后端 |
-| 2 | 「kysec 是最大未知风险，可能一票否决」 | 最小化安装下 **`KYSEC: Disabled.`**，`kysec-utils` 都未安装 | preflight 从「一票否决」降为「记录」；处置流程保留但基本用不上 |
-| 3 | 「默认是否 Enforcing 未验证」 | **Disabled**，但 `/etc/selinux/config` 写的是 `enforcing` | **判定口径改为只看 `getenforce`/`/sys/fs/selinux/enforce`**，读配置文件会误判 |
-| 4 | 「firewalld reload 会清掉 docker 链；加 trusted zone 可解」 | `reload` 无害；`restart` 直接打断管理面且不自愈；**trusted zone 无效** | 处置改为 `systemctl disable --now firewalld` 并留痕 |
-| 5 | 「cgroup v1 上 dockerd 27.5.1 能否起来未知」 | **能**：overlay2 + cgroup v1 + cgroupfs，正常初始化 | 版本锁定（禁升 28/29）得到实测支持 |
-| 6 | 「xfs ftype 可能为 0，会退 vfs」 | `/` 与 `/boot` 均 **ftype=1** | 无需处置，但 preflight 仍要记录，换机器可能不同 |
+| 1 | 「RHEL8 系默认 `iptables-nft`，Docker 27 支持 nft backend」 | 麒麟与统信都是 **legacy**，麒麟且**没有** `iptables-nft` 二进制 | 任何依赖 nft 语法/后端假设的脚本与文档都要改；preflight 必须记录实际后端 |
+| 2 | 「kysec 是最大未知风险，可能一票否决」 | 麒麟最小化安装 **`KYSEC: Disabled.`**（`kysec-utils` 未安装）；统信**完全没有** kysec 包 | preflight 从「一票否决」降为「记录」；处置流程保留但基本用不上 |
+| 3 | 「默认是否 Enforcing 未验证」 | 两版都 **Disabled**；麒麟的 `/etc/selinux/config` 写 `enforcing`（误导），统信写 disabled（一致） | **判定口径改为只看 `getenforce`/`/sys/fs/selinux/enforce`**，读配置文件会误判 |
+| 4 | 「firewalld reload 会清掉 docker 链；加 trusted zone 可解」 | `reload` 不清 DOCKER 链（干净证据）；「restart 断网」被二分实验证伪为 **slirp 环境假象**；真正的 OS 级问题是统信上 **dockerd 二次启动 ZONE_CONFLICT 失败** | 处置改为 `systemctl disable --now firewalld`（或 `--iptables=false`）并留痕；「trusted zone」一说收回 |
+| 5 | 「cgroup v1 上 dockerd 27.5.1 能否起来未知」 | **能**：两版都是 overlay2 + cgroup v1 + cgroupfs，正常初始化 | 版本锁定（禁升 28/29）得到实测支持 |
+| 6 | 「xfs ftype 可能为 0，会退 vfs」 | `/` 与 `/boot` 均 **ftype=1**（两版） | 无需处置，但 preflight 仍要记录，换机器可能不同 |
 
-### 8.1 由此定下的三条硬口径
+### 8.1 由此定下的硬口径
 
 1. **SELinux 判定只看运行时**：`getenforce` / `/sys/fs/selinux/enforce`；`/etc/selinux/config`
    只反映「下次启动的目标态」，**不得作为当前状态依据**。
@@ -333,10 +362,14 @@ daemon 重启的窗口里会消失，加速器必须在每次运行时实测选�
 3. **kysec 的存在性检测与状态检测分开**：`command -v getstatus` 只说明「工具在」，
    `getstatus` 的输出才说明「模块在不在管」。且 `getstatus` 走 D-Bus 查 `kysec-daemon`，
    **查询失败 ≠ 已关闭**，两者必须在安装报告里分开记。
+4. **slirp 环境不做网络行为结论**：QEMU user 网络下，guest 多一个网桥接口 hostfwd 就投递
+   不进去，会伪装成「防火墙/网桥把连接搞断」。凡涉及 guest 网络行为的验证必须换
+   tap/bridge 网络做（教训已记入 `installer/vmtest/logs/README.md`）。
 
-### 8.2 麒麟安装过程本身的事实（对交付有用）
+### 8.2 安装过程本身的事实（对交付有用）
 
-- KVM 加速下 **4 分钟**装完 499 个包，无缺包（22:21:30 → 22:25:31）。
+- 麒麟：KVM 加速下 **4 分钟**装完 499 个包，无缺包；统信：**4 分 12 秒**装完 576 个包，零缺包。
 - kickstart 必须写 `reboot`，否则 anaconda 停在 `Installation complete. Press ENTER to quit:`
   等键盘输入，看起来像卡死；qemu 侧配 `-no-reboot` 可让它装完干净退出（rc=0）。
 - 首次开机约 30 秒到 SSH 可用。
+- `.gitignore` 的 `*.log` 会挡住串口日志：提交 `installer/vmtest/logs/*.log` 需要 `git add -f`。
