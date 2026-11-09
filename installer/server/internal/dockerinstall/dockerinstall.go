@@ -246,8 +246,29 @@ func installDebs(ctx context.Context, opts *Options, res *Result) (int, string, 
 	dpkgRes, err := opts.Runner.Run(ctx, "dpkg", args...)
 	opts.logf("%s", strings.TrimRight(dpkgRes.Combined(), "\n"))
 	if err != nil {
-		return len(debs), snapshot, fmt.Errorf("dpkg -i 失败（未自动 --force-depends，避免静默降级）: %w\n"+
-			"处置：按上面输出里的「冲突包名」比对下面快照，确认版本后再重跑", err)
+		// 单次 dpkg -i 是**按参数顺序**逐个检查 Pre-Depends 的，顺序不利时会误判。
+		// 实测（ubuntu:22.04 特权 systemd 容器，85 个包）：python3-minimal 的
+		// Pre-Depends 是 python3.10-minimal，而字典序把 python3-minimal 排在前面，
+		// 于是报「python3.10-minimal is not installed」——可这个包就在同一批参数里，
+		// 只是还没轮到解包；连带 networkd-dispatcher / python3-dbus / python3-gi 一起失败。
+		//
+		// 这不是缺包、也不是版本冲突，所以先 --configure -a 再补装一轮；
+		// 两轮都失败才算真失败。仍然坚持**不**自动加 --force-depends：
+		// 那会把「依赖真的不满足」降级成「装上了但起不来」，现场更难查。
+		opts.logf("第 1 轮 dpkg -i 未全部成功（多为 Pre-Depends 参数顺序所致），configure 后补装第 2 轮…")
+		if cfgRes, cfgErr := opts.Runner.Run(ctx, "dpkg", "--configure", "-a"); cfgErr == nil {
+			opts.logf("%s", strings.TrimRight(cfgRes.Combined(), "\n"))
+		} else {
+			opts.logf("WARN: 补装前的 dpkg --configure -a 也报错（继续补装一轮）: %v", cfgErr)
+		}
+		retryRes, retryErr := opts.Runner.Run(ctx, "dpkg", args...)
+		opts.logf("%s", strings.TrimRight(retryRes.Combined(), "\n"))
+		if retryErr != nil {
+			return len(debs), snapshot, fmt.Errorf("dpkg -i 失败（已补装第 2 轮；未自动 --force-depends，避免静默降级）: %w\n"+
+				"处置：按上面输出里的「冲突包名」比对下面快照，确认版本后再重跑", retryErr)
+		}
+		opts.logf("第 2 轮 dpkg -i 成功（第 1 轮失败确系参数顺序，不是缺包）")
+		res.Steps = append(res.Steps, "dpkg -i 第 1 轮因 Pre-Depends 参数顺序未全成功，第 2 轮补齐")
 	}
 
 	cfgRes, err := opts.Runner.Run(ctx, "dpkg", "--configure", "-a")

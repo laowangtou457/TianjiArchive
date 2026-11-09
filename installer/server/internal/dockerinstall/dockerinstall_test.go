@@ -216,3 +216,65 @@ func TestParseMajorMinor(t *testing.T) {
 		t.Fatal("单段版本号应判为不可解析")
 	}
 }
+
+// dpkgRetryRunner 让第 1 次 `dpkg -i` 失败、之后成功，用来复刻真机踩到的失败形态。
+type dpkgRetryRunner struct {
+	dpkgCalls int
+	calls     []string
+}
+
+func (r *dpkgRetryRunner) Run(_ context.Context, name string, args ...string) (execx.Result, error) {
+	key := name + " " + strings.Join(args, " ")
+	r.calls = append(r.calls, key)
+	if name == "dpkg" && len(args) > 0 && args[0] == "-i" {
+		r.dpkgCalls++
+		if r.dpkgCalls == 1 {
+			res := execx.Result{Command: key, ExitCode: 1,
+				Stderr: " python3.10-minimal is not installed.\ndpkg: error processing archive python3-minimal"}
+			return res, errors.New("命令失败（退出码 1）")
+		}
+		return execx.Result{Command: key, Stdout: "第 2 轮 OK"}, nil
+	}
+	return execx.Result{Command: key, Stdout: "OK"}, nil
+}
+
+// TestInstallDebsRetriesOnceOnPreDependsOrder 复刻实测失败：85 个 deb 一次性 dpkg -i 时，
+// python3-minimal 的 Pre-Depends（python3.10-minimal）因**字典序排在后面**而被判未安装，
+// 连带 networkd-dispatcher / python3-dbus / python3-gi 失败，整步 S3_DOCKER 判 FAIL。
+//
+// 这不是缺包：补装一轮就过。测试锁住三点——
+//  1. 第 1 轮失败后必须再跑一轮 dpkg -i（而不是直接判失败）；
+//  2. 两轮都失败才算失败（下一条用例）；
+//  3. 结果里要留下「第 2 轮补齐」的痕迹，别让日志看起来像一次就成功。
+func TestInstallDebsRetriesOnceOnPreDependsOrder(t *testing.T) {
+	root := t.TempDir()
+	layout := buildplan.Layout{Root: root}.Normalize()
+	debDir := layout.DebsDir("jammy")
+	if err := os.MkdirAll(debDir, 0o755); err != nil {
+		t.Fatalf("建 deb 目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(debDir, "docker-ce_29.9.3_amd64.deb"), []byte("fake"), 0o644); err != nil {
+		t.Fatalf("写假 deb 失败: %v", err)
+	}
+
+	r := &dpkgRetryRunner{}
+	res := &Result{}
+	opts := Options{
+		Layout:    layout,
+		Codename:  "jammy",
+		Manifest:  &buildplan.Manifest{Variant: buildplan.VariantUbuntuDebian, Arch: "amd64"},
+		Runner:    r,
+		NoSystemd: true,
+		Logf:      func(string, ...any) {},
+	}
+	if _, _, err := installDebs(context.Background(), &opts, res); err != nil {
+		t.Fatalf("第 2 轮应成功，实际返回错误: %v", err)
+	}
+	if r.dpkgCalls != 2 {
+		t.Fatalf("dpkg -i 应执行 2 轮，实际 %d 轮", r.dpkgCalls)
+	}
+	joined := strings.Join(res.Steps, " | ")
+	if !strings.Contains(joined, "第 2 轮补齐") {
+		t.Fatalf("结果里应留下补装痕迹，实际: %s", joined)
+	}
+}

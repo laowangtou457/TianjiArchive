@@ -239,11 +239,46 @@ func newSession(cfg config) (*session, error) {
 	if s.imagesTar == "" {
 		s.imagesTar = s.locateImagesTar(mf.ImagesTar.Filename)
 	}
+	// 断点重入时把表单值从已落盘的 .env 读回来。
+	// 两个理由：① 用户不该为一个已经填过的 8 项凭据再抄一遍；
+	// ② S10 汇总里的访问地址取自 values.Endpoint，读不回来就会印出「http://:8080」——
+	// 这种「装完了但地址是空的」比报错更让人以为安装失败。
+	if values, ok := loadEnvValues(s.layout.DeployRoot); ok {
+		s.values = values
+	}
 	if raw, readErr := os.ReadFile("/etc/os-release"); readErr == nil {
 		s.osInfo = buildplan.ParseOSRelease(string(raw))
 		s.osMatch = buildplan.MatchOS(s.osInfo, mf.Variant)
 	}
 	return s, nil
+}
+
+// loadEnvValues 从部署根的 .env 读回向导表单值（断点重入用）。
+//
+// 只在 8 个占位键全部存在时才算读回成功：缺一个就说明这份 .env 不是本安装器
+// 渲染的（或被人手改过），此时宁可让用户重新填，也不要用半份值去覆盖现场配置。
+// CORS_ORIGINS 不参与判定——toMap 里有「留空即按 Endpoint 派生」的默认行为。
+func loadEnvValues(deployRoot string) (envValues, bool) {
+	raw, err := os.ReadFile(filepath.Join(deployRoot, ".env"))
+	if err != nil {
+		return envValues{}, false
+	}
+	kv := envfile.ParseValues(string(raw))
+	for _, key := range requiredEnvKeys {
+		if strings.TrimSpace(kv[key]) == "" {
+			return envValues{}, false
+		}
+	}
+	return envValues{
+		Endpoint:         kv["S3_PUBLIC_ENDPOINT"],
+		PostgresPassword: kv["POSTGRES_PASSWORD"],
+		MinioAccessKey:   kv["MINIO_ACCESS_KEY"],
+		MinioSecretKey:   kv["MINIO_SECRET_KEY"],
+		JwtAccessSecret:  kv["JWT_ACCESS_SECRET"],
+		JwtRefreshSecret: kv["JWT_REFRESH_SECRET"],
+		RedisPassword:    kv["REDIS_PASSWORD"],
+		CorsOrigins:      kv["CORS_ORIGINS"],
+	}, true
 }
 
 // locateImagesTar 按「显式指定 → 安装器目录 → 可执行文件同目录 → 当前目录」找镜像 tar。
