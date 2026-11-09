@@ -374,10 +374,14 @@ func checkOverlay2Prereq(ctx context.Context, opts VariantBOptions, rep *Report)
 
 // checkFirewalld 是 §4.4。
 //
-// 麒麟真机实测改变了这里的口径：`systemctl restart firewalld`（dockerd 在跑时）
-// 会让 SSH 立即不可达且不自愈，ssh 仍在听、规则计数全 0——SYN 根本没进 INPUT；
-// 把 docker0 加进 trusted zone **无效**。所以处置建议只能是「安装时停用 firewalld」，
-// 绝不是「加 trusted zone」。写错这条会让现场反复试一个已知无效的动作。
+// 判据以「第二版实测校正」为准（docs/VARIANT-B-OS-BASELINE.md §4.4）：
+//   - 真正成立的 OS 级证据来自统信：firewalld 会把 docker0 绑进自己的 zone，dockerd 再绑
+//     一次就冲突 → 重启系统后再起 dockerd 直接失败
+//     `Failed to program NAT chain: ZONE_CONFLICT: 'docker0' already bound to a zone`。
+//     这比「端口不通」严重：**是 daemon 起不来**。
+//   - 「restart firewalld 后 SSH 失联 / trusted zone 无效」那批结论**已被二分实验证伪**，
+//     是 QEMU user 网络（slirp）的环境假象（guest 内出现第二个网桥，hostfwd 投递失效），
+//     不是 OS 行为。**绝不能把它写进给现场的话术**——那会让人去试一个从来没被证实的动作。
 func checkFirewalld(ctx context.Context, opts VariantBOptions, rep *Report) Item {
 	const id, title = "B6", "firewalld 状态"
 	out, err := opts.Runner.Run(ctx, "firewall-cmd", "--state")
@@ -399,16 +403,19 @@ func checkFirewalld(ctx context.Context, opts VariantBOptions, rep *Report) Item
 	if strings.Contains(strings.ToLower(stateOut), "running") {
 		rep.Facts["firewalld"] = "running"
 		return Item{ID: id, Title: title, Level: LevelWarn,
-			Detail: "firewalld 正在运行：与 docker 的 iptables 规则交叠",
-			Raw:    stateOut,
-			Hint: "安装时 `systemctl disable --now firewalld` 并留痕。" +
-				"**不要加 trusted zone**：麒麟实测把 docker0 加进 trusted zone 后 restart firewalld 仍断 SSH；" +
-				"`firewall-cmd --reload` 不动 DOCKER 链，但 restart 会让 SSH 不可达且不自愈"}
+			Detail: "firewalld 正在运行：它会把 docker0 绑进自己的 zone，dockerd 再绑就冲突" +
+				"（统信实测：重启后再起 dockerd 直接失败，报 ZONE_CONFLICT）",
+			Raw: stateOut,
+			Hint: "处置二选一，均需留痕：①安装时 `systemctl disable --now firewalld`（内网单机 appliance 首选）；" +
+				"②dockerd 配 `--iptables=false` 并自行接管端口管控。" +
+				"**不要用「加 trusted zone」当处置**：那批实验（含 restart 后 SSH 失联）" +
+				"已由二分实验证伪为 QEMU slirp 环境假象，不是 OS 行为",
+		}
 	}
 	rep.Facts["firewalld"] = "not-running"
 	return Item{ID: id, Title: title, Level: LevelPass,
 		Detail: "firewalld 未运行（" + orDash(stateOut) + "）", Raw: stateOut,
-		Hint: "无需动作"}
+		Hint: "无需动作；仍建议在安装报告里记下当前状态，便于重启后复现排查"}
 }
 
 // --- 小工具 ---

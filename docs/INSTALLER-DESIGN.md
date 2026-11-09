@@ -739,7 +739,7 @@ bash installer/build/make-manifest.sh --sign
 | 密钥 | `tianji-build`，RSA4096，**无口令**（构建机无人值守），有效期至 2027-11-09 |
 | 公钥 | `installer/build/pubkeys/tianji-build.asc` + 指纹文件入库；**私钥只在构建机 `~/.gnupg`，绝不入库** |
 | 指纹 | `0AD2 912C F8FE 57E2 02C2 75F2 0A03 8555 B153 ACC9` |
-| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,106,892 字节**，sha256 `25bd5b42f328ad4da19c59237350400962ee1e20400970771ce98474286ae608`，payload sha256 `f401c341…`（v1.2 因卷属主修法 + 变体 B 六项预检 + gofmt 重打包；上一版 150,088,493 / `85478f08…` 已被替换，签名与验签流程不变。**容器内十步是在这一版产物上跑的**，包 sha256 与容器内 `sha256sum` 逐字一致） |
+| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,107,053 字节**，sha256 `c7fe6a1175cd83b97895ede04842f5759f784b6ce370e8e31266afbe97fe9b88`，payload sha256 `013b0933…`（v1.2 因卷属主修法 + 变体 B 六项预检 + gofmt 重打包；上一版 150,088,493 / `85478f08…` 已被替换，签名与验签流程不变。**容器内十步是在这一版产物上跑的**，包 sha256 与容器内 `sha256sum` 逐字一致） |
 | 闸门 | G1 载荷同源 7/7 · G2 ELF64/amd64（6,385,816 字节）· G3 壳层 `--verify-only` PASS |
 | 验签 | **在新导出的 `GNUPGHOME` 里验签通过**（只 import 仓库公钥，不在生成它的 keyring 里自证）：`Good signature from "tianji-build (Tianji Archive build key)"` + `sha256sum -c` **98/98 OK** |
 | 重打包后复核 | 容器内 `sh <run> --verify-only` → `IS_PASS: YES`；包 sha256 与构建机公布值逐字一致 |
@@ -805,7 +805,7 @@ Docker Desktop 的 overlayfs 上**被静默忽略**），并用 `fallocate` 超�
 | 只探测与报告，不做自动处置 | `setstatus -t` / `setenforce 0` / `systemctl disable firewalld` 均不写进代码；WARN/FAIL 里只给「现场可执行的动作」话术 |
 | 「探测失败」≠「确认关闭」 | `Facts["kysec"]` 区分 `probe-failed` / `disabled` / `unknown`；`describeRunErr` 区分「命令不存在 / 命令超时 / 命令失败（退出码）」 |
 | SELinux 判定口径 | 只认 `getenforce`（旁证 `/sys/fs/selinux/enforce`）；**不读 `/etc/selinux/config`**——麒麟实测该文件写 `enforcing` 而实际 `Disabled` |
-| firewalld 处置口径 | 写「`disable --now` 并留痕」，并明写**不要加 trusted zone**（麒麟实测：restart firewalld 会让 SSH 不可达且不自愈，加 trusted zone 无效） |
+| firewalld 处置口径 | 结论以统信实测的 `ZONE_CONFLICT` 为准（重启后再起 dockerd 直接失败）；处置「`disable --now` 或 `--iptables=false`」。**明确否掉「加 trusted zone」**：那批实验（含 restart 后 SSH 失联）已被二分实验证伪为 QEMU slirp 环境假象，写进话术会让人去试一个从未证实的动作 |
 | xfs `ftype=1` | 不在预检做，放到安装时数据目录建好之后查（预检阶段目录可能还不存在） |
 
 验证：10 条单测全部用 fake runner（覆盖命令不存在 / 超时 / 输出无法解析 / 麒麟与非麒麟分支），

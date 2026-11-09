@@ -97,8 +97,17 @@ func TestCheckVariantBKylinMinimalBaseline(t *testing.T) {
 	if got := itemByID(t, rep, "B6"); got.Level != LevelWarn {
 		t.Errorf("B6 = %v，firewalld 在跑应 WARN", got.Level)
 	}
-	if got := itemByID(t, rep, "B6"); !strings.Contains(got.Hint, "trusted zone") {
-		t.Errorf("B6 的处置必须点明「不要加 trusted zone」，实际: %s", got.Hint)
+	// ZONE_CONFLICT 是目前唯一成立的 OS 级证据（统信实测），必须写进结论。
+	if got := itemByID(t, rep, "B6"); !strings.Contains(got.Detail, "ZONE_CONFLICT") {
+		t.Errorf("B6 结论要点明 ZONE_CONFLICT（dockerd 二次启动失败），实际: %s", got.Detail)
+	}
+	// 但「加 trusted zone」那批实验已被证伪，只能作为「别这么做」的反面提醒出现，
+	// 不能变成处置建议本身。
+	if got := itemByID(t, rep, "B6"); !strings.Contains(got.Hint, "不要用「加 trusted zone」") {
+		t.Errorf("B6 的处置必须明确否掉 trusted zone，实际: %s", got.Hint)
+	}
+	if got := itemByID(t, rep, "B6"); !strings.Contains(got.Hint, "disable --now") {
+		t.Errorf("B6 的处置要给出 disable --now，实际: %s", got.Hint)
 	}
 	if got := itemByID(t, rep, "B5"); got.Level != LevelPass {
 		t.Errorf("B5 = %v，overlay 可用应 PASS", got.Level)

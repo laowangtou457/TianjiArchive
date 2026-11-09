@@ -56,6 +56,24 @@ docker exec tj-e2e sh /repo/installer/e2e/poll.sh        # 十步进度
 
 `poll.sh` 用 POSIX sh 解析 `/api/status`（容器里没有 `python3`），只读、不改状态。
 
+### ⚠️ 重跑前一定要确认端口上没有旧实例（本轮真踩）
+
+`pkill -x tianji-installer` **杀不掉它**：进程名被截断成 `tianji-installe`，`pgrep -x` 也匹配不到。
+残留实例不会报错，反而更危险——它会占着 18080，新实例悄悄退到 18081/18082，
+而你的 `POST /api/run-all` 打到的是**旧进程**：它拿着内存里的旧状态、看到全部 DONE，
+只跑 S10 就返回成功。现象是「复跑通过」，实际一步没重跑（本轮就误判了一次）。
+
+```bash
+# 按完整命令行匹配（方括号防止匹配到这条命令自己）
+pgrep -af "[/]opt/tianji-installer/bin/tianji-installer"
+for pid in $(pgrep -f "[/]opt/tianji-installer/bin/tianji-installer"); do kill -9 "$pid"; done
+# 三个端口都必须 000 才能继续
+for p in 18080 18081 18082; do printf '%s: ' $p; curl -s -m 2 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:$p/api/status; done
+```
+
+复跑后要**比对 `state.json` 里各步的 `startedAt`** 是不是本轮时间：
+时间戳没变就说明那一步根本没重跑。
+
 ## ⚠️ 磁盘陷阱（本轮真踩，代价是整个构建机的 Docker 都停了）
 
 **不要在「外层 Docker Desktop」的机器上用 vfs 跑嵌套 dockerd 加载 GB 级镜像。**
