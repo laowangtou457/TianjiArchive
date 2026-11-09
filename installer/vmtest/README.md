@@ -28,19 +28,24 @@
 ## 2. 一键复现
 
 ```bash
-# 装麒麟（清盘 -> 无人值守安装 -> anaconda 结束时 qemu 自行退出）
+# 1) 装麒麟（清盘 -> 无人值守安装 -> anaconda 执行 reboot，qemu 因 -no-reboot 自行退出 rc=0）
 bash installer/vmtest/run-vm.sh --os kylin --fresh
 
-# 装完立刻探测（qemu 需仍在跑，hostfwd 2222 -> guest 22）
+# 2) 引导已装好的盘（安装阶段 qemu 已经退出，必须再起一次；这一步会一直开着等探测）
+bash installer/vmtest/run-vm.sh --os kylin
+
+# 3) 探测（qemu 需仍在跑，hostfwd 2222 -> guest 22）
 bash installer/vmtest/probe.sh --os kylin
 
-# 换统信
+# 换统信，同样三步
 bash installer/vmtest/run-vm.sh --os uos --fresh
+bash installer/vmtest/run-vm.sh --os uos
 bash installer/vmtest/probe.sh --os uos
 ```
 
-`run-vm.sh` 在宿主上跑时自己进容器（`docker run -d` **分离**模式，见坑 1），
-串口日志实时落 `installer/vmtest/logs/<os>-install.log`，可以另开终端 `tail -f`。
+`run-vm.sh` 在宿主上跑时自己进容器（`docker run -d` **分离**模式，见坑 1）。
+装盘与引导**分开落日志**：`<os>-install.log` / `<os>-boot.log`（各自首行记录 accel），
+可以另开终端 `tail -f`。
 
 ### 目录
 
@@ -130,8 +135,16 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
 ## 6. 装完之后的实测结果
 
 六项基线值、证据原文、与 `docs/VARIANT-B-OS-BASELINE.md` 的冲突点，全部在
-**`docs/VARIANT-B-VM-RESULT.md`**。这里只留一条最要紧的：
+**`docs/VARIANT-B-VM-RESULT.md`**。这里只留两条最要紧的，注意它们是**不同性质**的两件事：
 
-> **`systemctl restart firewalld` 在 dockerd 运行时会打断外部访问（连带 SSH 管理面），且不自愈。**
-> 实测 `--reload` 不会清 DOCKER 链，但 `restart` 会让外部 SYN 根本到不了 guest 的 INPUT
-> （iptables 计数全 0）。处置：安装时直接 `systemctl disable --now firewalld`，把 docker0 加 trusted 无效。
+> **(A) 真·OS 级冲突（需要安装器处置）**：firewalld 已经把 `docker0` 绑进 zone，dockerd 再绑
+> 就冲突 —— 同一系统**二次启动 dockerd 直接失败**：
+> `Failed to program NAT chain: ZONE_CONFLICT: 'docker0' already bound to a zone`（统信实测）。
+> 处置：安装时 `systemctl disable --now firewalld`，或给 dockerd 加 `--iptables=false`。
+> 另外 `firewall-cmd --reload` 实测**不会**清掉 DOCKER 链（4→4），reload 本身是安全的。
+
+> **(B) 测试环境假象（不要写进 OS 结论）**：本 README 的 `hostfwd + ssh` 手段**无法**验证
+> 「guest 内跑 docker 之后的管理面可达性」。guest 一旦建出网桥接口，宿主 SSH 就再也连不进去，
+> 看着像"OS 把管理面弄挂了"，实际是 QEMU user 网络（slirp）的限制，见坑 9。
+> 我一度据此误判过 firewalld，做了二分实验才推翻 —— 要测端口可达性请用 tap/bridge 网络或在
+> guest 内自测。

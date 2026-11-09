@@ -12,11 +12,21 @@
 #   installer/vmtest/logs/<os>-dockerd.txt   本次会话看到的全部输出
 #   guest:/root/tianji-diag.txt              同一份诊断，**落盘在 guest 里**
 #
-# 为什么要落盘到 guest：实测中 dockerd 起来后 SSH 会失联（见下），宿主的 ssh 会话直接断，
-# 输出全丢。落盘后可以重启 guest（清掉运行时 iptables 状态）再 `cat /root/tianji-diag.txt`
-# 把事故现场取回来。重启后重新拿回输出的方法：
+# 为什么要落盘到 guest：guest 内一旦出现网桥接口（dockerd 默认建 docker0 就算），QEMU user
+# 网络下的 SSH 就会失联（根因见下方「读数须知」），宿主 ssh 会话直接断、输出全丢。落盘后可以
+# 重启 guest（清掉运行时 iptables 状态）再 `cat /root/tianji-diag.txt` 把现场取回来。
+# 重启后重新拿回输出的方法：
 #   bash installer/vmtest/run-vm.sh --os kylin            # 重新引导
 #   ssh -i E:/tmp-vm/vmtest_ed25519 -p 2222 root@127.0.0.1 cat /root/tianji-diag.txt
+#
+# ⚠ 读数须知（2026-11-09 二分实验结论）：
+#   失联的触发条件不是 firewalld，而是 **guest 内出现了网桥接口**。QEMU user 网络(slirp) 在
+#   guest 多一个接口后就投递不进 guest（所以 iptables 命中计数全是 0）。手工 `ip link add
+#   docker0 type bridge` 可立刻复现；`--bridge=none --iptables=false` 则完全不发生。
+#   → 本脚本第 [5]/[6] 段（firewalld reload/restart 之后的观测）**受此限制**，
+#     只能用来取「reload 是否清 DOCKER 链」这类在失联前就能拿到的值；
+#     不能用它判断「OS 把管理面弄挂了」。真正的 OS 级冲突见 docs/VARIANT-B-VM-RESULT.md §2.6(A)
+#     —— 统信的 `ZONE_CONFLICT: 'docker0' already bound to a zone`。
 set -uo pipefail
 
 OS=""; PORT=2222
