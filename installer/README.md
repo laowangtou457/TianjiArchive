@@ -8,7 +8,7 @@
 > 无 `sh` 的三个用例）**，`gofmt -l` 与 `go vet` 均干净；交叉编译产物
 > `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,385,816 字节。
 > 真实安装包 = 150,107,053 字节（含 85 个真 `.deb` / 147,505,075 字节闭包），G1/G2/G3 全绿，
-> `SHA256SUMS.asc` 已签，sha256 = `c7fe6a1175cd83b97895ede04842f5759f784b6ce370e8e31266afbe97fe9b88`。
+> `SHA256SUMS.asc` 已签，那一刻产物的 sha256 = `c7fe6a1175cd83b97895ede04842f5759f784b6ce370e8e31266afbe97fe9b88`。
 >
 > ⚠️ **下面这些 sha256 是「当时那份产物」的编号，不是可复现常数**：`manifest.json` 里有
 > `built_at` 与 `builder`（含 hostname），重打包必然换 sha（本轮实测：同一输入两次构建
@@ -354,7 +354,7 @@ docker run -d --name tj-e2e --privileged --cgroupns=host \
 > 上表是**冷启动**那一轮（容器全新建、ES 首次建索引，S5→S10 合计 46s）。
 > 此后代码又有三次变动（`gofmt` 纯格式；变体 B 六项预检接入 S1；firewalld 结论按统信第二版
 > 实测校正），二进制字节随之变化，交付件按最终源码**重打包**，并在最终产物
-> （sha256 `c7fe6a11…`）上**复跑**了 S5→S10：仍全部 DONE，冒烟仍 4/4 PASS
+> （当时那一版，sha256 `c7fe6a11…`）上**复跑**了 S5→S10：仍全部 DONE，冒烟仍 4/4 PASS
 > （容器已就绪，S6 只花 117ms，五步合计 11s；日志目录 `/var/log/tianji-install/20261109T153205Z/`）。
 > 也就是说：**十步证据对应的是最终交付的那个包**，不是中间产物。
 > S1–S4 的 DONE 记录来自最早那一轮（新增预检项只对变体 B 生效，变体 A 路径未改动）。
