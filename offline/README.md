@@ -23,6 +23,10 @@
 - 依据：`.env.example` 的 R-1 注释、`docs/ARCHITECTURE-SEAWEEDFS.md` §1.2 双端点裁定。**具体 IP 属 R-10 现场确认项，包内只放占位符，不代拍板**。
 - **不改的后果**：预签名 URL 的 host 仍是 `127.0.0.1`，浏览器无法解析 → 上传 / 预览直连失败，S0-3 前置不通过；启动检查亦会告警（`apps/api/src/config/configuration.ts` 的回环地址告警）。
 - **前置依赖（交付前必须确认，可机械核对）**：`S3_PUBLIC_*` 三项必须由 compose 注入 `api` 容器才生效。已核实两份 compose 原先均无该项注入，且镜像内不含 `.env`、`ConfigModule.envFilePath` 在容器内无对应文件；该项已列入本次交付的收口清单。现场起栈后执行 `docker compose -f docker-compose.offline.yml exec api env | grep S3_PUBLIC`，**预期**：三项齐全（`S3_PUBLIC_ENDPOINT` / `S3_PUBLIC_PORT` / `S3_PUBLIC_USE_SSL`）、取值与 `.env` 一致；`S3_PUBLIC_ENDPOINT` 在**封闭环境多机访问**时必须是宿主机局域网 IP（**非 `127.0.0.1`、非容器 DNS `seaweedfs`**），在**浏览器与 Docker 同机的本机 demo** 时可保持 `127.0.0.1`。不满足时按 `docs/DEMO-ACCEPTANCE.md` §1.4 / §5.1「前置未就绪」记录，**不计产品功能缺陷**；只改 compose 文件而不实测容器内取值，不构成闭环。
+- **默认值陷阱（证据强度边界，必须如实登记）**：`apps/api/src/config/configuration.ts` 给 `S3_PUBLIC_*` 带代码默认值 `127.0.0.1` / `8333` / `false`，compose 又用 `${S3_PUBLIC_ENDPOINT:-127.0.0.1}` 兜底 ⇒ **本机 demo 场景下「预签名 URL host 正确」与「配置注入生效」不可区分**：即便三项完全没注入，API 也会签出 `127.0.0.1:8333`，看起来全绿。故：
+  - env 勾验**不能只查「三项齐全」**，必须逐项与现场实际生效的 `.env` 原值比对；「容器内 env 原值 + `.env` 原值 + 预签名 URL host」三者须并列留痕，缺一不可；
+  - 最强对照（起栈自验必做）：临时把 `.env` 的 `S3_PUBLIC_ENDPOINT` 改为局域网 IP → 重建 / 重启 `api` → 复验 `PRESIGN_HOST` 随之变化 → 改回；**临时值不得留在正式 `.env` / `.env.example`**；
+  - **封闭环境多机场景**因 endpoint 本就必须是局域网 IP，默认值不可能碰巧命中，对照自然成立；**本机 demo** 若未做对照，报告须登记为「已知证据强度边界」，且不得把 `IS_PASS: YES` 写成「配置注入已验证」。
 - **改完必须重建容器**：`docker compose -f docker-compose.offline.yml up -d`；`restart` 不重读 `.env`。
 - **两处 CORS 不要混为一谈**：
   - **API 层 `CORS_ORIGINS`**：origin 白名单，解决以 `http://<局域网IP>:8080` 访问时 `/api` 跨域；默认值仅 `http://localhost:5173` 与 `http://localhost:8080`，需要时追加现场 origin。
