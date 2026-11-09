@@ -1,0 +1,28 @@
+=== 自验 2026-11-09T04:45:59Z HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b ===
+=== 镜像 ID ↔ 构建记录绑定：变异验证（证明逐 ID 比对，非仅存在性） ===
+
+--- 备份当前 BUILD-INFO.txt ---
+backed_up
+
+--- 变异 1：RECORD_COMPLETE=yes + 把 api 的 Image ID 改成一个错误值 ---
+IMAGE_ID[tianji-archive-api:1.0.0]=sha256:DELIBERATELY_WRONG_ID_FOR_MUTATION_TEST
+RECORD_COMPLETE=yes
+
+--- 期望：--check 在 L0 绑定层因 ID 不符 fail-closed ---
+[L1] cmp 防漂移：entrypoint.sh / s3.json.tpl 均 SAME
+ERROR: 镜像 ID 与构建记录不符：tianji-archive-api:1.0.0 记录=sha256:DELIBERATELY_WRONG_ID_FOR_MUTATION_TEST 当前=sha256:48597185433b5911c557007654eef1dabcd1ee604df332a87cfbd5692ddf981f；说明镜像被替换/重建后未重新 --record，拒绝导出
+MUTATION_1_EXIT=1
+
+--- 变异 2：仅把 extractor 的 MISSING 伪造成有效 ID、RECORD_COMPLETE=yes ---
+--- 期望：本地缺该镜像 → 拒绝导出 ---
+[L1] cmp 防漂移：entrypoint.sh / s3.json.tpl 均 SAME
+ERROR: 本地缺少镜像 tianji-archive-extractor:1.0.0（tag 未重建或被删除），拒绝导出
+MUTATION_2_EXIT=1
+
+--- 还原真实 BUILD-INFO 并复核 ---
+IMAGE_ID[tianji-archive-extractor:1.0.0]=MISSING
+REPO_DIGEST[tianji-archive-extractor:1.0.0]=MISSING
+IMAGE_ID[tianji-archive-backup:1.0.0]=MISSING
+REPO_DIGEST[tianji-archive-backup:1.0.0]=MISSING
+RECORD_COMPLETE=no
+RESTORED

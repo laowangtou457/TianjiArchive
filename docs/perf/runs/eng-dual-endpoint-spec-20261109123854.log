@@ -1,0 +1,19 @@
+=== 自验 2026-11-09T04:38:54Z HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b ===
+=== 【4】c storage.dual-endpoint.spec.ts 复跑 ===
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mE:/TianjiArchive[39m
+
+ [32m✓[39m apps/api/__tests__/storage.dual-endpoint.spec.ts[2m > [22mR-1 双端点：预签名 URL 使用浏览器可达端点[2m > [22mrawClient 走内部容器端点，presignClient 走 S3_PUBLIC_* 且二者独立
+ [32m✓[39m apps/api/__tests__/storage.dual-endpoint.spec.ts[2m > [22mR-1 双端点：预签名 URL 使用浏览器可达端点[2m > [22mpresignPut 生成的 URL host 为 publicEndPoint，Content-Type 以查询串进入签名
+ [32m✓[39m apps/api/__tests__/storage.dual-endpoint.spec.ts[2m > [22mR-1 双端点：预签名 URL 使用浏览器可达端点[2m > [22mpresignUploadPart 的 URL host 也是 publicEndPoint，且带 uploadId/partNumber
+ [32m✓[39m apps/api/__tests__/storage.dual-endpoint.spec.ts[2m > [22mR-1 双端点：预签名 URL 使用浏览器可达端点[2m > [22mpresignGet 的 URL host 也是 publicEndPoint
+ [32m✓[39m apps/api/__tests__/storage.dual-endpoint.spec.ts[2m > [22mR-1 双端点：预签名 URL 使用浏览器可达端点[2m > [22m封闭环境覆盖 S3_PUBLIC_* 为局域网 IP 时，三个预签名方法都签发到该 host
+ [32m✓[39m apps/api/__tests__/storage.dual-endpoint.spec.ts[2m > [22mR-1 双端点：预签名 URL 使用浏览器可达端点[2m > [22mpublicUseSSL=true 时预签名 URL 为 https 且端口随 publicPort
+ [32m✓[39m apps/api/__tests__/storage.dual-endpoint.spec.ts[2m > [22mR-1 双端点：预签名 URL 使用浏览器可达端点[2m > [22m桶名/预签名有效期等既有契约不受双端点影响
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m7 passed[39m[22m[90m (7)[39m
+[2m   Start at [22m 12:38:58
+[2m   Duration [22m 858ms[2m (transform 110ms, setup 18ms, collect 506ms, tests 7ms, environment 0ms, prepare 117ms)[22m
+

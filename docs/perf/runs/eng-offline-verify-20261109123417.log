@@ -1,0 +1,45 @@
+=== 自验时间 2026-11-09T04:34:18Z ===
+=== HEAD 88c74613936b9d5d7ebf995551e649c9f9be0e2b ===
+
+=== [A] bash -n 语法检查 ===
+SYNTAX_OK
+LOAD_SYNTAX_OK
+ENTRYPOINT_SYNTAX_OK
+
+=== [B] --check-drift（cmp 防漂移，独立于镜像重建） ===
+[L1] cmp 防漂移：entrypoint.sh / s3.json.tpl 均 SAME
+IS_PASS: YES —— cmp 防漂移通过（仅 L1，未校验镜像绑定/清单）
+exit=0
+
+=== [C] --record 生成 BUILD-INFO.txt ===
+[record] 已生成 /e/TianjiArchive/offline/BUILD-INFO.txt
+[record] GIT_HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b  RECORD_COMPLETE=no  GIT_WORKTREE_DIRTY=yes
+[record] WARN: 存在 MISSING 镜像 —— 请先重建全部 4 个自建镜像再 --record；
+[record]       当前清单仅供查看字段，--check / save 会 fail-closed 拒绝。
+exit=0
+
+=== [D] BUILD-INFO.txt 字段样例（原样） ===
+# TianjiArchive 离线镜像构建锚定清单（由 save-images.sh --record 生成）
+# 用途：save 时逐一校验当前本地镜像 ID 与本记录一致，防止旧镜像/未重建镜像混入离线包。
+# 本文件含机器相关 Image ID，属构建机产物，不入库（见 .gitignore）。
+FORMAT_VERSION=1
+GENERATED_AT_UTC=2026-11-09T04:34:23Z
+GIT_HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b
+GIT_HEAD_SHORT=88c7461
+GIT_BRANCH=main
+GIT_WORKTREE_DIRTY=yes
+SELF_BUILT_IMAGE_COUNT=4
+IMAGE_ID[tianji-archive-api:1.0.0]=sha256:48597185433b5911c557007654eef1dabcd1ee604df332a87cfbd5692ddf981f
+REPO_DIGEST[tianji-archive-api:1.0.0]=tianji-archive-api@sha256:48597185433b5911c557007654eef1dabcd1ee604df332a87cfbd5692ddf981f
+IMAGE_ID[tianji-archive-web:1.0.0]=sha256:cd07b100dcc27f8cc8b6e5a233f44236b3380cbaca423c2bda3e5ab6cb62a139
+REPO_DIGEST[tianji-archive-web:1.0.0]=tianji-archive-web@sha256:cd07b100dcc27f8cc8b6e5a233f44236b3380cbaca423c2bda3e5ab6cb62a139
+IMAGE_ID[tianji-archive-extractor:1.0.0]=MISSING
+REPO_DIGEST[tianji-archive-extractor:1.0.0]=MISSING
+IMAGE_ID[tianji-archive-backup:1.0.0]=MISSING
+REPO_DIGEST[tianji-archive-backup:1.0.0]=MISSING
+RECORD_COMPLETE=no
+
+=== [E] --check（全前置：应因 extractor/backup 镜像未重建而 fail-closed） ===
+[L1] cmp 防漂移：entrypoint.sh / s3.json.tpl 均 SAME
+ERROR: BUILD-INFO.txt 标记 RECORD_COMPLETE=no（有镜像未构建），拒绝导出；请重建镜像后重新 --record
+exit=1
