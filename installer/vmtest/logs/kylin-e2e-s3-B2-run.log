@@ -1,0 +1,12 @@
+== B2run 2026-11-09T17:40:12Z tianji-kylin ==
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0 16 95.3M   16 16.0M    0     0   211M      0 --:--:-- --:--:-- --:--:--  208M100 95.3M  100 95.3M    0     0   155M      0 --:--:-- --:--:-- --:--:--  155M
+curl rc=0
+5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb  /root/server-setup.run
+期望: 5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb
+18080 就绪（1s）
+  日志目录：/var/log/tianji-install/20261109T174013Z
+  状态文件：/var/lib/tianji-install/state.json
+== [before] firewalld=inactive max_map_count=65530 ==
+S3 已发起 pid=1401
