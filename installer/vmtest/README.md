@@ -48,7 +48,9 @@ bash installer/vmtest/probe.sh --os uos
 可以另开终端 `tail -f`。
 
 资源参数默认 **30G / 4GiB / 4 vCPU**（与已入库的复现口径一致，不要随手改默认值）；
-跑完整栈或端到端验收时用 `--disk 60G --mem 8192 --smp 4`，理由见 §7。
+跑完整栈或端到端验收时用 `--disk 60G --mem 10240 --smp 4`——**内存必须 10240**：
+麒麟默认 `crashkernel=1024M,high` 吃掉 1GB，8192 会让 MemTotal 掉到 6.5GB 左右
+在 S1 再撞一次 K10（10GB 下 MemTotal≈8.5GB，属 WARN 区可接受）。理由见 §7。
 
 每段耗时写在 `<os>-<mode>-stages.log`，格式固定并同时并进串口日志头部：
 
@@ -215,14 +217,14 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
 
 ```bash
 # 1) 装 OS。--attach-ro 只在 boot 模式生效（装盘阶段挂第三块盘会被 clearpart 波及）
-bash installer/vmtest/run-vm.sh --os kylin --fresh --disk 60G --mem 8192 --smp 4
+bash installer/vmtest/run-vm.sh --os kylin --fresh --disk 60G --mem 10240 --smp 4
 
 # 2) 把 .run 放进 httpd 根目录并起固定别名（宿主可直接写，它挂载成容器内 /vm/ks-serve）
 mkdir -p E:/tmp-vm/ks-serve
 cp <构建产物>/tianji-server-setup-b-amd64-<ver>.run E:/tmp-vm/ks-serve/server-setup.run
 
 # 3) 带镜像 tar 引导
-bash installer/vmtest/run-vm.sh --os kylin --disk 60G --mem 8192 --smp 4 \
+bash installer/vmtest/run-vm.sh --os kylin --disk 60G --mem 10240 --smp 4 \
      --attach-ro E:/TianjiArchive/offline/tianji-offline-images.tar
 
 # 4) 进 guest 执行（另开终端）
@@ -299,3 +301,46 @@ git add -f installer/vmtest/logs/kylin-e2e-*.log   # *.log 被 .gitignore 排除
 
 `logs/README.md` 里对这两类文件分别标注「基线实测证据」与「端到端验收证据」；
 `*-stages.log` 只记时间戳，**不是结论证据**，引用耗时数据时要同时给出串口日志的对应段落。
+
+### 7.7 真机三阶段执行记录摘要（2026-11-10，全部完成）
+
+三阶段递进的实际执行记录（证据 `kylin-e2e-*` / `uos-e2e-*`，见
+`docs/VARIANT-B-VM-RESULT.md` §7 全账）：
+
+| 阶段 | 范围 | 结果 |
+|---|---|---|
+| A | 只跑 S1_PREFLIGHT | 麒麟首跑被确认门拦（kylin 未登记）→ confirm 后 DONE 162ms；统信 DONE 291ms |
+| B | 只跑 S3_DOCKER | 麒麟首跑 FAIL（unit 四缺陷）→ `c4aa7f8` 修复 → 双机 S3 DONE；统信附带 S2 PASS 945ms + `enable --now` 真启动证据链 |
+| C | 整链 S1→S10 + 冒烟 | 麒麟全绿（第 3 次 run）、统信**一次全绿**；双机 state 10/10、8 镜像、8 容器（6 healthy）、**冒烟 4/4**、tar `dd` sha256 双机一致 |
+
+执行形态（已验证可复用）：正常引导 + **guest 内 oneshot systemd 单元自跑全链**
+（dockerd 起来后 slirp SSH 必失联，人手驱动不可行），每步往串口 `echo` 打点
+（`echo "… " > /dev/ttyS0` 落进 `logs/<os>-boot.log`），宿主轮询串口日志即可观察进度，
+脚本结束自动 `systemctl poweroff`，再救援引导取证。判据细节与过程防呆记录
+（seaweedfs 凭据字符集、`/api/step` 顺序门、`.env` 覆盖保护）见 RESULT §7.4。
+
+## 8. 运维手册素材（真机验证沉淀，写现场手册时直接搬）
+
+以下六条 + 一条配套，全部来自真机实测，不是推断：
+
+1. **Web 安装器的唯一入口是「这台机器本机」**：麒麟 sshd 默认 `AllowTcpForwarding no`，
+   SSH 隧道（端口转发到本地浏览器）**不可用**。现场操作是在服务器本机浏览器或
+   `curl 127.0.0.1:18080` 驱动 `/api/step` / `/api/confirm` / `/api/images-tar`。
+2. **统信救援引导三件套**（宿主侧要进已装好的统信盘救急时）：
+   ① 必须用**系统自带 `/boot` 的 vmlinuz/initramfs**——ISO 里的 anaconda initrd 缺根
+   文件系统驱动，会直接 `Warning: /dev/disk/by-uuid/… does not exist` 掉 emergency；
+   ② `root=UUID=` 以实际盘为准（`blkid`/`cat /etc/fstab`）——统信实测根分区
+   `2eeb1f30…`，网上/安装日志里常见的 `732a4be3…` 是安装环境 LiveOS 的，别抄错；
+   ③ 自装的 oneshot 单元（`tianji-c.service` 等）要一并 `systemd.mask=`，
+   否则它在救援引导里再次自启、把 VM 关掉。
+3. **VM 一律 `ssh poweroff` 干净关机**：`docker rm -f`（SIGKILL）+ `cache=unsafe` 会丢
+   guest 落盘数据（实测把 state.json 截成 0 字节，整轮作废）。
+4. **seaweedfs 凭据字符白名单 `A-Za-z0-9_+/=-` 是防注入设计**：S3 凭据含其他字符时
+   entrypoint 拒绝启动（`S3 凭据含非法字符`）。现场填 `.env`/表单时先过这个字符集。
+5. **`Restart=on-failure` + `StartLimitIntervalSec=120/Burst=5` 的排障意义**：dockerd
+   启动失败会在 120s 内重试 5 次，然后**停在 failed 态**（而不是无限重启刷日志）——
+   排障直接 `journalctl -u docker.service`，一次看全失败原因。
+6. **`/api/step` 顺序门不可跳步**：步骤必须按 S1→S10 顺序执行，跳步/重跑已 DONE 的步骤
+   会被拒（「当前应执行 S<N>」）；`.env` 变更后 S5 支持重渲，但必须先重新提交表单。
+   另：**S5 拒绝覆盖已存在的 `.env`**（防静默丢弃现场配置），重装场景用
+   `--overwrite` 重启安装器——旧 `.env` 会**自动备份到日志目录**再覆盖，不是直接丢弃。

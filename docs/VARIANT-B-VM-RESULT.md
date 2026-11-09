@@ -1,6 +1,6 @@
 # 变体 B 真机实测结果（麒麟 V10 SP3 / 统信 UOS 20）
 
-> 状态：**两个 OS 均已真实安装并完成六项探测**（2026-11-09）。
+> 状态：**两个 OS 均已真实安装并完成六项探测（2026-11-09）；变体 B 安装包真机端到端三阶段全部完成（2026-11-10，见 §7）**。
 > 所有「实测」列都来自真实装进虚拟盘、开机、在 guest 内执行命令的输出；
 > 原文见 `installer/vmtest/logs/`，复现方法见 `installer/vmtest/README.md`。
 > 与 `docs/VARIANT-B-OS-BASELINE.md` 冲突处 **以本文实测为准**（§3 单列）。
@@ -362,3 +362,88 @@ overlay/br_netfilter 可加载、27.5.1 在 cgroup v1 上可用。
 7. **往 guest 写文件要 `sync` 再杀 qemu**：否则 ext4 页缓存丢失（丢过一整份实验脚本）。
 8. **SSH 一断，ssh 会话里的远程脚本被 SIGHUP 带走**：取证要用 systemd 单元 +
    每步 `sync` 落盘，否则断网那一刻证据全丢。本轮的 `ZONE_CONFLICT` 就是这么捞回来的。
+
+---
+
+## 7. 变体 B 安装包真机端到端（三阶段递进，2026-11-10）
+
+> 验收对象：`tianji-server-setup-*-amd64-1.0.0.run`（变体 B，静态 docker 27.5.1，
+> 测试用包 sha256 `5ae9dd0f…`）+ `tianji-offline-images.tar`（1,512,404,992 B，
+> sha256 `50fde9a8…`，双机一致）。
+> 方法：容器化 QEMU 真装 OS（KVM，`--disk 60G --mem 10240 --smp 4`），
+> `.run` 走 HTTP 固定别名（10.0.2.2:8000）、tar 走只读 virtio 盘 `--attach-ro` 后
+> guest 内 `dd` 落普通文件（产品不接受块设备，见 README §7.2），
+> 通过 Web API `/api/step` 逐步驱动，判据三层（state / docker info+8 镜像 / Go 冒烟 4/4）。
+> 证据全部 `*-e2e-*` 命名入库（commit `dcfb926`→`80c6d8a`），基线 `logs/` 未动。
+
+### 7.1 三阶段总账
+
+| 阶段 | 内容 | 麒麟 V10 SP3 | 统信 UOS 20 |
+|---|---|---|---|
+| A（只跑 S1） | S1_PREFLIGHT 真机 | 首跑被「风险自担」确认门拦截（kylin V10 未登记，产品行为），confirm 后 **DONE 162ms** | **DONE 291ms**（OS 已登记，无确认门） |
+| B（只跑 S3） | S3_DOCKER 静态装 docker | 首跑 **FAIL**（见 7.2-②）；修复后 **DONE 3.747s** | 换新包后 **S2 PASS 945ms + S3 DONE 3.423s**（`enable --now` 真启动路径） |
+| C（整链 S1→S10） | 十步全链 + 冒烟 | **全绿**（第 3 次 run；前 2 次失败见 7.4） | **一次全绿，零重跑** |
+
+阶段 C 终局判据（双机一致）：
+
+- **state 10/10 DONE**（S1_PREFLIGHT…S10_DONE），进程存活 + state.json 时间戳核对（防 stale 假成功）；
+- **`docker images` 8/8**（api/extractor/web/backup/elasticsearch-ik 8.13.4/redis 7/postgres 16/seaweedfs 3.79），`docker info`：27.5.1 / overlay2 / cgroupfs / cgroup v1；
+- **8 容器全 running，6 个 healthy**（api/web/seaweedfs/elasticsearch/postgres/redis；backup/extractor 无 healthcheck 定义，属 compose 设计）。S6_UP 耗时：麒麟 47.9s / 统信 48.2s，web 有 starting→healthy 留痕；
+- **Go 冒烟 4/4**（权威判据，`stack.go`）：①`/api/health` status=ok 且 objectStorage.ok=true（四依赖 latency 1-8ms）②S3 兼容性探针 **13/13 项 PASS**（bucket/put/get/预签名直传/分片上传 listParts/completeMultipart 全链）③样品书籍全链路（6 书目/12 文件上传、抽取 12/12、检索命中 6、预签名下载 12/12、sha256 12/12）④IK 分词切出「中华人民共和国」；
+- tar 只读盘 `dd` 双机 sha256 与构建机一致（麒麟 250MB/s / 统信 291MB/s）。
+
+### 7.2 两个真实缺陷的发现 → 修复 → 复验闭环
+
+**① K3：preflight overlay 判据时序（阶段 A 麒麟首跑发现）**
+同一份 S1 日志自相矛盾：`modprobe overlay ok` 与「/proc/filesystems 含 overlay false」并存。
+根因是**先读 `/proc/filesystems` 再 `modprobe`**——首次装载前读到的当然是没有。
+修法（`aacecbc`）：改为先 `modprobe` 再判定。阶段 A 重跑双机 PASS，闭环。
+
+**② unit 四缺陷：dockerd 静态落点与组件发现机制冲突（阶段 B 麒麟首跑发现，双层）**
+S3 写完 unit 后 `systemctl enable --now docker` 失败，剥开是两层：
+`invalid userland-proxy-path` → 补上后又 `containerd not found in $PATH`。
+根因：**dockerd 27.5.1 经 `PATH` 查找 docker-proxy 与 containerd**，静态落点
+`/usr/local/lib/tianji/docker-static/` 刻意不进 PATH（落点即协议），二者天然冲突。
+基线轮次能起 dockerd 纯属测试脚本先 `ln -sf` 进了 `/usr/local/bin`，掩盖了缺陷。
+修法（`c4aa7f8`，unit 四要素）：`Environment=PATH=<静态目录>:…`（静态目录最前）+
+`--userland-proxy-path=<绝对路径>` + S3 幂等创建 `docker` 系统组（dockerd 起来后要 chown）+
+`Restart=on-failure` + `StartLimitIntervalSec=120/Burst=5`（[Unit] 段，失败停在 failed 态可查 journal，而非无限 auto-restart）。
+复验：麒麟 B2 S3 DONE；统信更拿到 **正常引导 `enable --now` 真启动**证据链
+（`is-active docker: active`、`docker0 172.17.0.1/16`、journalctl
+`Started Docker Application Container Engine (tianji static install)` +
+`Daemon has completed initialization`），闭环。
+
+### 7.3 判据机制的实测校正（预检口径由真机回填）
+
+- **K5 `vm.max_map_count`：WARN + S3 回读兜底成立**。S1 只 WARN（不改判据），
+  S3 写 `/etc/sysctl.d/99-tianji.conf` 后**回读留痕**：`vm.max_map_count: 65530 → 262144
+  （要求 ≥ 262144，已回读确认）`，双机实锤。
+- **K10 crashkernel 占内存口径**：麒麟默认 `crashkernel=1024M,high` 吃 1GB，
+  10GB 内存 MemTotal≈8.5GB（统信无 crashkernel，≈9.3GB）。判据不改（e2e 报内存即可）。
+- **`is-active` 四态**：active / inactive / **failed** / 单元不存在——`is-active` 对
+  「inactive」与「单元不存在」**都返回 rc=3**，不能拿退出码当「探测失败」；
+  firewalld 处置留痕（before/after 双值）就是在这个语义上写的。
+- **kysec N/A 口径闭环**：麒麟 `KYSEC: Disabled` 且无用户态工具 → **N/A（不写成已关闭）**；
+  统信连包都没有。S1 报告如实落 `not-applicable`。
+- **麒麟 sshd 默认 `AllowTcpForwarding no`**：SSH 隧道（端口转发）不可用，
+  Web 安装器的唯一入口是 **guest 本机 `curl 127.0.0.1:18080`**（或本机浏览器）。
+  这条已进运维手册素材（README §8）。
+
+### 7.4 过程防呆与取证环境伪缺陷（全程留痕，均非产品缺陷）
+
+| 现象 | 定性 |
+|---|---|
+| seaweedfs entrypoint 拒绝含 `#` 的 S3 凭据（`仅允许 A-Za-z0-9_+/=-`） | **防注入设计**；首轮测试凭据不合法被正确拦下 |
+| S5 已 DONE 后 `/api/step S5_ENV` 被拒（「当前应执行 S6_UP」） | **顺序门设计**，不可跳步；因此 env 修正走整链重跑 |
+| S5 拒绝覆盖已存在 `.env`（「避免静默丢弃现场配置」） | **防误覆盖设计**；重装场景按产品口径 `--overwrite`（覆盖前自动备份到日志目录） |
+| 救援引导（`systemd.mask=docker`）下 S3 的 `enable --now` 被拒（`generator.early/docker.service is masked`） | **取证环境伪缺陷**；统信因此改走「正常引导 + oneshot 自跑 + 自关机 + 救援引导取证」，反而拿到真启动证据（见 7.2-②） |
+| 一次忘挂 `--attach-ro`，`dd /dev/vdb` 不存在，脚本 FATAL 拦下 | 脚本自身判据正确生效 |
+
+### 7.5 仍未覆盖（诚实边界）
+
+1. **外部端口可达性**（§7-6 遗留）：QEMU slirp 在 guest 出现网桥后 hostfwd 失效（§5），
+   「dockerd 在跑 + 外部访问 8080/8333」仍未用 tap/bridge 验证——冒烟的预签名下载是
+   S3 wire 层自检，**不构成**外部下载功能已验证。等现场输入（tap/bridge 可行性）。
+2. firewalld 全程处于 inactive/被禁用态，「firewalld active 时完整栈起停」未测
+   （其风险已由 `ZONE_CONFLICT` 实测与禁用处置覆盖）。
+3. 现场真硬件（非 QEMU）、带 GUI 完整安装、kysec 启用形态，同 §5 口径未测。

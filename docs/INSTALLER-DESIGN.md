@@ -714,6 +714,7 @@ bash installer/build/make-manifest.sh --sign
 | v1.1 | 2026-11-09 | 新增 §14 实施与验证状态：①② 闭环（真闭包 / 真签名 / 独立验签），③ **部分闭环**（未覆盖项与接手人写明，不算完成） |
 | v1.2 | 2026-11-09 | ③ 升级为**容器内十步闭环**（S1→S10 全 DONE），并登记由此抓到的两个只在真栈上暴露的缺陷（Pre-Depends 顺序、卷属主）；包体因代码变更重打包，sha256 更新；真机与变体 B 仍交 vm-harness；新增 §14.4：变体 B 六项 OS 基线预检落成 Go 代码（只探测不处置，10 条单测，真机复跑待做） |
 | v1.3 | 2026-11-09 | 新增 §14.5：**变体 B 安装流程落成代码**（静态落点不在 PATH、compose 插件、unit 绝对路径 + 独立就绪脚本、firewalld 处置留痕、安装清单驱动的卸载），+27 条用例；同时把「同输入同输出」的说法收敛成「tar 侧确定 + SOURCE_DATE_EPOCH 可复现」，收尾清理改为 warn 且不改退出码 |
+| v1.4 | 2026-11-10 | 新增 §14.6：**变体 B 真机端到端闭环**（三阶段：A 真机 S1 / B 真机 S3 / C 整链 S1→S10 双机全绿，冒烟 4/4）；登记两个真机缺陷闭环（preflight overlay 判据时序、unit 四要素）与判据回填（K5 回读兜底/K10 crashkernel 口径/is-active 四态/kysec N/A）；§14.3 验收口径升级为「容器内闭环 + 真机变体 B 闭环」；留终版产物 digest 占位（待 normalizeVersionID 与 redis noeviction 两提交后由 team-lead 复核回填） |
 
 ---
 
@@ -793,6 +794,7 @@ Docker Desktop 的 overlayfs 上**被静默忽略**），并用 `fallocate` 超�
 
 **因此 `#41` 的验收口径是**：①② 闭环；③ **容器内闭环**（十步全 DONE，两个缺陷已修）；
 真机与变体 B 由 vm-harness 覆盖，未绿之前**「服务器端安装包已通过真机验收」这句话不能写**。
+（→ 2026-11-10 起口径已由 §14.6 升级：真机变体 B 闭环达成，该句可以写了，范围限定见 §14.6。）
 
 ### 14.4 变体 B 六项 OS 基线预检 —— **代码与单测就绪，真机复跑待做**
 
@@ -839,6 +841,52 @@ vm-harness 已用 shell 在麒麟真机上实测六项并回写基线；Go 侧�
 tgz 成员先解到临时文件再判 ELF——`tar -xzOf … | od` 会在 `od` 读够 20 字节时让 tar 收 SIGPIPE(141)，
 在 `set -o pipefail` 下误报「包坏了」。compose 二进制在包内的规范落点同步改为
 `docker/compose/docker-compose`（与 `Layout.ComposePluginPath()` 一致），旧落点安装器仍认但打 WARN。
+
+### 14.6 变体 B 真机端到端 —— **闭环（三阶段，2026-11-10，vm-harness）**
+
+承接 §14.3 的「真机仍待 vm-harness」与 §14.4/14.5 的「真机复跑待做」：**全部完成**。
+容器化 QEMU 真装麒麟 V10 SP3 / 统信 UOS 20（KVM，60G/10240MiB/4vCPU），三阶段递进：
+
+| 阶段 | 范围 | 结果 |
+|---|---|---|
+| A | 真机 S1_PREFLIGHT（变体 B 预检代码首次跑真机） | 麒麟 confirm 门后 DONE；统信 DONE。**§14.4 的 Go 预检与真机实测一致性就此成立** |
+| B | 真机 S3_DOCKER（§14.5 的静态安装路径） | 发现并修复 unit 四缺陷（见下）→ 双机 S3 DONE；统信附带 `enable --now` 真启动证据链 |
+| C | 整链 S1→S10 + Go 冒烟（§14.3 的十步在真机上重演） | 双机全绿：state 10/10、8 镜像、8 容器（6 healthy）、**冒烟 4/4**（统信 S3 探针 13/13 含分片上传全链）、tar 只读盘 `dd` sha256 双机一致 |
+
+**由此抓到的两个真实缺陷（发现 → 修复 → 复验，均已闭环）**
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| S1 日志自相矛盾：`modprobe overlay ok` 与「含 overlay false」并存 | preflight **先读 `/proc/filesystems` 再 `modprobe`**，首次装载前读到的一定是没有 | `aacecbc`：先 modprobe 再判定；阶段 A 重跑双机 PASS |
+| S3 `enable --now docker` 失败：`invalid userland-proxy-path` → 补后又 `containerd not found in $PATH` | dockerd 27.5.1 **经 PATH 查找 docker-proxy/containerd**，与「静态落点不进 PATH」的落点协议天然冲突（基线轮被测试脚本 `ln -sf` 掩盖） | `c4aa7f8` unit 四要素：`Environment=PATH=`（静态目录最前）+ `--userland-proxy-path=` + docker 组幂等创建 + `Restart=on-failure`/`StartLimitIntervalSec=120/Burst=5`；双机 S3 复验 DONE |
+
+判据机制同步由真机回填：K5 `vm.max_map_count` 降 WARN + S3 回读兜底（双机实锤
+`65530 → 262144（已回读确认）`）；K10 crashkernel 占 1GB 内存口径（10GB 下
+MemTotal≈8.5GB 落 WARN 区）；`is-active` 对 inactive 与单元不存在**都返回 rc=3**；
+kysec「工具不存在 → N/A，不写成已关闭」在真机报告落 `not-applicable`。
+全程证据 `installer/vmtest/logs/*-e2e-*`（commit `dcfb926`→`80c6d8a`），
+全账见 `docs/VARIANT-B-VM-RESULT.md` §7。
+
+**§14.3 的验收口径就此升级**：①② 闭环；③ 容器内闭环 **+ 真机变体 B 闭环（双 OS）**。
+「服务器端安装包已通过真机验收」这句话，现在可以写了——范围限定为
+**麒麟 V10 SP3 / 统信 UOS 20 最小化安装 + QEMU 环境**；外部端口可达性（tap/bridge）
+与现场真硬件仍不在已验证范围（RESULT §7.5）。
+
+**终版产物构建约定（占位）**
+
+> 待两笔代码提交入库后执行终审定版包重建，本节 digest 由 team-lead 复核后回填：
+> ① 工程师 `normalizeVersionID`（os-release VERSION_ID 归一化，影响 osMatch 判定）；
+> ② redis `--maxmemory-policy noeviction`（demo 冒烟输出的 WARN，allkeys-lru 与
+> 持久化语义冲突；属 compose 调整，冒烟不阻塞）。
+>
+> | 项 | 值 |
+> |---|---|
+> | 产物文件名 | `tianji-server-setup-b-amd64-1.0.0.run`（占位） |
+> | 字节数 | （占位） |
+> | sha256 | （占位） |
+> | payload sha256 | （占位） |
+> | 安装器二进制 sha256 | （占位） |
+> | 与真机验证包（`5ae9dd0f…`）的差异 | （占位：仅上述两笔 + 既有重打包时间戳字段） |
 
 
 
