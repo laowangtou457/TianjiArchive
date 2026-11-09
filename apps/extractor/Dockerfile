@@ -16,7 +16,7 @@ RUN pnpm --filter @tianji/shared build \
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production TZ=Asia/Shanghai
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+ && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends --fix-missing \
       curl ca-certificates tzdata \
       libreoffice-writer libreoffice-calc libreoffice-impress \
       fonts-noto-cjk fontconfig ffmpeg poppler-utils \
