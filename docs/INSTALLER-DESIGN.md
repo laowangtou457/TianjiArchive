@@ -740,7 +740,7 @@ bash installer/build/make-manifest.sh --sign
 | 密钥 | `tianji-build`，RSA4096，**无口令**（构建机无人值守），有效期至 2027-11-09 |
 | 公钥 | `installer/build/pubkeys/tianji-build.asc` + 指纹文件入库；**私钥只在构建机 `~/.gnupg`，绝不入库** |
 | 指纹 | `0AD2 912C F8FE 57E2 02C2 75F2 0A03 8555 B153 ACC9` |
-| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,107,053 字节**，sha256 `c7fe6a1175cd83b97895ede04842f5759f784b6ce370e8e31266afbe97fe9b88`，payload sha256 `013b0933…`（v1.2 因卷属主修法 + 变体 B 六项预检 + gofmt 重打包；上一版 150,088,493 / `85478f08…` 已被替换，签名与验签流程不变。**容器内十步是在这一版产物上跑的**，包 sha256 与容器内 `sha256sum` 逐字一致） |
+| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,107,053 字节**，sha256 `c7fe6a1175cd83b97895ede04842f5759f784b6ce370e8e31266afbe97fe9b88`，payload sha256 `013b0933…`（v1.2 因卷属主修法 + 变体 B 六项预检 + gofmt 重打包；上一版 150,088,493 / `85478f08…` 已被替换，签名与验签流程不变。**容器内十步是在这一版产物上跑的**，包 sha256 与容器内 `sha256sum` 逐字一致。注：manifest 含 `built_at`/`builder`，**重打包必换 sha**，此值只标识当时那份产物，不是可复现常数） |
 | 闸门 | G1 载荷同源 7/7 · G2 ELF64/amd64（6,385,816 字节）· G3 壳层 `--verify-only` PASS |
 | 验签 | **在新导出的 `GNUPGHOME` 里验签通过**（只 import 仓库公钥，不在生成它的 keyring 里自证）：`Good signature from "tianji-build (Tianji Archive build key)"` + `sha256sum -c` **98/98 OK** |
 | 重打包后复核 | 容器内 `sh <run> --verify-only` → `IS_PASS: YES`；包 sha256 与构建机公布值逐字一致 |

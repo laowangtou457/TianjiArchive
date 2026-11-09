@@ -4,11 +4,16 @@
 服务器端运行期逻辑在 `server/`（Go 静态二进制），用户端在 `client-lite/`。
 
 > 状态（本轮）：`build/` 与 `server/` 两侧均已打通，**真载荷、真签名、真体积的包已经出来了**。
-> `server/` 为 16 个 Go 文件 / 10 个测试文件，`go test ./...` **85 pass / 3 skip（Windows
+> `server/` 为 34 个 Go 文件（20 实现 + 14 测试），`go test ./...` **112 pass / 3 skip（Windows
 > 无 `sh` 的三个用例）**，`gofmt -l` 与 `go vet` 均干净；交叉编译产物
 > `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,385,816 字节。
 > 真实安装包 = 150,107,053 字节（含 85 个真 `.deb` / 147,505,075 字节闭包），G1/G2/G3 全绿，
 > `SHA256SUMS.asc` 已签，sha256 = `c7fe6a1175cd83b97895ede04842f5759f784b6ce370e8e31266afbe97fe9b88`。
+>
+> ⚠️ **下面这些 sha256 是「当时那份产物」的编号，不是可复现常数**：`manifest.json` 里有
+> `built_at` 与 `builder`（含 hostname），重打包必然换 sha（本轮实测：同一输入两次构建
+> `c7fe6a11…` → `fdf4b4cf…`）。要逐字节复现就设 `SOURCE_DATE_EPOCH` 并在同一台机器上构建
+> （见 `installer/build/README.md` 踩坑表第 10 条）。体积基本稳定，可以用体积做粗判。
 > **第 ③ 步「特权 systemd 容器十步端到端」已跑通 S1→S10 全 DONE**（8/8 容器 healthy、
 > 迁移执行、种子完成、四项冒烟 4/4 PASS）；真机（含变体 B 麒麟/UOS）仍由 vm-harness 覆盖，
 > 容器不能替代真机，见文末「仍然没验证的事」。
@@ -268,6 +273,7 @@ package : tianji-server-setup-ubuntu-debian-amd64-1.0.0.run
           150,107,053 字节
           sha256 c7fe6a1175cd83b97895ede04842f5759f784b6ce370e8e31266afbe97fe9b88
           payload sha256 013b093359b193a554a160863e7e0b622204baefe31c67c42b19c93f38145741
+          （以上两个 sha 标识「当时那份产物」；重打包必换，见文首说明）
 闸门    : G1 7/7 逐字节一致 · G2 ELF64/amd64 · G3 壳层校验 PASS
 签名    : SHA256SUMS.asc（gpg armor 分离签名，key 0A038555B153ACC9）
 ```
