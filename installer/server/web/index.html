@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>天玑档案管理系统 · 服务器端安装向导</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">天玑</span>
+        <div class="brandtext">
+          <h1>档案管理系统 · 服务器端安装向导</h1>
+          <p id="meta" class="meta">正在读取安装包信息…</p>
+        </div>
+      </div>
+      <div class="topright">
+        <span id="osbadge" class="chip ghost">系统识别中</span>
+        <span id="elapsed" class="chip ghost">00:00</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <nav class="steplist" id="steplist" aria-label="安装步骤"></nav>
+      <section class="panel" id="panel" aria-live="polite">
+        <div class="placeholder">正在加载…</div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span id="footerhint">安装器只在服务器本机运行；安装完成后请关闭本页面并结束安装器进程。</span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

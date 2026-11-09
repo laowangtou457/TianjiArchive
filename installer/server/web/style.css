@@ -1,0 +1,281 @@
+/* 天玑档案管理系统 · 安装向导样式
+ *
+ * 约束：无外部字体、无外部图标库（现场无公网）。
+ * 中文优先使用系统字体栈，避免下载 webfont 造成的 FOIT 白屏。
+ */
+
+:root {
+  --bg: #0f172a;
+  --bg-soft: #16213c;
+  --panel: #ffffff;
+  --ink: #111827;
+  --ink-soft: #4b5563;
+  --line: #e5e7eb;
+  --brand: #1d4ed8;
+  --brand-soft: #eff4ff;
+  --pass: #047857;
+  --pass-soft: #ecfdf5;
+  --warn: #b45309;
+  --warn-soft: #fffbeb;
+  --fail: #b91c1c;
+  --fail-soft: #fef2f2;
+  --skip: #6b7280;
+  --skip-soft: #f3f4f6;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #f3f4f6;
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+    "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ---------------------------------------------------------------- 顶栏 */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 22px;
+  background: var(--bg);
+  color: #e5e7eb;
+}
+
+.brand { display: flex; align-items: center; gap: 14px; }
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb, #0ea5e9);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.brandtext h1 { margin: 0; font-size: 16px; font-weight: 600; }
+.meta { margin: 2px 0 0; font-size: 12px; color: #9ca3af; }
+
+.topright { display: flex; gap: 8px; align-items: center; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: #1e293b;
+  color: #cbd5e1;
+}
+.chip.ghost { background: transparent; border: 1px solid #334155; }
+
+/* ---------------------------------------------------------------- 布局 */
+.layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px 22px 40px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+.steplist {
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  align-self: start;
+  position: sticky;
+  top: 18px;
+}
+
+.stepitem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink);
+}
+.stepitem:hover { background: #f8fafc; }
+.stepitem.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+.stepitem .idx {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  background: var(--skip-soft);
+  color: var(--ink-soft);
+  flex: none;
+}
+.stepitem.done .idx { background: var(--pass); color: #fff; }
+.stepitem.fail .idx { background: var(--fail); color: #fff; }
+.stepitem.running .idx { background: var(--brand); color: #fff; }
+.stepitem .name { flex: 1; min-width: 0; }
+.stepitem .state { font-size: 11px; color: var(--ink-soft); }
+
+/* ---------------------------------------------------------------- 面板 */
+.panel {
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 22px 24px 26px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  min-height: 420px;
+}
+
+.panel h2 { margin: 0 0 4px; font-size: 18px; }
+.panel h3 { margin: 22px 0 8px; font-size: 14px; color: var(--ink-soft); }
+.panel p.lead { margin: 0 0 16px; color: var(--ink-soft); }
+.placeholder { color: var(--ink-soft); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 4px; }
+
+button.btn {
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+button.btn:hover { filter: brightness(1.06); }
+button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+button.btn.ghost { background: #fff; color: var(--brand); }
+button.btn.gray { background: #fff; color: var(--ink-soft); border-color: var(--line); }
+button.btn.danger { background: var(--fail); border-color: var(--fail); }
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px 18px;
+  margin: 12px 0;
+}
+.kv { display: flex; gap: 8px; font-size: 13px; }
+.kv .k { color: var(--ink-soft); min-width: 96px; flex: none; }
+.kv .v { word-break: break-all; }
+
+/* ---------------------------------------------------------------- 表格 */
+table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+table.tbl th, table.tbl td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+table.tbl th { color: var(--ink-soft); font-weight: 600; background: #fafafa; }
+table.tbl td.mono, .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tag.PASS { background: var(--pass-soft); color: var(--pass); }
+.tag.WARN { background: var(--warn-soft); color: var(--warn); }
+.tag.FAIL { background: var(--fail-soft); color: var(--fail); }
+.tag.SKIP { background: var(--skip-soft); color: var(--skip); }
+
+.hint { color: var(--warn); }
+.dim { color: var(--ink-soft); }
+
+/* ---------------------------------------------------------------- 表单 */
+form.envform { display: grid; gap: 14px; max-width: 720px; }
+.field { display: grid; gap: 4px; }
+.field label { font-size: 13px; font-weight: 600; }
+.field .help { font-size: 12px; color: var(--ink-soft); }
+.field input[type="text"],
+.field input[type="password"] {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+}
+.field input:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
+.field.check { display: flex; align-items: flex-start; gap: 8px; }
+.field.check label { font-weight: 400; }
+.field.invalid input { border-color: var(--fail); }
+
+.problems { background: var(--fail-soft); border: 1px solid #fecaca; border-radius: 8px; padding: 10px 12px; }
+.problems ul { margin: 6px 0 0; padding-left: 18px; }
+.problems li { color: var(--fail); font-size: 13px; }
+
+/* ---------------------------------------------------------------- 日志 */
+pre.log {
+  background: #0b1220;
+  color: #d1d5db;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 10px 0 0;
+}
+
+.banner {
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.banner.info { background: var(--brand-soft); color: #1e3a8a; }
+.banner.warn { background: var(--warn-soft); color: var(--warn); }
+.banner.fail { background: var(--fail-soft); color: var(--fail); }
+.banner.pass { background: var(--pass-soft); color: var(--pass); }
+.banner a { color: inherit; }
+
+.bigurl {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 18px;
+  background: #0b1220;
+  color: #a7f3d0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  word-break: break-all;
+}
+
+.footer {
+  text-align: center;
+  color: var(--ink-soft);
+  font-size: 12px;
+  padding: 0 22px 28px;
+}
+
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
