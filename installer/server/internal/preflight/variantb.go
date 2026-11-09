@@ -203,11 +203,15 @@ func checkKysec(ctx context.Context, opts VariantBOptions, rep *Report, isKylin 
 
 	if pathErr != nil || getstatusPath == "" {
 		if !hasDir {
-			rep.Facts["kysec"] = "disabled"
-			return Item{ID: id, Title: title, Level: LevelPass,
-				Detail: "确认未启用：无 getstatus（kysec-utils 未装），且无 /etc/kysec",
-				Raw:    "command -v getstatus: (空)",
-				Hint:   "无需动作。若现场另装了 kysec-utils，请重跑本项"}
+			// 口径（team-lead 裁定）：**工具不存在 → N/A，不是「已关闭」**。
+			// 差别不是措辞：说「已关闭」等于我们替这台机器断言了一件没测过的事；
+			// 说 N/A 只表示「这一项在本机没有适用对象」。
+			rep.Facts["kysec"] = "not-applicable"
+			return Item{ID: id, Title: title, Level: LevelNA,
+				Detail: "kysec-utils 未安装（麒麟最小化安装的实测形态：无 getstatus、无 /etc/kysec），判 N/A",
+				Raw:    "command -v getstatus: (空)\n/etc/kysec: 不存在",
+				Hint: "无需动作。**这不是「已确认关闭」**，而是「本机没有 kysec 可判」；" +
+					"若现场另装了 kysec-utils，请重跑本项"}
 		}
 		rep.Facts["kysec"] = "unknown"
 		return Item{ID: id, Title: title, Level: LevelWarn,

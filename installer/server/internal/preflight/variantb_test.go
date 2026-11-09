@@ -87,12 +87,16 @@ func TestCheckVariantBKylinMinimalBaseline(t *testing.T) {
 	if got := itemByID(t, rep, "B2"); got.Level != LevelPass {
 		t.Errorf("B2 = %v，SELinux Disabled 应 PASS", got.Level)
 	}
+	// 口径：工具不存在 → **N/A**，不是「已关闭」。说「已关闭」等于替机器断言没测过的事。
 	kysec := itemByID(t, rep, "B3")
-	if kysec.Level != LevelPass {
-		t.Errorf("B3 = %v，无 kysec-utils 且无 /etc/kysec 应为「确认未启用」PASS", kysec.Level)
+	if kysec.Level != LevelNA {
+		t.Errorf("B3 = %v，无 kysec-utils 且无 /etc/kysec 应判 N/A（不是 PASS/已关闭）", kysec.Level)
 	}
-	if !strings.Contains(kysec.Detail, "确认未启用") {
-		t.Errorf("B3 结论必须写明「确认未启用」，实际: %s", kysec.Detail)
+	if !strings.Contains(kysec.Detail, "未安装") {
+		t.Errorf("B3 结论要写明「未安装」，实际: %s", kysec.Detail)
+	}
+	if strings.Contains(kysec.Detail, "确认关闭") || strings.Contains(kysec.Detail, "已关闭") {
+		t.Errorf("B3 不能写成「已关闭」——那是在断言没测过的事，实际: %s", kysec.Detail)
 	}
 	if got := itemByID(t, rep, "B6"); got.Level != LevelWarn {
 		t.Errorf("B6 = %v，firewalld 在跑应 WARN", got.Level)

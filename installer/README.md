@@ -383,7 +383,7 @@ tar 本体 1.51GB。**按 30 倍留盘**。详见 `installer/e2e/README.md`「�
 |---|---|---|
 | B1 cgroup 版本 | `stat -fc %T /sys/fs/cgroup` | `tmpfs`=v1 / `cgroup2fs`=v2，**只记录不设阈值**；认不出 → WARN |
 | B2 SELinux | `getenforce`（旁证 `/sys/fs/selinux/enforce`） | Disabled/Permissive → PASS；Enforcing 且 `rpm -q container-selinux` 查不到 → WARN；**绝不读 `/etc/selinux/config` 下结论**（麒麟实测该文件写 enforcing 而实际 Disabled） |
-| B3 麒麟 kysec | `command -v getstatus` → `getstatus` → 解析 `KySec status:` 与 `exectl:` | 无工具且无 `/etc/kysec` → PASS「确认未启用」；**工具在但查询失败 → WARN「探测失败」**（不得当放行）；enforcing + exectl on → FAIL；有 `/etc/kysec` 但无工具 → WARN |
+| B3 麒麟 kysec | `command -v getstatus` → `getstatus` → 解析 `KySec status:` 与 `exectl:` | 三态分清：**工具不存在 → N/A**（麒麟最小化实测形态，不写成「已关闭」）；**工具在但查询失败 → WARN「探测失败」**（不得当放行）；确认输出后按 `KySec status:` + `exectl:` 判 PASS/FAIL（enforcing+exectl on → FAIL）；有 `/etc/kysec` 但无工具 → WARN |
 | B4 iptables 后端 | `iptables --version` + `command -v iptables-legacy / iptables-nft` | 只记录后端（nf_tables/legacy）；完全找不到 iptables → WARN |
 | B5 overlay2 前置 | `uname -r` + `/proc/filesystems` + `modprobe overlay` + `stat -f -c %T <DataDir>` | 内核 <4.19 或 overlay 载不上 → WARN（会退回 vfs，放大 14~26 倍）；**xfs `ftype=1` 放到安装时在数据目录建好后查** |
 | B6 firewalld | `firewall-cmd --state` | 未装 → N/A；在跑 → WARN。结论点明**统信实测的 ZONE_CONFLICT**（重启后再起 dockerd 直接失败，是 daemon 起不来而非端口不通）；处置「`disable --now` 或 `--iptables=false`」，并明确**否掉「加 trusted zone」**——那批实验（含 restart 后 SSH 失联）已由二分实验证伪为 QEMU slirp 环境假象 |

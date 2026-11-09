@@ -803,7 +803,7 @@ Docker Desktop 的 overlayfs 上**被静默忽略**），并用 `fallocate` 超�
 | 边界 | 落法 |
 |---|---|
 | 只探测与报告，不做自动处置 | `setstatus -t` / `setenforce 0` / `systemctl disable firewalld` 均不写进代码；WARN/FAIL 里只给「现场可执行的动作」话术 |
-| 「探测失败」≠「确认关闭」 | `Facts["kysec"]` 区分 `probe-failed` / `disabled` / `unknown`；`describeRunErr` 区分「命令不存在 / 命令超时 / 命令失败（退出码）」 |
+| 「探测失败」≠「确认关闭」≠「不适用」 | `Facts["kysec"]` 三态 + 一句 `not-applicable`：工具不存在 → **N/A**（不写成已关闭）、工具在但查不到 → `probe-failed`+WARN、有 `/etc/kysec` 无工具 → `unknown`+WARN；`describeRunErr` 区分「命令不存在 / 命令超时 / 命令失败（退出码）」 |
 | SELinux 判定口径 | 只认 `getenforce`（旁证 `/sys/fs/selinux/enforce`）；**不读 `/etc/selinux/config`**——麒麟实测该文件写 `enforcing` 而实际 `Disabled` |
 | firewalld 处置口径 | 结论以统信实测的 `ZONE_CONFLICT` 为准（重启后再起 dockerd 直接失败）；处置「`disable --now` 或 `--iptables=false`」。**明确否掉「加 trusted zone」**：那批实验（含 restart 后 SSH 失联）已被二分实验证伪为 QEMU slirp 环境假象，写进话术会让人去试一个从未证实的动作 |
 | xfs `ftype=1` | 不在预检做，放到安装时数据目录建好之后查（预检阶段目录可能还不存在） |
