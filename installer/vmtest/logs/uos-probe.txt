@@ -1,0 +1,202 @@
+##############################################################################
+# 天玑档案 变体 B —— OS 基线探测原文
+# 目标系统: uos
+# 采集时间(宿主): 2026-11-09T15:06:30Z
+# 采集方式: bash installer/vmtest/probe.sh --os uos  (ssh root@127.0.0.1:2222)
+##############################################################################
+
+===== [0] 系统标识 =====
+$ cat /etc/os-release
+PRETTY_NAME="UnionTech OS Server 20"
+NAME="UnionTech OS Server 20"
+VERSION_ID="20"
+VERSION="20"
+ID="uos"
+HOME_URL="https://www.chinauos.com/"
+BUG_REPORT_URL="https://bbs.chinauos.com/"
+VERSION_CODENAME="fuyu"
+[rc=0]
+$ uname -a
+Linux tianji-uos 4.19.90-2106.3.0.0095.up2.uel20.x86_64 #1 SMP Thu Jul 8 08:30:06 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
+[rc=0]
+$ hostnamectl 2>/dev/null | head -8
+   Static hostname: tianji-uos
+         Icon name: computer-vm
+           Chassis: vm
+        Machine ID: 1fc06d950949aa308fe501a56af1e150
+           Boot ID: 56d3818f845a4e8d82bcbcbd8e0b075b
+    Virtualization: kvm
+  Operating System: UnionTech OS Server 20
+            Kernel: Linux 4.19.90-2106.3.0.0095.up2.uel20.x86_64
+[rc=0]
+
+===== [1] SELinux 默认状态 =====
+$ command -v getenforce || echo "(无 getenforce，说明未装 selinux 用户态工具)"
+/usr/sbin/getenforce
+[rc=0]
+$ getenforce 2>&1 || true
+Disabled
+[rc=0]
+$ cat /sys/fs/selinux/enforce 2>&1 || echo "(无 /sys/fs/selinux/enforce → 内核侧未启用 SELinux)"
+cat: /sys/fs/selinux/enforce: No such file or directory
+(无 /sys/fs/selinux/enforce → 内核侧未启用 SELinux)
+[rc=0]
+$ grep -E "^SELINUX=" /etc/selinux/config 2>&1 || echo "(无 /etc/selinux/config)"
+SELINUX=disabled
+[rc=0]
+$ sestatus 2>&1 | head -8 || echo "(无 sestatus)"
+SELinux status:                 disabled
+[rc=0]
+$ ls /sys/fs/selinux 2>&1 | head -5
+ls: cannot access '/sys/fs/selinux': No such file or directory
+[rc=0]
+$ rpm -q selinux-policy-targeted container-selinux 2>&1
+selinux-policy-targeted-3.14.2-75.uel20.noarch
+package container-selinux is not installed
+[rc=1]
+
+===== [2] 麒麟 kysec（统信应为全无，这本身就是结论） =====
+$ command -v getstatus || echo "(无 getstatus)"
+(无 getstatus)
+[rc=0]
+$ command -v kysec_get; command -v setstatus
+[rc=1]
+$ getstatus 2>&1 || true
+main: line 3: getstatus: command not found
+[rc=0]
+$ getstatus -m kysec 2>&1 || true
+main: line 3: getstatus: command not found
+[rc=0]
+$ getstatus -m exectl 2>&1 || true
+main: line 3: getstatus: command not found
+[rc=0]
+$ systemctl is-active kysec-daemon 2>&1; systemctl is-enabled kysec-daemon 2>&1
+inactive
+Failed to get unit file state for kysec-daemon.service: No such file or directory
+[rc=1]
+$ ps -ef | grep -i kysec | grep -v grep || echo "(无 kysec 进程)"
+(无 kysec 进程)
+[rc=0]
+$ ls -la /etc/kysec/db/ 2>&1 | head -10
+ls: cannot access '/etc/kysec/db/': No such file or directory
+[rc=0]
+$ rpm -qa | grep -i kysec || echo "(未安装任何 kysec 包)"
+(未安装任何 kysec 包)
+[rc=0]
+
+===== [3] cgroup 版本 =====
+$ stat -fc %T /sys/fs/cgroup
+tmpfs
+[rc=0]
+$ cat /proc/self/cgroup
+13:blkio:/
+12:devices:/user.slice
+11:pids:/user.slice/user-0.slice/session-4.scope
+10:files:/
+9:perf_event:/
+8:net_cls,net_prio:/
+7:freezer:/
+6:cpu,cpuacct:/
+5:cpuset:/
+4:memory:/user.slice/user-0.slice/session-4.scope
+3:rdma:/
+2:hugetlb:/
+1:name=systemd:/user.slice/user-0.slice/session-4.scope
+[rc=0]
+$ mount | grep cgroup | head -5
+tmpfs on /sys/fs/cgroup type tmpfs (ro,nosuid,nodev,noexec,mode=755)
+cgroup on /sys/fs/cgroup/systemd type cgroup (rw,nosuid,nodev,noexec,relatime,xattr,release_agent=/usr/lib/systemd/systemd-cgroups-agent,name=systemd)
+cgroup on /sys/fs/cgroup/hugetlb type cgroup (rw,nosuid,nodev,noexec,relatime,hugetlb)
+cgroup on /sys/fs/cgroup/rdma type cgroup (rw,nosuid,nodev,noexec,relatime,rdma)
+cgroup on /sys/fs/cgroup/memory type cgroup (rw,nosuid,nodev,noexec,relatime,memory)
+[rc=0]
+
+===== [4] iptables 后端 =====
+$ iptables --version
+iptables v1.8.5 (legacy)
+[rc=0]
+$ command -v iptables-nft iptables-legacy 2>&1
+/usr/sbin/iptables-legacy
+[rc=0]
+$ iptables -t nat -L -n 2>&1 | head -3
+Chain PREROUTING (policy ACCEPT)
+target     prot opt source               destination         
+PREROUTING_direct  all  --  0.0.0.0/0            0.0.0.0/0           
+[rc=0]
+$ nft list tables 2>&1 | head -3
+[rc=0]
+
+===== [5] xfs ftype（overlay2 前提） =====
+$ findmnt -no FSTYPE,SOURCE /
+xfs    /dev/vda2
+[rc=0]
+$ xfs_info / 2>&1 | tr "," "\n" | grep -i ftype || echo "(根不是 xfs 或 xfs_info 不可用)"
+ ftype=1
+[rc=0]
+$ xfs_info /boot 2>&1 | tr "," "\n" | grep -i ftype || true
+ ftype=1
+[rc=0]
+
+===== [6] 内核 / glibc / systemd =====
+$ systemctl --version | head -1
+systemd 243 (v243-38.up6.uel20)
+[rc=0]
+$ uname -r
+4.19.90-2106.3.0.0095.up2.uel20.x86_64
+[rc=0]
+$ rpm -q glibc systemd kernel kernel-core 2>&1
+glibc-2.28-69.up1.uel20.x86_64
+systemd-243-38.up6.uel20.x86_64
+kernel-4.19.90-2106.3.0.0095.up2.uel20.x86_64
+package kernel-core is not installed
+[rc=1]
+$ rpm -q xfsprogs iptables nftables libseccomp 2>&1
+xfsprogs-5.6.0-2.uel20.x86_64
+iptables-1.8.5-2.uel20.x86_64
+nftables-0.9.6-2.uel20.x86_64
+libseccomp-2.5.0-3.uel20.x86_64
+[rc=0]
+
+===== [7] firewalld =====
+$ systemctl is-active firewalld 2>&1; systemctl is-enabled firewalld 2>&1
+active
+enabled
+[rc=0]
+$ firewall-cmd --state 2>&1 || true
+running
+[rc=0]
+$ firewall-cmd --get-default-zone 2>&1 || true
+public
+[rc=0]
+
+===== [8] 附加：overlay / br_netfilter 能否加载（决定 docker 可行性） =====
+$ ls /usr/lib/modules/$(uname -r)/kernel/fs/overlayfs/ 2>&1 || ls /lib/modules/$(uname -r)/kernel/fs/overlayfs/ 2>&1
+overlay.ko
+[rc=0]
+$ lsmod | grep -E "overlay|br_netfilter" || echo "(均未加载)"
+(均未加载)
+[rc=0]
+$ modprobe overlay 2>&1; modprobe br_netfilter 2>&1; lsmod | grep -E "overlay|br_netfilter" || echo "(加载失败)"
+br_netfilter           24576  0
+overlay               122880  0
+bridge                184320  2 br_netfilter,ebtable_broute
+[rc=0]
+$ sysctl net.bridge.bridge-nf-call-iptables 2>&1
+net.bridge.bridge-nf-call-iptables = 1
+[rc=0]
+
+===== [9] 附加：docker 相关前置（发行版自带版本、磁盘、内核模块） =====
+$ dpkg -l 2>/dev/null | head -1; rpm -qa | grep -iE "^docker|^podman|container-selinux" || echo "(无容器包)"
+(无容器包)
+[rc=0]
+$ df -hT / | tail -2
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/vda2      xfs    29G  2.5G   27G   9% /
+[rc=0]
+$ free -m | head -2; nproc
+              total        used        free      shared  buff/cache   available
+Mem:           3428         144        3024           8         259        2964
+4
+[rc=0]
+
+===== [done] 探测结束 2026-11-09T15:06:34Z =====

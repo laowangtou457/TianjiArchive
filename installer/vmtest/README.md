@@ -104,6 +104,16 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
 8. **SSH 一断，ssh 会话里的远程脚本会被 SIGHUP 带走**。要在 guest 里做「可能断网」的实验，
    必须用 systemd 单元（`systemctl start --no-block`）或 `setsid` 启动 + 每步写盘 + `sync`，
    否则断网那一刻证据全丢。本仓库的取证脚本就是这么做的（见 `docs/VARIANT-B-VM-RESULT.md` §2.6）。
+9. **QEMU user 网络（slirp）不能验证「guest 内跑 docker 之后的管理面可达性」**。
+   guest 一旦建出网桥接口（dockerd 默认行为，或手工 `ip link add docker0 type bridge`），
+   宿主经 `hostfwd` 的 SSH 就再也连不进去：sshd 还在监听、loopback:22 可连、
+   **iptables 命中计数全 0**（SYN 没到 guest 协议栈）；重启 guest 即恢复；`--bridge=none` 不发生。
+   我第一次把这个现象误判成「firewalld 重启打断管理面」，做了二分才改过来（见 §2.6）。
+   → 要测 docker 之后的端口可达性，请改用 tap/bridge 网络，或在 guest 内部自测，别用 hostfwd+ssh。
+10. **麒麟/统信上 dockerd 二次启动可能直接失败**：`Failed to program NAT chain:
+   ZONE_CONFLICT: 'docker0' already bound to a zone`（统信实测）。firewalld 已经把 docker0
+   绑进 zone，dockerd 再绑一次就冲突。处置：`systemctl disable --now firewalld` 或
+   `--iptables=false`。**这一条才是真·OS 级冲突**，与坑 9 是两回事。
 
 ## 5. 时间成本（实测）
 

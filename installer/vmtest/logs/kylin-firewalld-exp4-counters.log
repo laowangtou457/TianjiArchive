@@ -1,0 +1,39 @@
+########## START 2026-11-09T22:52:34+08:00 ##########
+A dockerd ready=yes listening22=2
+A counters before: INPUT=Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+B restart firewalld at 22:52:37
+B done at 22:52:38, 现在开始 30s 观察窗（宿主会在这段时间反复 ssh 进来）
+C 窗口结束 22:53:08
+C1 counters INPUT:
+   Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+   pkts bytes target     prot opt in     out     source               destination
+   2   152 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED
+   0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0
+   0     0 INPUT_direct  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 INPUT_ZONES  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 DROP       all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate INVALID
+   0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited
+C2 counters INPUT_ZONES:
+   Chain INPUT_ZONES (1 references)
+   pkts bytes target     prot opt in     out     source               destination
+   0     0 IN_docker  all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           [goto]
+   0     0 IN_public  all  --  enp0s2 *       0.0.0.0/0            0.0.0.0/0           [goto]
+   0     0 IN_public  all  --  +      *       0.0.0.0/0            0.0.0.0/0           [goto]
+C3 counters IN_public_allow:
+   Chain IN_public_allow (1 references)
+   pkts bytes target     prot opt in     out     source               destination
+   0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:22 ctstate NEW,UNTRACKED
+   0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            224.0.0.251          udp dpt:5353 ctstate NEW,UNTRACKED
+   0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:9090 ctstate NEW,UNTRACKED
+C4 counters IN_public:
+   Chain IN_public (2 references)
+   pkts bytes target     prot opt in     out     source               destination
+   0     0 IN_public_log  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 IN_public_deny  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 IN_public_allow  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0
+C5 ss -s: Total: 104|TCP:   2 (estab 0, closed 0, orphaned 0, timewait 0)||Transport Total     IP        IPv6|RAW	  1         0         1        |UDP	  3         2         1        |TCP	  2         1         1        |INET	  6         3         3        |FRAG	  0         0         0        ||
+C6 link enp0s2: 2: enp0s2: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 1000|    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff|    RX: bytes  packets  errors  dropped overrun mcast   |    19367      138      0       0       0       0       |    TX: bytes  packets  errors  dropped carrier collsns |    20737      124      0       0       0       0       |
+C7 sshd=active listening22=2
+C8 zones=docker   interfaces: docker0 public   interfaces: enp0s2 
+########## END 2026-11-09T22:53:08+08:00 ##########

@@ -1,0 +1,59 @@
+# ============================================================================
+# 统信 UOS 20 (4.19.90-2106.3.0.0095.up2.uel20) 上 docker 27.5.1 静态载荷实测
+# 采集: 2026-11-09 23:07-23:18 (+08:00)，guest 内直跑
+# 原文取自 guest:/root/{tianji-diag.txt,exp6.log,dockerd6.log}
+# 复现: installer/vmtest/docker-bringup.sh --os uos
+# ============================================================================
+
+########## 第一部分：首次启动成功 + driver/cgroup（tianji-diag.txt 原文）
+===== [2] 起 dockerd（默认参数，含 --iptables=true） =====
+$ pkill -f dockerd || true
+[rc=0]
+$ sleep 1
+[rc=0]
+--- 下面这步之后 SSH 可能失联，现场已落盘 /root/tianji-diag.txt ---
+$ nohup /usr/local/lib/tianji/docker-static/docker/dockerd --data-root /var/lib/docker \
+        --exec-root /var/run/docker --pidfile /var/run/docker.pid \
+        --host unix:///var/run/docker.sock --storage-driver overlay2 > /root/dockerd.log 2>&1 &
+[rc=0]
+$ for i in $(seq 1 40); do sleep 1; docker info >/dev/null 2>&1 && break; done; echo waited
+waited
+[rc=0]
+$ docker info 2>&1 | grep -iE "Server Version|Storage Driver|Cgroup Version|Cgroup Driver|Kernel Version|Security Options|Docker Root Dir"
+ Server Version: 27.5.1
+ Storage Driver: overlay2
+ Cgroup Driver: cgroupfs
+ Cgroup Version: 1
+ Security Options:
+ Kernel Version: 4.19.90-2106.3.0.0095.up2.uel20.x86_64
+ Docker Root Dir: /var/lib/docker
+[rc=0]
+$ tail -20 /root/dockerd.log
+time="2026-11-09T23:07:01.754937195+08:00" level=info msg="loading plugin \"io.containerd.internal.v1.restart\"..." type=io.containerd.internal.v1
+time="2026-11-09T23:07:01.755010542+08:00" level=info msg="loading plugin \"io.containerd.tracing.processor.v1.otlp\"..." type=io.containerd.tracing.processor.v1
+time="2026-11-09T23:07:01.755025363+08:00" level=info msg="skip loading plugin \"io.containerd.tracing.processor.v1.otlp\"..." error="skip plugin: tracing endpoint not configured" type=io.containerd.tracing.processor.v1
+time="2026-11-09T23:07:01.755030388+08:00" level=info msg="loading plugin \"io.containerd.internal.v1.tracing\"..." type=io.containerd.internal.v1
+time="2026-11-09T23:07:01.755035894+08:00" level=info msg="skip loading plugin \"io.containerd.internal.v1.tracing\"..." error="skip plugin: tracing endpoint not configured" type=io.containerd.internal.v1
+time="2026-11-09T23:07:01.755039906+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.healthcheck\"..." type=io.containerd.grpc.v1
+time="2026-11-09T23:07:01.755046534+08:00" level=info msg="loading plugin \"io.containerd.nri.v1.nri\"..." type=io.containerd.nri.v1
+
+########## 第二部分：firewalld reload 与 DOCKER 链（exp6.log 原文，未跑完）
+########## START 2026-11-09T23:17:23+08:00 ##########
+A docker=DOWN
+A1 
+A2 reload前 natDOCKER=2
+A3 DOCKER 链内容:
+   -N DOCKER
+   -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
+   -A DOCKER -i docker0 -j RETURN
+B firewall-cmd --reload
+
+########## 第三部分：二次启动失败 —— ZONE_CONFLICT（dockerd6.log 原文节选）
+70:time="2026-11-09T23:17:25.593950951+08:00" level=info msg="Loading containers: start."
+71:time="2026-11-09T23:17:25.624721544+08:00" level=info msg="Firewalld: docker zone already exists, returning"
+75:failed to start daemon: Error initializing network controller: error creating default "bridge" network: Failed to program NAT chain: ZONE_CONFLICT: 'docker0' already bound to a zone
+
+########## 第四部分：首次成功时的 firewalld 交互（dockerd.log 节选）
+71:time="2026-11-09T23:07:03.896177759+08:00" level=info msg="Firewalld: interface docker0 already part of docker zone, returning"
+76:time="2026-11-09T23:07:04.745546819+08:00" level=info msg="Firewalld: interface docker0 already part of docker zone, returning"
+77:time="2026-11-09T23:07:04.760214791+08:00" level=info msg="Firewalld: interface docker0 already part of docker zone, returning"

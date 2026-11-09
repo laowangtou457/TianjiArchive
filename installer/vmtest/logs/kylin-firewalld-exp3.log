@@ -1,0 +1,61 @@
+########## START 2026-11-09T22:49:41+08:00 boot=200.95s ##########
+== [0] 实验前
+sshd=active listening22=2
+zones=public   interfaces: enp0s2 
+== [A] 起 dockerd
+A1  Server Version: 27.5.1  Storage Driver: overlay2  Cgroup Version: 1 
+A2 natDOCKER=4 listening22=2
+A3 FORWARD=-P FORWARD DROP
+== [B] firewall-cmd --reload（docker 在跑）
+success
+B1 natDOCKER=4 listening22=2
+B2 zones=docker   interfaces: docker0 public   interfaces: enp0s2 
+== [C] systemctl restart firewalld（docker 在跑）
+C1 firewalld=active
+C2 natDOCKER=4
+C3 listening22=2 sshd=active
+C4 loopback22=OPEN
+C5 zones=docker   interfaces: docker0 public   interfaces: enp0s2 
+C6 INPUT:
+  -P INPUT ACCEPT
+  -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  -A INPUT -i lo -j ACCEPT
+  -A INPUT -j INPUT_direct
+  -A INPUT -j INPUT_ZONES
+  -A INPUT -m conntrack --ctstate INVALID -j DROP
+  -A INPUT -j REJECT --reject-with icmp-host-prohibited
+C7 INPUT_ZONES:
+  -N INPUT_ZONES
+  -A INPUT_ZONES -i docker0 -g IN_docker
+  -A INPUT_ZONES -i enp0s2 -g IN_public
+  -A INPUT_ZONES -g IN_public
+C8 IN_public_allow:
+  -N IN_public_allow
+  -A IN_public_allow -p tcp -m tcp --dport 22 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+  -A IN_public_allow -d 224.0.0.251/32 -p udp -m udp --dport 5353 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+  -A IN_public_allow -p tcp -m tcp --dport 9090 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+C9 ip=lo               UNKNOWN        127.0.0.1/8 ::1/128 |enp0s2           UP             10.0.2.15/24 fec0::ac9f:a2b0:e16:9588/64 fe80::2a46:a38a:21c0:cc63/64 |docker0          DOWN           172.17.0.1/16 |
+== [D] 再 reload 一次，看能否自愈
+D1 listening22=2 loopback22=OPEN
+== [E] 内核最近消息
+  Nov 09 22:46:26 tianji-kylin systemd[1]: Created slice system-getty.slice.
+  Nov 09 22:46:26 tianji-kylin kernel: lpc_ich 0000:00:1f.0: I/O space for GPIO uninitialized
+  Nov 09 22:46:26 tianji-kylin kernel: i801_smbus 0000:00:1f.3: SMBus using PCI interrupt
+  Nov 09 22:46:26 tianji-kylin kernel: input: PC Speaker as /devices/platform/pcspkr/input/input3
+  Nov 09 22:46:26 tianji-kylin kernel: parport_pc 00:02: reported by Plug and Play ACPI
+  Nov 09 22:46:26 tianji-kylin kernel: parport0: PC-style at 0x378, irq 7 [PCSPP,TRISTATE]
+  Nov 09 22:46:26 tianji-kylin kernel: input: VirtualPS/2 VMware VMMouse as /devices/platform/i8042/serio1/input/input5
+  Nov 09 22:46:26 tianji-kylin kernel: input: VirtualPS/2 VMware VMMouse as /devices/platform/i8042/serio1/input/input4
+  Nov 09 22:46:26 tianji-kylin kernel: sr 2:0:0:0: Attached scsi generic sg0 type 5
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_vendor_support: vendor-support=0
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_wdt: Intel TCO WatchDog Timer Driver v1.11
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_wdt: Found a ICH9 TCO device (Version=2, TCOBASE=0x0660)
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_wdt: initialized. heartbeat=30 sec (nowayout=0)
+  Nov 09 22:46:26 tianji-kylin kernel: ppdev: user-space parallel port driver
+  Nov 09 22:46:26 tianji-kylin kernel: XFS (vda1): Mounting V5 Filesystem
+  Nov 09 22:46:26 tianji-kylin kernel: XFS (vda1): Starting recovery (logdev: internal)
+  Nov 09 22:46:26 tianji-kylin kernel: XFS (vda1): Ending recovery (logdev: internal)
+  Nov 09 22:49:40 tianji-kylin systemd-rc-local-generator[1622]: /etc/rc.d/rc.local is not marked executable, skipping.
+  Nov 09 22:49:42 tianji-kylin kernel: aufs 4.19-20200518
+  Nov 09 22:49:44 tianji-kylin kernel: bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+########## END 2026-11-09T22:50:03+08:00 ##########

@@ -1,0 +1,1 @@
+qemu-system-x86_64 -machine q35\,accel=kvm -cpu host -m 4096 -smp 4 -display none -drive file=/vm/uos.qcow2\,if=virtio\,format=qcow2\,cache=unsafe -cdrom /iso/uniontechos-server-20-1020e-amd64.iso -boot order=c -netdev user\,id=n0\,hostfwd=tcp::2222-:22 -device virtio-net-pci\,netdev=n0 -monitor none -no-reboot -name tianji-uos 
