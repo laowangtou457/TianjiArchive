@@ -30,7 +30,7 @@
 - **全套 436 用例：436 通过 / 0 跳过 / 0 失败**（上一基线 291 条 → 436 条。2 条多实例 skip 已启封转真，**skip 清零**；压测判据单测 19 条新增）
 - **全部历史 skip 已清零**：`overdue_remind_days`（5 占位 → 9 真实用例）、QD-1 会话超时（5 skip → 11 全真）、C-5 多实例（2 skip → T 类 3 条真实用例）
 
-**残余风险不在代码逻辑，而在验证范围**：联调轮已完成真实 PG 行锁与 200×10 并发发号、ES 容器与 IK 分词、Redis 单机运行时的实证；**仍不可签两项**：MinIO 文件存储链路（官方镜像归档停服、替代选型待拍板）、多容器 pub/sub 跨进程投递（`--scale api=2` 未跑）；另 IK/health/迁移执行态未独立重跑（本地无容器内执行权限，如实标注复核深度）。逐条见 §五 R1 与 §六联调现场实录。
+**残余风险不在代码逻辑，而在验证范围**：联调轮已完成真实 PG 行锁与 200×10 并发发号、ES 容器与 IK 分词、Redis 单机运行时的实证；**仍不可签两项**：MinIO 文件存储链路（官方镜像归档停服、替代选型待拍板）、多容器 pub/sub 跨进程投递（`--scale api=2` 未跑）；另 IK/health/迁移执行态未独立重跑（本地无容器内执行权限，如实标注复核深度）。逐条见 §五 R1 与 §六联调现场实录。【2026-11-09 阶段二结案更新：MinIO 行已由 SeaweedFS 方案 A 实证升级为「**A 部分解除（限定范围）**」——文件入库/挂接/预览/SHA-256 完整性与 S3 wire 层解除，「下载业务放行」仍不可签（L2）；多容器 pub/sub 仍保留。详见 §五 R1 结案更新段。】
 
 ---
 
@@ -519,8 +519,36 @@ expect(err?.message).toContain('第 2 级');
 |------|------------------|--------------|----------|
 | PostgreSQL 行锁 | `SELECT ... FOR UPDATE` 真实锁语义、事务隔离级别、死锁自动解除 | 200 并发 × 10 轮 `Promise.all` + 按 scope 串行队列模拟，零重号零断号 | ✅ **已解除**：终跑 200×10 全绿（2000/2000、零重号零断号），真实 PG 行锁下序列原子性实证；现场还抓出并修复 #11 客户端自死锁（真实并发 > 池上限） |
 | Elasticsearch | 真实 DSL 是否被 ES 8 接受、`keyword` 与 `text` 映射差异、分片下过滤一致性 | 捕获实际请求体，断言 `query.bool.filter` 含 `securityLevel` terms / `deleted` / `fondsId` | ✅ **已部分解除**：ES 容器 healthy、IK 分词 `_analyze` 实测通过；完整 DSL 端到端执行未列入本轮范围，残余风险降为低 |
-| MinIO | 真实分片上传、`composeObject` 合并、大文件断点续传 | 校验 `minio@8.0.7` SDK 14 个方法存在 + `MinioService` 方法契约 + SHA-256 空串基准 `e3b0c442…` | ❌ **中·保留（不可签）**：官方镜像归档停服（Docker Hub 仓库消失、dl.min.io 410 Gone），`docker-compose.nominio.override.yml` 仅联调摘除、主 compose 未改；替代对象存储选型待拍板，P0 文件链路未验证 |
+| MinIO | 真实分片上传、`composeObject` 合并、大文件断点续传 | 校验 `minio@8.0.7` SDK 14 个方法存在 + `MinioService` 方法契约 + SHA-256 空串基准 `e3b0c442…` | ❌ **中·保留（不可签）**：官方镜像归档停服（Docker Hub 仓库消失、dl.min.io 410 Gone），`docker-compose.nominio.override.yml` 仅联调摘除、主 compose 未改；替代对象存储选型待拍板，P0 文件链路未验证 **【2026-11-09 阶段二 A 档部分解除：替代选型已定 SeaweedFS 方案 A 并实证，本行升级为「部分解除（限定范围）」，见下方 R1 结案更新段；「文件入库/挂接/预览/SHA-256 完整性 + S3 wire 层」解除，「下载业务放行」仍不可签（L2）】** |
 | Redis | 真实 TTL 过期、集群模式下 `delByPrefix` 的 SCAN 实现 | `FakeRedis` 模拟 get/set/del，断言 `CACHE_TTL.PERMISSION === 300` | ⚠️ **单机已解除、跨进程保留**：单机 Redis healthy；**多容器 `--scale api=2` 下 pub/sub 跨进程投递未跑**，仅同进程双实例实证（版本号 INCR + publish） |
+
+---
+
+### R1 结案更新（2026-11-09 · 阶段二独立验证完成 · MinIO 行升级为「**A 部分解除（限定范围）**」）
+
+> **裁定**：主理人采纳 QA §8 三档 **A 档**意见（`docs/QA-FILE-PIPELINE-PLAN.md` §8）。判据演进 v1.2→v1.3 全程经主理人逐项裁定授权并留痕（`a83437d`→`4f5b1eb`），无静默、fail-closed 未破；self-test `PASS (30/30)`；core **20/20 `IS_PASS: YES`**（`SCOPE: CORE`）。
+
+**证据绑定与三链路依据**（全部可追溯）：
+- **测试对象与栈**：HEAD `5a0fbc2` + 离线栈 `docker-compose.offline.yml` 8/8 healthy（api `objectStorage.ok=true`）+ 镜像包 `offline/tianji-offline-images.tar`（SHA256SUMS sha256 `50fde9a8…`，SAVE_EXIT=0，L0 锚 4/4，BUILD-INFO HEAD `aa7a248`）；
+- **链路① QA 脚本 wire 全链**：门禁 G0/G1/G2 + C01~C16 + C18（真实 S3 网关 + minio@8 SDK 调用序列 + 原生 SigV4/HTTP），core 20/20，日志 `qa-file-pipeline-stage2-core-v13-20261109090025825.log`；判据引擎自证 `qa-file-pipeline-stage2-selftest-v13-20261109090006172.log`；阶段二首跑 3 FAIL（17/20）经归因均为判据/裁定层，按主理人四项裁定修正后闭环（提交 `eb58a02` / `4f5b1eb`）；
+- **链路② 业务链路实测**（stagec1，D-1 合规不制造授权）：预览放行 `GET /api/files/:id/preview` 真实取回，sha256 与 DB `electronic_file.sha256` **全等**；下载 fail-closed 403/`code=4007` 拒绝正确；强制留痕 `DOWNLOAD … DENIED` / `PREVIEW … SUCCESS`；日志 `qa-stage2-download-20261109164940.log`；
+- **链路③ C4 CORS 独立复核**：OPTIONS 预检四头对照 `lead-stage-c4-cors-headers-20261109153324.log` 原值逐头一致；**带签名真实 PUT 200 + 非空 ETag**（架构师【不确定】项 13 闭环）；负向对照不带 Origin = 0 个 CORS 头；日志 `qa-stage2-cors-20261109165117.log`。
+
+**A 档解除范围（限定）**：仅解除上表 MinIO 行中「**文件入库 / 挂接 / 预览 / SHA-256 完整性**」与「**S3 wire 层（含 `presignGet` 下载技术链路）**」的不可签；判据演进依据：C01 收权正验证（s3.json identity 收权，业务身份建桶应被拒）、C02 meta 双形态等效（SeaweedFS 剥前缀，生产零消费面已查证）、C08 三头效果判据（`*` 通配 + `credentials=omit` 守卫）——均为主理人裁定授权的语义更正，**不是放宽**。
+
+**技术层**：「**S3 协议下载技术链路已验证**」——服务端 `presignGet` 生成预签名 GET URL → 浏览器可达 host `127.0.0.1:8333` 实际 GET → 内容与源文件 SHA-256 一致（含 Range）。
+**业务层（另起一句）**：「**下载业务放行链路未验证**」——`approval` 模式授权写入链路未实现（属 L2 上线前**功能补全项**，借阅审批与 FILE DOWNLOAD 授权打通，非缺陷）。
+
+**逐字固定表述**（方案 §2.5）：
+> 「**下载放行链路未演示**。`approval` 模式的下载授权写入链路未实现（上线前闭环项 L2），本次 demo 仅验证预览可用与下载 fail-closed 拒绝正确；QA 技术层另行验证 SeaweedFS `presignGet` 下载 wire 链路。**不构成下载功能已验证的结论。**」
+
+**未实测项（如实登记，不默认成立）**：`credentials=omit` 前端**运行时**配置（静态守卫 CLEAN 只证明源码没写，浏览器 `fetch(credentials:'omit')` 读 etag 闭环未执行）；CSP `connect-src 'self'`（`apps/web/nginx.conf:19`）的浏览器级实测（架构师进行中，结论前不下修复指令）；浏览器真实同源策略行为（脚本证据为原生 HTTP wire 层）；full 套件（2GB/410 片边界）未跑；「四性检测」按 S8 纪律只认完整性 SHA-256，真实性/安全性 `UNKNOWN`。
+
+**例外条件 2 条（本结论绑定以下条件，超出须按归因三查重新验证，不自动延续）**：
+1. **镜像源**：本次交付镜像构建期 `COREPACK_NPM_REGISTRY=https://registry.npmmirror.com`（`offline/README.md:263` 实测口径），pnpm@9.12.0 tarball 经 npmmirror 获取、integrity 仍按 registry 元数据 sha512 校验；QA 证据绑定该镜像包（SHA256SUMS `50fde9a8…`）。**换源重建或更换镜像 → 须重跑 QA `--suite core` 重新出具意见。**
+2. **Node fetch 与三链路形态**：buildkit 构建网络、宿主直连、`docker run` 默认 bridge 三条链路连通性互不相同，Node 22 fetch 不读代理 env（`offline/README.md:263`）；本结论 wire 证据全部绑定「宿主机直连栈（`127.0.0.1:8333` / `localhost:8080`）」。**跨机部署（`S3_PUBLIC_ENDPOINT` 改局域网 IP）、反代收敛同域、或经代理访问 → CORS/可达性结论不自动延续**，须按归因三查（Origin / 同域反代 / credentials）重验。
+
+**禁用措辞**（D-4 / §8）：不写「下载已验证」「下载受控通过」「文件链路已完整闭环」「R1 全部关闭」「四性全通过」。
 
 ---
 
@@ -1016,3 +1044,4 @@ MinIO 官方镜像归档停服，compose 以 `3e6c5a6` 临时覆盖摘除 minio 
 ---
 
 *报告完 · 严过关 · 2026-11-07（终判复核后升级：PASS〔限定范围〕，残余两项见 §六/§五 R1）*
+*2026-11-09 阶段二结案更新：§五 R1 MinIO 行升级为「A 部分解除（限定范围）」（SeaweedFS 方案 A 实证，`SCOPE: CORE`），「下载业务放行」仍不可签（L2），多容器 pub/sub 保留；证据与例外条件见 §五 R1 结案更新段，提交 `eb58a02` / `4f5b1eb`。*
