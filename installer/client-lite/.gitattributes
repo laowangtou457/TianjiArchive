@@ -1,0 +1,9 @@
+# client-lite 交付文件的换行与编码约束（仅作用于本目录）
+#
+# .bat：cmd.exe 要求 CRLF；仅 LF 时 goto/label 与多行块的行为不稳定。
+#       并且该文件必须保持纯 ASCII，中文界面在 自检.ps1 里（原因见文件头注释）。
+# .ps1 / .txt：Windows 记事本与 PowerShell 5.1 需要 CRLF；编码由文件自身 BOM 决定，
+#       .ps1 与 .txt 为 UTF-8 with BOM，config.json 为 UTF-8 无 BOM。
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.txt text eol=crlf

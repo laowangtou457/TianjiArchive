@@ -24,6 +24,11 @@ packages/shared/.build/
 /offline/volumes/
 /offline/*.log
 
+# ---------------------------------------------------------------- 安装包产物
+# client-lite 的 zip 由 installer/client-lite/ 下的源文件现场打包生成（含 BOM/CRLF
+# 与 zip 中文文件名等平台相关字节），入库会随平台漂移，故不入库；源文件必须入库。
+/installer/client-lite/*.zip
+
 # ---------------------------------------------------------------- 运行时数据卷
 # docker compose 的宿主机挂载目录（PG/ES/SeaweedFS/Redis 数据 + WAL 归档）
 # 注意：以下目录模式必须锚定根路径（前导 /），否则无锚点的 backup/

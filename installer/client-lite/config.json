@@ -1,0 +1,11 @@
+{
+  "serverAddr": "192.168.20.51",
+  "webPort": 8080,
+  "s3Port": 8333,
+  "scheme": "http",
+  "baseUrl": "http://192.168.20.51:8080",
+  "s3Endpoint": "http://192.168.20.51:8333",
+  "alias": "天玑档案管理系统",
+  "configured": false,
+  "updatedAtUtc": ""
+}
