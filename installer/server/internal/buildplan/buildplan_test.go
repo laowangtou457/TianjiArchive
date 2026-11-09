@@ -100,11 +100,20 @@ func TestMatchOSMatrix(t *testing.T) {
 		{"ubuntu22-jammy", OSInfo{ID: "ubuntu", VersionID: "22.04", Codename: "jammy"}, VariantUbuntuDebian, MatchExact, false, ""},
 		{"ubuntu24-noble", OSInfo{ID: "ubuntu", VersionID: "24.04", Codename: "noble"}, VariantUbuntuDebian, MatchExact, false, ""},
 		{"debian12", OSInfo{ID: "debian", VersionID: "12", Codename: "bookworm"}, VariantUbuntuDebian, MatchExact, false, ""},
+		// 归一化恒等性守卫：A 变体登记值无 V 前缀，normalizeVersionID 必须原样放行。
+		{"ubuntu22-after-normalize", OSInfo{ID: "ubuntu", VersionID: "22.04"}, VariantUbuntuDebian, MatchExact, false, ""},
+		{"debian12-after-normalize", OSInfo{ID: "debian", VersionID: "12"}, VariantUbuntuDebian, MatchExact, false, ""},
 		{"ubuntu18-unverified", OSInfo{ID: "ubuntu", VersionID: "18.04"}, VariantUbuntuDebian, MatchUnverified, true, ""},
 		{"centos-reject", OSInfo{ID: "centos", VersionID: "7"}, VariantUbuntuDebian, MatchReject, false, VariantKylinUOS},
 		{"kylin10", OSInfo{ID: "kylin", VersionID: "10"}, VariantKylinUOS, MatchExact, false, ""},
+		// 真机格式（麒麟 V10 SP3 实测 /etc/os-release：VERSION_ID="V10"，V 前缀；
+		// SP 只进 PRETTY_NAME）。2026-11-10 e2e 撞出的「kylin V10 未登记」即此根因。
+		{"kylinV10-real-format", OSInfo{ID: "kylin", VersionID: "V10"}, VariantKylinUOS, MatchExact, false, ""},
+		{"kylin-v10-lowercase", OSInfo{ID: "kylin", VersionID: "v10"}, VariantKylinUOS, MatchExact, false, ""},
 		{"uos20", OSInfo{ID: "uos", VersionID: "20"}, VariantKylinUOS, MatchExact, false, ""},
+		// fail-closed 回归：V11 归一成 "11"，不在表内，仍必须走风险确认。
 		{"kylin-unknown-ver", OSInfo{ID: "kylin", VersionID: "V11"}, VariantKylinUOS, MatchUnverified, true, ""},
+		{"kylin-unknown-ver-plain", OSInfo{ID: "kylin", VersionID: "11"}, VariantKylinUOS, MatchUnverified, true, ""},
 		{"ubuntu-with-static-pkg", OSInfo{ID: "ubuntu", VersionID: "22.04"}, VariantKylinUOS, MatchReject, false, VariantUbuntuDebian},
 	}
 	for _, c := range cases {
@@ -117,6 +126,24 @@ func TestMatchOSMatrix(t *testing.T) {
 		}
 		if c.suggest != "" && got.SuggestedVariant != c.suggest {
 			t.Errorf("%s: 建议变体期望 %s，实际 %s", c.name, c.suggest, got.SuggestedVariant)
+		}
+	}
+}
+
+func TestNormalizeVersionID(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"V10", "10"},      // 真麒麟大写 V 前缀
+		{"v10", "10"},      // 容错小写
+		{"20", "20"},       // 统信纯数字，恒等
+		{"22.04", "22.04"}, // ubuntu，恒等
+		{"12", "12"},       // debian，恒等
+		{"V11", "11"},      // 未登记大版本归一后仍不在表内
+		{"", ""},           // 空 → 空（由 orUnknown 兜底显示）
+		{"  V10  ", "10"},  // 防御性去空白（ParseOSRelease 已 trim，双保险）
+	}
+	for _, c := range cases {
+		if got := normalizeVersionID(c.in); got != c.want {
+			t.Errorf("normalizeVersionID(%q) = %q，期望 %q", c.in, got, c.want)
 		}
 	}
 }

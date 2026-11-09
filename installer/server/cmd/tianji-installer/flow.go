@@ -632,7 +632,13 @@ func (s *session) stepPreflight(ctx context.Context, w io.Writer) error {
 
 	// OS 与包变体的匹配（设计 §5.2）
 	match := s.osMatch
-	logf("系统识别: ID=%s VERSION_ID=%s codename=%s（%s）", s.osInfo.ID, s.osInfo.VersionID, s.osInfo.Codename, s.osInfo.PrettyName)
+	// codename 可能为空（真麒麟实测 VERSION_CODENAME 为空）：显示成 - 而不是空串，
+	// 否则日志里出现「codename=（...）」的空括号形态，现场会怀疑解析丢了字段。
+	codename := s.osInfo.Codename
+	if strings.TrimSpace(codename) == "" {
+		codename = "-"
+	}
+	logf("系统识别: ID=%s VERSION_ID=%s codename=%s（%s）", s.osInfo.ID, s.osInfo.VersionID, codename, s.osInfo.PrettyName)
 	switch match.Level {
 	case buildplan.MatchReject:
 		return fmt.Errorf("本机系统与安装包变体不匹配：%s\n处置：改用 %s 变体的安装包", match.Reason, match.SuggestedVariant)

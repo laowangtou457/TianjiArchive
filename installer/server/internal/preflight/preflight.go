@@ -117,8 +117,14 @@ func Check(ctx context.Context, opts Options) *Report {
 		rep.Facts["os_id"] = osr["ID"]
 		rep.Facts["os_version_id"] = osr["VERSION_ID"]
 		rep.Facts["os_codename"] = osr["VERSION_CODENAME"]
+		// codename 可能为空（真麒麟实测 VERSION_CODENAME 为空）：空时不打 "()"，
+		// 报告里出现空括号会让现场怀疑解析出了问题。
+		osName := osr["ID"] + " " + osr["VERSION_ID"]
+		if osr["VERSION_CODENAME"] != "" {
+			osName += " (" + osr["VERSION_CODENAME"] + ")"
+		}
 		add(Item{ID: "K0", Title: "发行版识别", Level: LevelPass,
-			Detail: fmt.Sprintf("%s %s (%s)", osr["ID"], osr["VERSION_ID"], osr["VERSION_CODENAME"]),
+			Detail: osName,
 			Raw:    fmt.Sprintf("ID=%s VERSION_ID=%s VERSION_CODENAME=%s", osr["ID"], osr["VERSION_ID"], osr["VERSION_CODENAME"])})
 	}
 

@@ -314,23 +314,43 @@ type Match struct {
 	SuggestedVariant string `json:"suggestedVariant,omitempty"`
 }
 
+// normalizeVersionID 把 VERSION_ID 归一成「纯大版本号」用于登记矩阵比对。
+//
+// 为什么在比较点归一而不是往矩阵加条目：VERSION_ID 的书写格式是发行版各自的方言——
+// 真麒麟 V10 SP3 实测 VERSION_ID="V10"（V 前缀；SP 信息只进 PRETTY_NAME，不进
+// VERSION_ID），统信是纯数字 "20"。矩阵的语义单位是**大版本**，格式差异必须在一处
+// 吃掉，否则每撞出一种方言（V10 / v10 / 将来可能的 V10SP2）就要往表里堆一条同义
+// 条目。对新方言（如 SP 后缀）的兼容只改这一个函数，变更半径最小。
+func normalizeVersionID(s string) string {
+	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "v")
+}
+
 // MatchOS 按设计 §5.1 的矩阵判定 os 是否适用于 variant。
+//
+// 版本比对统一走 normalizeVersionID（两个分支同一口径）：对已登记值
+// （"22.04"/"24.04"/"12"/"20"…）它是恒等变换，只消化格式方言。
 func MatchOS(os OSInfo, variant string) Match {
+	ver := normalizeVersionID(os.VersionID)
 	switch variant {
 	case VariantUbuntuDebian:
 		switch os.ID {
 		case "ubuntu":
-			if os.VersionID == "22.04" || os.VersionID == "24.04" {
-				return Match{Level: MatchExact, Reason: "Ubuntu " + os.VersionID + "（" + os.Codename + "）已登记"}
+			if ver == "22.04" || ver == "24.04" {
+				// codename 可能为空（麒麟实测 VERSION_CODENAME 为空），空时不打空括号。
+				name := "Ubuntu " + os.VersionID
+				if os.Codename != "" {
+					name += "（" + os.Codename + "）"
+				}
+				return Match{Level: MatchExact, Reason: name + " 已登记"}
 			}
 			return Match{Level: MatchUnverified, RequireConfirm: true,
-				Reason: "Ubuntu " + os.VersionID + " 未登记（矩阵只覆盖 22.04 / 24.04）"}
+				Reason: "Ubuntu " + orUnknown(os.VersionID) + " 未登记（矩阵只覆盖 22.04 / 24.04）"}
 		case "debian":
-			if os.VersionID == "12" || os.Codename == "bookworm" {
+			if ver == "12" || os.Codename == "bookworm" {
 				return Match{Level: MatchExact, Reason: "Debian 12（bookworm）已登记"}
 			}
 			return Match{Level: MatchUnverified, RequireConfirm: true,
-				Reason: "Debian " + os.VersionID + " 未登记（矩阵只覆盖 12）"}
+				Reason: "Debian " + orUnknown(os.VersionID) + " 未登记（矩阵只覆盖 12）"}
 		default:
 			return Match{Level: MatchReject, SuggestedVariant: VariantKylinUOS,
 				Reason: "当前系统 ID=" + orUnknown(os.ID) + "，不是 Ubuntu/Debian，deb 依赖闭包必然对不上"}
@@ -338,7 +358,7 @@ func MatchOS(os OSInfo, variant string) Match {
 	case VariantKylinUOS:
 		switch os.ID {
 		case "kylin", "uos", "uniontech":
-			if os.VersionID == "10" || os.VersionID == "20" || strings.HasPrefix(os.VersionID, "10.") {
+			if ver == "10" || ver == "20" || strings.HasPrefix(ver, "10.") || strings.HasPrefix(ver, "20.") {
 				return Match{Level: MatchExact, Reason: os.ID + " " + os.VersionID + " 已登记"}
 			}
 			return Match{Level: MatchUnverified, RequireConfirm: true,
