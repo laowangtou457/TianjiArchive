@@ -22,6 +22,19 @@
  *
  * 日志：docs/perf/runs/qa-file-pipeline-<tag>-<UTC>.log（LF；.gitignore:46 已开白名单）
  *      stdout 与日志绝不输出 accessKey / secretKey（架构 §5.2 红线），并有兜底脱敏。
+ *
+ * 版本演进（判据只按主理人裁定演进，不为绿改判据）：
+ *  v1.2 (2026-11-09, commit a83437d)：C08 Expose-Headers 效果判据 exposesEtag（'*' 或显式 ETag），
+ *      附 credentials=omit 静态守卫（全目录兜底 + 三处定向 audit）与归因分叉；self-test 18→25。
+ *      实测更正依据：3.79 零配置返回 Access-Control-Expose-Headers: *，旧字面量断言必然假红。
+ *  v1.3 (2026-11-09, 主理人四项裁定授权)：①C01 改「业务身份 CreateBucket 应被拒：403/AccessDenied
+ *      即 PASS」收权正验证（s3.json identity 收权，storage.module.ts:34；原 CreateBucket 幂等判据
+ *      与收权裁定冲突，留痕作废）；②C02 主判据 Content-Type 回读一致，x-amz-meta-* 接受带前缀/
+ *      剥前缀两种回读形态（SeaweedFS 剥前缀差异登记 §八已知边界，生产零消费面已查证）；
+ *      ③C08 methodsOk/headersOk 改效果判据 corsListAllows（'*' 通配或显式列表），与
+ *      C08_WILDCARD_PREMISE=CREDENTIALS_OMIT_REQUIRED 共用同一守卫，归因分叉维持；self-test 25→30。
+ *      实测更正依据：3.79 返回 Allow-Methods: * / Allow-Headers: *（qa-stage2-cors 日志 +
+ *      lead-stage-c4 原值双证），字面断言与 v1.2 前 expose 同构假红。
  */
 
 const fs = require('node:fs');
@@ -180,6 +193,33 @@ function exposesEtag(v) {
   return s === '*' || /(^|,)\s*etag\s*(,|$)/i.test(s);
 }
 
+/**
+ * v1.3 纯函数：Allow-Methods / Allow-Headers 的**效果判据**，与 exposesEtag 同构。
+ * 实测依据（qa-stage2-cors-20261109165117.log + lead-stage-c4-cors-headers-20261109153324.log
+ * 原值双证）：3.79 返回 `Access-Control-Allow-Methods: *` / `Access-Control-Allow-Headers: *`
+ * 通配形态，v1.2 前的字面断言 /PUT/i、/content-type/i 在 '*' 下必然假红（与 Expose-Headers
+ * 同构缺口）。按 CORS 规范，credentials mode=omit 时 '*' 通配全部方法/请求头（Authorization
+ * 除外，本链路预签名 PUT 不带凭据头，不受影响）；显式列表含对应项等效成立。
+ * 纯函数；--self-test 直接调用，覆盖通配/显式/无关/空四形态。
+ */
+function corsListAllows(v, needle) {
+  const s = String(v || '').trim().toLowerCase();
+  return s === '*' || new RegExp(`(^|,)\\s*${needle}\\s*(,|$)`, 'i').test(s);
+}
+
+/**
+ * v1.3 纯函数：C01 收权正验证的错误归类。业务身份 CreateBucket 被 s3.json 收权拒绝时，
+ * minio SDK 错误形如 code='AccessDenied' / message='Access Denied.' / statusCode=403。
+ * 仅 AccessDenied / 403 才证明「收权生效」；其他错误（网络、超时、DNS）归 TOOL_ERROR，
+ * 不得写成兼容性结论（「没验成」≠「验出不支持」）。
+ */
+function isAccessDenied(err) {
+  const code = String((err && err.code) || '');
+  const msg = String((err && err.message) || '');
+  const status = err && err.statusCode;
+  return /AccessDenied|Access Denied/i.test(`${code} ${msg}`) || status === 403;
+}
+
 // 声明式边界（复用 §2.5 D4_SCOPE=WIRE_ONLY 那套静态断言机制）：'*' 通配不得默认成立。
 const C08_WILDCARD_PREMISE = 'C08_WILDCARD_PREMISE=CREDENTIALS_OMIT_REQUIRED'
   + '（\'*\' 通配仅在 credentials mode=omit 时成立；显式 credentials:include 时 \'*\' 被当字面量；静态源码核对不替代前端运行时配置验证）';
@@ -192,6 +232,24 @@ const C08_CREDENTIALS_PATTERNS = [
 ];
 function credentialsPatternsHit(src) {
   return C08_CREDENTIALS_PATTERNS.filter((p) => p.re.test(String(src || '')));
+}
+
+/**
+ * v1.3 纯函数：meta 回读键等效匹配——同时接受「带 x-amz-meta- 前缀」（MinIO/SDK 标准形态）
+ * 与「剥前缀」（SeaweedFS 3.79 实测形态，qa-file-pipeline-stage2-core-20261109084451952.log）。
+ * 差异已登记方案 §八已知边界；生产影响面已查证为零：所有 putObject meta 只传 Content-Type
+ * （backup.service:316 / file.service:361 / object.fetcher:50），statObject 回读只用 stat.etag
+ * （backup.service:319），无人消费 metaData 自定义键。主判据是 Content-Type 回读一致（生产真实依赖）。
+ * 纯函数；--self-test 直接调用，覆盖两种形态。
+ */
+function metaValueLoose(md, key) {
+  const lower = String(key || '').toLowerCase();
+  const strip = lower.replace(/^x-amz-meta-/, '');
+  for (const [k, v] of Object.entries(md || {})) {
+    const kk = String(k).toLowerCase();
+    if (kk === lower || kk === strip) return [k, v];
+  }
+  return null;
 }
 
 /** 轻量括号配对：提取 `axios.create(` / `axios.put(` 的调用参数文本；找不到返回 null。 */
@@ -313,8 +371,8 @@ const CHECK_DEFS = [
   { id: 'G0', group: 'gate', wire: '—', title: '服务可达（S3 网关 TCP + HTTP 200/403）' },
   { id: 'G1', group: 'gate', wire: '§4 #1', title: '凭据正确且鉴权生效（错误凭据 403 / 非 Allow-All）' },
   { id: 'G2', group: 'gate', wire: '§4 #1', title: '四桶存在（HeadBucket 全 200）' },
-  { id: 'C01', group: 'wire', wire: '§4 #2', title: 'CreateBucket 幂等' },
-  { id: 'C02', group: 'wire', wire: '§4 #3/#5', title: 'PutObject 自定义 meta + Content-Type 回读一致' },
+  { id: 'C01', group: 'wire', wire: '§4 #2', title: 'CreateBucket 收权正验证（业务身份应被拒：403/AccessDenied 即 PASS；桶存在性由 G2 保证，v1.3）' },
+  { id: 'C02', group: 'wire', wire: '§4 #3/#5', title: 'PutObject Content-Type 回读一致（主判据）+ 自定义 meta 双形态回读（v1.3）' },
   { id: 'C03', group: 'wire', wire: '§4 #4', title: 'GetObject 全量 + Range 206' },
   { id: 'C04', group: 'wire', wire: '§4 #5', title: 'statObject 大小与 computeSha256 一致' },
   { id: 'C05', group: 'wire', wire: '§4 #6', title: '整对象预签名 PUT（host 浏览器可达 + SigV4 + 过期 403）' },
@@ -588,19 +646,21 @@ const IMPL = {
   },
 
   C01: async () => {
+    // v1.3 裁定（team-lead 2026-11-09，采 A 方案）：s3.json identity 收权是安全架构裁定
+    // （storage.module.ts:34 注释即来源）——业务身份 tianji_minio 被收权不允许建桶，
+    // 桶由 entrypoint 预建；把「被正确拒绝」变成正向断言比绕道管理身份更有证据价值。
+    // 原 v1.1「CreateBucket 幂等」判据与收权裁定冲突，留痕作废（方案 §5 C01 同步）。
     const name = `qa-pipe-${RUN_ID.slice(-10).toLowerCase()}`;
-    CTX.tempBucket = name;
-    try { await CTX.internal.makeBucket(name, 'us-east-1'); }
-    catch (e) { return { ok: false, cause: 'INCOMPATIBLE', detail: `首次 CreateBucket 失败：${e.message}` }; }
-    let second = 'ok';
-    try { await CTX.internal.makeBucket(name, 'us-east-1'); }
-    catch (e) {
-      if (/BucketAlreadyOwnedByYou|BucketAlreadyExists|ResourceConflict|already exists/i.test(e.message)) second = 'idempotent-error';
-      else return { ok: false, cause: 'INCOMPATIBLE', detail: `重复 CreateBucket 非幂等：${e.message}` };
+    try {
+      await CTX.internal.makeBucket(name, 'us-east-1');
+      // 收权未生效 = 安全架构裁定被破坏，比建桶成功本身更严重
+      return { ok: false, cause: 'INCOMPATIBLE', detail: `业务身份 CreateBucket 竟然成功（${name}）：s3.json 收权未生效，安全架构裁定被破坏，需整改` };
+    } catch (e) {
+      if (isAccessDenied(e)) {
+        return { ok: true, detail: `业务身份 CreateBucket 被拒（收权正验证 PASS，v1.3）：${(e && e.code) || ''} ${e.message}；桶存在性由 G2 四桶 HeadBucket 保证（临时桶 ${name} 未创建，无残留）` };
+      }
+      return { ok: false, cause: 'TOOL_ERROR', detail: `CreateBucket 失败但非 AccessDenied（无法证明收权，按工具异常处理）：${e.message}` };
     }
-    const exists = await CTX.internal.bucketExists(name).catch(() => false);
-    if (!exists) return { ok: false, cause: 'INCOMPATIBLE', detail: '建桶后 HeadBucket 未命中' };
-    return { ok: true, detail: `临时桶 ${name} 创建成功；二次调用=${second}；HeadBucket=true` };
   },
 
   C02: async () => {
@@ -615,16 +675,18 @@ const IMPL = {
     const stat = await CTX.internal.statObject(BUCKETS[0], k);
     if (stat.size !== src.length) return { ok: false, cause: 'INCOMPATIBLE', detail: `stat.size=${stat.size} 期望 ${src.length}` };
     const md = stat.metaData || {};
-    const find = (needle) => Object.entries(md).find(([kk]) => kk.toLowerCase() === needle);
-    const ct = find('content-type');
-    const mv = find('x-amz-meta-qa-case');
+    // v1.3 裁定（team-lead 2026-11-09，采 A+B 合并）：主判据 = Content-Type 回读一致（生产真实依赖）；
+    // 自定义 meta 接受「带 x-amz-meta- 前缀 / 剥前缀」两种回读形态（等效判据）。
+    const ct = metaValueLoose(md, 'content-type');
+    const mv = metaValueLoose(md, 'x-amz-meta-qa-case');
     if (!ct || !String(ct[1]).includes('application/pdf')) {
       return { ok: false, cause: 'INCOMPATIBLE', detail: `Content-Type 回读异常：${JSON.stringify(md).slice(0, 300)}` };
     }
     if (!mv || String(mv[1]) !== 'C02') {
-      return { ok: false, cause: 'INCOMPATIBLE', detail: `自定义 meta 回读异常：${JSON.stringify(md).slice(0, 300)}` };
+      return { ok: false, cause: 'INCOMPATIBLE', detail: `自定义 meta 回读异常（双形态均未命中）：${JSON.stringify(md).slice(0, 300)}` };
     }
-    return { ok: true, detail: `sha256=${sha256(src).slice(0, 16)}…；size=${stat.size}；Content-Type 与 x-amz-meta 回读一致` };
+    const metaShape = String(mv[0]).toLowerCase().startsWith('x-amz-meta-') ? '带前缀' : '剥前缀';
+    return { ok: true, detail: `sha256=${sha256(src).slice(0, 16)}…；size=${stat.size}；Content-Type 回读一致（主判据）；自定义 meta 回读命中（${metaShape}形态，等效判据；SeaweedFS 剥前缀差异登记 §八已知边界）` };
   },
 
   C03: async () => {
@@ -777,8 +839,12 @@ const IMPL = {
     // 实际分片 PUT 响应也应暴露（若服务端只在实际响应给头）
     const actualExpose = CTX.partResponses.map((r) => String(r.headers['access-control-expose-headers'] || ''));
     const originOk = allowOrigin === '*' || allowOrigin.includes(CFG.origin);
-    const methodsOk = /PUT/i.test(allowMethods);
-    const headersOk = /content-type/i.test(allowHeaders);
+    // v1.3 裁定（team-lead 2026-11-09，采 v1.2 同规格）：methods/headers 改效果判据——
+    // 3.79 返回 Allow-Methods: * / Allow-Headers: *（通配形态，qa-stage2-cors 日志 +
+    // lead-stage-c4 原值双证），字面断言 /PUT/i、/content-type/i 在 '*' 下必然假红，
+    // 与 v1.2 修正前的 Expose-Headers 同构缺口。credentials=omit 下 '*' 通配成立。
+    const methodsOk = corsListAllows(allowMethods, 'put');
+    const headersOk = corsListAllows(allowHeaders, 'content-type');
     const exposeOk = exposesEtag(expose);
     const actualOk = actualExpose.length > 0 && actualExpose.every(exposesEtag);
     const exposeLegal = exposeOk || actualOk;
@@ -790,10 +856,12 @@ const IMPL = {
     const anyCorsHeader = [allowOrigin, allowMethods, allowHeaders, expose]
       .concat(actualExpose).some((v) => String(v).length > 0);
 
-    // '*' 通配成立前提：credentials mode=omit。静态源码守卫不默认成立；
-    // detail 始终显式写出前提与「运行时前端配置未独立验证」，列入阶段二报告未验证项。
-    const wildcardUsed = exposeLegal
-      && [expose].concat(actualExpose).some((v) => exposesEtag(v) && String(v).includes('*'));
+    // '*' 通配成立前提：credentials mode=omit。v1.3：任一 CORS 头为 '*'（methods/headers/expose）
+    // 都共用同一前提与守卫——omit 下三头通配全部成立，include 下三头通配全部失效（规范同源）。
+    // 静态源码守卫不默认成立；detail 始终显式写出前提与「运行时前端配置未独立验证」。
+    const wildcardUsed = [allowMethods, allowHeaders, expose]
+      .concat(actualExpose)
+      .some((v) => String(v || '').trim() === '*');
     const guard = wildcardUsed ? credentialsOmitGuard() : null;
     let premiseText;
     if (!anyCorsHeader) premiseText = '响应无任何 CORS 头，通配/显式前提均不适用（归因三查）';
@@ -801,7 +869,7 @@ const IMPL = {
     else if (wildcardUsed) {
       premiseText = `${C08_WILDCARD_PREMISE}；静态源码守卫=${guard.pass ? 'PASS' : 'FAIL'}(${guard.note})；`
         + '本脚本未独立验证前端运行时配置，列入阶段二报告未验证项';
-    } else premiseText = '暴露头为显式 ETag（无通配前提）';
+    } else premiseText = 'CORS 头均为显式列表（无通配前提）';
 
     const problems = [];
     if (!originOk) problems.push(`allow-origin=${allowOrigin || '(缺失)'}`);
@@ -1215,12 +1283,48 @@ function doSelfTest() {
   }
   chk("C08 'credentials=omit' 守卫生效（三处定向核对 CLEAN + 注入三处 HIT 均 fail-closed）",
     omitGuardOk, omitDetail);
+  // ---- v1.3 新增：C01 收权正验证 / C02 双形态 / C08 methods+headers 效果判据（四项裁定授权）----
+  chk("corsListAllows: '*' 通配 → PASS（PUT / content-type 双针）",
+    corsListAllows('*', 'put') === true && corsListAllows('*', 'content-type') === true);
+  chk("corsListAllows: 显式列表含 PUT/content-type → PASS；无关列表/空 → FAIL",
+    corsListAllows('GET, PUT, DELETE', 'put') === true
+    && corsListAllows('Content-Type', 'content-type') === true
+    && corsListAllows('GET, POST', 'put') === false
+    && corsListAllows('', 'put') === false
+    && corsListAllows(undefined, 'content-type') === false);
+  chk('isAccessDenied: AccessDenied / Access Denied / 403 → true；网络/超时类 → false',
+    isAccessDenied({ code: 'AccessDenied', message: 'Access Denied.', statusCode: 403 }) === true
+    && isAccessDenied({ message: 'Access Denied.' }) === true
+    && isAccessDenied({ statusCode: 403 }) === true
+    && isAccessDenied({ code: 'ETIMEDOUT', message: 'REQUEST_TIMEOUT' }) === false
+    && isAccessDenied({ code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND seaweedfs' }) === false);
+  chk('metaValueLoose: 带 x-amz-meta- 前缀 / 剥前缀双形态等效命中；未命中 → null',
+    metaValueLoose({ 'x-amz-meta-qa-case': 'C02' }, 'x-amz-meta-qa-case')[1] === 'C02'
+    && metaValueLoose({ 'qa-case': 'C02' }, 'x-amz-meta-qa-case')[1] === 'C02'
+    && metaValueLoose({ 'X-Amz-Meta-Qa-Case': 'C02' }, 'x-amz-meta-qa-case')[1] === 'C02'
+    && metaValueLoose({ 'content-type': 'application/pdf' }, 'x-amz-meta-qa-case') === null
+    && metaValueLoose(null, 'content-type') === null);
+  // v1.3 声明式边界守卫：三纯函数存在、C01 收权正验证落码、wildcardUsed 覆盖三头且
+  // 守卫 FAIL 时归因维持 CONFIG_MISSING（负向：credentials!=omit 时 '*' 不得放行的 fail-closed 链路）
+  chk("v1.3 声明守卫：C01 收权正验证 + C08 三头效果判据落码 + '*' 守卫 fail-closed 链路未松动",
+    /isAccessDenied\(e\)/.test(selfSrc)
+    && /业务身份 CreateBucket 竟然成功/.test(selfSrc)
+    && /function corsListAllows\(v, needle\)/.test(selfSrc)
+    && /const methodsOk = corsListAllows\(allowMethods, 'put'\)/.test(selfSrc)
+    && /const headersOk = corsListAllows\(allowHeaders, 'content-type'\)/.test(selfSrc)
+    && /\[allowMethods, allowHeaders, expose\]/.test(selfSrc)
+    && /guard && !guard\.pass[\s\S]{0,80}cause = 'CONFIG_MISSING'/.test(selfSrc)
+    && /function isAccessDenied\(err\)/.test(selfSrc)
+    && /function metaValueLoose\(md, key\)/.test(selfSrc));
+
   // 声明式边界守卫（复用 D4_SCOPE=WIRE_ONLY 机制）：'*' 前提不得被静默删掉、C08 不得回退成字面量断言
-  chk("C08 '*' 前提守卫声明存在（CREDENTIALS_OMIT_REQUIRED，且 C08 两处均调用 exposesEtag 纯函数）",
+  chk("C08 '*' 前提守卫声明存在（CREDENTIALS_OMIT_REQUIRED，且 expose 判据仍为 exposesEtag 纯函数）",
     /C08_WILDCARD_PREMISE=CREDENTIALS_OMIT_REQUIRED/.test(selfSrc)
     && /function exposesEtag\(v\)/.test(selfSrc)
     && /const exposeOk = exposesEtag\(expose\);/.test(selfSrc)
-    && /actualExpose\.every\(exposesEtag\)/.test(selfSrc));
+    && /actualExpose\.every\(exposesEtag\)/.test(selfSrc)
+    && !/const methodsOk = \/PUT\/i\.test\(allowMethods\)/.test(selfSrc)
+    && !/const headersOk = \/content-type\/i\.test\(allowHeaders\)/.test(selfSrc));
 
   // 最后一条：日志落盘链路必须真实可用。self-test 早期版本曾漏调 flushLog，
   // 出现「判据 16/16 全绿但日志根本没写盘」的假绿；本用例真实写盘，专防该形态。
