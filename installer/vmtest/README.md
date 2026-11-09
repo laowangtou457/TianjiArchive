@@ -47,16 +47,28 @@ bash installer/vmtest/probe.sh --os uos
 装盘与引导**分开落日志**：`<os>-install.log` / `<os>-boot.log`（各自首行记录 accel），
 可以另开终端 `tail -f`。
 
+资源参数默认 **30G / 4GiB / 4 vCPU**（与已入库的复现口径一致，不要随手改默认值）；
+跑完整栈或端到端验收时用 `--disk 60G --mem 8192 --smp 4`，理由见 §7。
+
+每段耗时写在 `<os>-<mode>-stages.log`，格式固定并同时并进串口日志头部：
+
+```
+# [阶段] 加速器探测     start=09:12:03 end=09:12:11 耗时=8s
+# [阶段] qemu 运行(boot) start=09:12:14 end=09:16:29 耗时=255s
+```
+
+**判断「卡住还是正常慢」只看这个文件，不要靠猜**——TCG 下同一阶段比 KVM 慢 5-10 倍是正常的。
+
 ### 目录
 
 ```
 installer/vmtest/
-├── run-vm.sh          # 建盘 + 起 http + 引导 anaconda（宿主/容器双模式）
+├── run-vm.sh          # 建盘 + 起 http + 引导 anaconda（宿主/容器双模式，含阶段打点）
 ├── probe.sh           # ssh 进 guest 采集六项 + 附加
-├── ks-httpd.pl        # 喂 kickstart 的极简 HTTP（镜像里没 python3/curl）
+├── ks-httpd.pl        # 喂 kickstart / .run 包的极简 HTTP（流式 + Range；镜像里没 python3/curl）
 ├── ks/kylin-min.ks    # 麒麟无人值守 kickstart
 ├── ks/uos-min.ks      # 统信（仅 hostname/注释差异）
-└── logs/              # 串口全文 + 探测原文（文本，入库）
+└── logs/              # 串口全文 + 阶段打点 + 探测原文（文本，入库）
 ```
 
 ## 3. 安装器是怎么被引导的
@@ -119,6 +131,31 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
    ZONE_CONFLICT: 'docker0' already bound to a zone`（统信实测）。firewalld 已经把 docker0
    绑进 zone，dockerd 再绑一次就冲突。处置：`systemctl disable --now firewalld` 或
    `--iptables=false`。**这一条才是真·OS 级冲突**，与坑 9 是两回事。
+11. **`ks-httpd.pl` 第一版是整文件读入内存的**（`local $/; my $body = <$fh>`）。喂几 KB 的
+   kickstart 没事，但要发 `.run` 包（实测 150,088,493 B）或镜像 tar（1,512,404,992 B）时，
+   内存峰值可达文件大小的数倍，而且没有 `Range`，断了只能从 0 重来。
+   → 已改为 64KB 分块 `sysread`/`syswrite` + `Range` 续传（`bytes=A-B` / `A-` / `-N`，206 + `Content-Range`，
+   非法范围 416）。实测（`tianji-qemu:1` + 宿主 curl）：
+
+   | 用例 | 结果 |
+   |---|---|
+   | 1.51GB 全量下载 | `http=200`、`1512404992 B`、9.3s、**容器峰值内存 5.27MiB** |
+   | 1.51GB 完整性 | 下载件与源文件 sha256 一致 `50fde9a8…ad1372` |
+   | 20MB 限速 4M/s 被超时打断于 5,238,685 B | `curl -C -` 续传返回 **206**，补传 `15,732,835 B`，最终 sha256 一致 |
+   | `-r 99999999-`（超出文件） | **416** |
+   | `HEAD` / 不存在路径 | `200` + `Accept-Ranges` / `404` |
+
+   注意：上面 9.3s 是**宿主→容器的 loopback**，不代表 slirp 速度；guest 走 `10.0.2.2:8000`
+   取包会慢得多（估 20-40MB/s）。这也是镜像 tar 改走只读盘的原因，见 §7。
+12. **改完 HTTP 服务必须真装一次机验证，curl 通了不代表 anaconda 能用**。流式化第一次上线时，
+   装机连续两次卡在 dracut（日志停在同一行数，约 20s 内无新输出，3 分钟后
+   `Generating "/run/initramfs/rdsosreport.txt" / Press Enter for maintenance`），
+   而宿主 curl 一切正常。根因：dracut 先发两个探活请求再断开，perl 收到 **SIGPIPE 直接退出**，
+   等真正的 `GET /ks.cfg` 到来时 8000 端口已经没人监听 → dracut 静默重试到超时 → 掉进 emergency。
+   → 修法：`$SIG{PIPE} = 'IGNORE'` + 每个连接用 `eval` 包裹，单个连接出事不拖垮守护进程。
+   修完第三次装机通过（499/499、rc=0、`qemu` 阶段 246s）。`ks-httpd.pl` 现在把
+   `方法 路径 range UA -> 状态 字节数` 写进 `ks-serve/httpd.log`，**装机失败先看这个文件**：
+   正常应能看到 `HEAD /ks.cfg ... -> 200 0B` 两条探活 + `GET /ks.cfg ... ua=curl/7.71.1 -> 200 1256B`。
 
 ## 5. 时间成本（实测）
 
@@ -148,3 +185,77 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
 > 看着像"OS 把管理面弄挂了"，实际是 QEMU user 网络（slirp）的限制，见坑 9。
 > 我一度据此误判过 firewalld，做了二分实验才推翻 —— 要测端口可达性请用 tap/bridge 网络或在
 > guest 内自测。
+
+## 7. 端到端验收（变体 B 安装包）
+
+验收对象不是「安装脚本能跑」，而是**现场用户的路径**：把 `setup.run` 与 `images.tar` 拷到机器上，
+运行安装包、确认 tar 实际路径、走完十步、最后四项冒烟通过。
+
+### 7.1 两种输入，两条不同的路径（别混）
+
+| 输入 | 进 guest 的方式 | 为什么这样最忠实 |
+|---|---|---|
+| `images.tar`（1.51GB） | **只读 virtio 盘**：`--attach-ro`，模拟「用户已经把文件拷到这台机器上」 | 交付形态就是同目录两个文件，现场**没有 HTTP 服务器**。走 slirp 传输测到的是 QEMU user 网络的吞吐，不是产品行为 |
+| `setup.run`（150MB） | **HTTP 固定别名** `server-setup.run`，对应「用户从分发介质拿到安装包」 | 只测「拿到包 → 执行」这一跳；别名与版本解耦，ks 不写死版本号 |
+
+所以：**tar 不经过网络，.run 经过网络**。不要因为「反过来也能跑」就改回去。
+
+### 7.2 步骤
+
+```bash
+# 1) 装 OS。--attach-ro 只在 boot 模式生效（装盘阶段挂第三块盘会被 clearpart 波及）
+bash installer/vmtest/run-vm.sh --os kylin --fresh --disk 60G --mem 8192 --smp 4
+
+# 2) 把 .run 放进 httpd 根目录并起固定别名（宿主可直接写，它挂载成容器内 /vm/ks-serve）
+mkdir -p E:/tmp-vm/ks-serve
+cp <构建产物>/tianji-server-setup-b-amd64-<ver>.run E:/tmp-vm/ks-serve/server-setup.run
+
+# 3) 带镜像 tar 引导
+bash installer/vmtest/run-vm.sh --os kylin --disk 60G --mem 8192 --smp 4 \
+     --attach-ro E:/TianjiArchive/offline/tianji-offline-images.tar
+
+# 4) 进 guest 执行（另开终端）
+ssh -i E:/tmp-vm/vmtest_ed25519 -p 2222 root@127.0.0.1
+```
+
+guest 内先探设备名，**不要假设 `/dev/vdb`**：
+
+```bash
+lsblk -o NAME,SIZE,RO,TYPE,FSTYPE,MOUNTPOINT
+blkid
+# 期望看到一块 SIZE≈1.4G、RO=1 的盘，通常是 /dev/vdb（整盘，无分区）
+curl -fSL --retry 3 -C - -o /root/server-setup.run \
+     http://10.0.2.2:8000/server-setup.run
+sha256sum /root/server-setup.run        # 与构建机产物核对
+```
+
+tar 路径怎么给安装器：
+
+- **优先直接把设备节点当 tar 路径**（`--images-tar /dev/vdb`）：tar 是流式格式，`tar -tf /dev/vdb`
+  能读，不需要文件系统。
+- 若安装器只接受普通文件，就落成文件再传路径：
+  `dd if=/dev/vdb of=/root/images.tar bs=4M status=progress`（1.5GB，60G 盘放得下）。
+- **不要 `mount -o loop`**：tar 不是文件系统，loop 挂载会失败。
+
+### 7.3 通过判据（三层 + 一条留痕）
+
+1. **十步状态机到 S10**，汇总页能出访问地址（不是「步骤都跑了」，是「最后一步完成了」）。
+2. **`docker info` 成功**且 `docker images` 里 **8/8** 镜像在（对 `offline/images.txt` 逐个点）。
+3. **四项冒烟 4/4**：以安装器内置的 **Go 版**（`installer/server/internal/stack/stack.go`）输出为权威判据；
+   `smoke.sh` 只作人工交叉核对（它依赖 curl + compose，且包内布局下直接跑会找不到 compose 文件）。
+4. **firewalld 留痕**：安装报告里必须有「处置动作 + 执行前后 `systemctl is-active firewalld` 两个值」。
+   只写「已执行 disable」不算——没有 before/after 就无法证明处置真的生效。
+
+### 7.4 为什么验收用 60G / 8GiB
+
+- 内存：ES(IK) 单吃 2GiB heap，加 PG/Redis/SeaweedFS/4 个应用容器，**4GiB 会让 health 长期 degraded**，
+  看起来像装坏了，其实是内存不足。
+- 磁盘：1.5GB tar + `docker load` 展开 8 镜像（约 5-6GB）+ 数据卷 + 日志，30G 没余量。
+
+默认值仍是 30G/4GiB（六项基线复现口径不动），只有端到端验收用大规格。
+
+### 7.5 看哪里判断「卡住还是正常慢」
+
+`installer/vmtest/logs/<os>-boot-stages.log`。`.run` 走 slirp（150MB，估 4-8s）、
+`docker load` 1.5GB tar（30-60s 级）、ES 起来（20-40s）都是正常的长阶段；
+以阶段日志里的 start/end 为准，不要用「几分钟没输出」当失败。
