@@ -1,0 +1,46 @@
+==================================================================
+ 阶段 A 收尾 · 裁定 (d)：docker compose start 恢复本机栈
+ UTC=2026-11-09T05:58:13Z  HEAD=3b5a89c59eab3257650e5412db9be27ee6d70bad
+ 说明：start 只启动已存在容器对象、不 recreate，应仍引用旧镜像 ID
+==================================================================
+
+----- [1] 恢复前（冻结现场复核）-----
+  运行容器数=0
+tianji-api | Exited (0) 34 minutes ago | 48597185433b
+tianji-web | Exited (0) 34 minutes ago | cd07b100dcc2
+tianji-postgres | Exited (0) 34 minutes ago | postgres:16-alpine
+tianji-redis | Exited (0) 34 minutes ago | redis:7-alpine
+tianji-elasticsearch | Exited (143) 34 minutes ago | 8db52fbcb63f
+
+----- [2] 执行 docker compose -f docker-compose.yml start -----
+ Container tianji-redis Starting 
+ Container tianji-elasticsearch Starting 
+ Container tianji-postgres Starting 
+ Container tianji-redis Started 
+ Container tianji-elasticsearch Started 
+ Container tianji-postgres Started 
+api is missing dependency seaweedfs
+  START_EXIT=1
+
+----- [3] 等待 healthy（最多 ~75s，每 3s 检查一次）-----
+  check#1 healthy_count=0
+  check#2 healthy_count=0
+  check#3 healthy_count=2
+  check#4 healthy_count=3
+  check#5 healthy_count=3
+  check#6 healthy_count=3
+  check#7 healthy_count=3
+  check#8 healthy_count=3
+  check#9 healthy_count=3
+  check#10 healthy_count=3
+  check#11 healthy_count=3
+  check#12 healthy_count=3
+  check#13 healthy_count=3
+  check#14 healthy_count=3
+  check#15 healthy_count=3
+  check#16 healthy_count=3
+  check#17 healthy_count=3
+  check#18 healthy_count=3
+  check#19 healthy_count=3
+  check#20 healthy_count=3
+  check#21 healthy_count=3

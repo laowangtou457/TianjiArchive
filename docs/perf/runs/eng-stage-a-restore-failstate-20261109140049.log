@@ -1,0 +1,93 @@
+==================================================================
+ 裁定 (d) 恢复异常现场（只读采集，不重建、不改配置）
+ UTC=2026-11-09T06:00:50Z  HEAD=3b5a89c59eab3257650e5412db9be27ee6d70bad
+==================================================================
+
+----- [1] 当前全部容器状态（含 health）-----
+tianji-api | Exited (0) 40 minutes ago | 48597185433b
+tianji-web | Exited (0) 40 minutes ago | cd07b100dcc2
+tianji-postgres | Up 2 minutes (healthy) | postgres:16-alpine
+tianji-redis | Up 2 minutes (healthy) | redis:7-alpine
+tianji-elasticsearch | Up 2 minutes (healthy) | 8db52fbcb63f
+  运行容器数=3
+
+----- [2] compose ps（含未创建的服务）-----
+tianji-api | api | Exited (0) 40 minutes ago
+tianji-elasticsearch | elasticsearch | Up 2 minutes (healthy)
+tianji-postgres | postgres | Up 2 minutes (healthy)
+tianji-redis | redis | Up 2 minutes (healthy)
+tianji-web | web | Exited (0) 40 minutes ago
+
+----- [3] compose 依赖声明（解释 start 失败根因）-----
+3:# 服务：web(nginx) / api / extractor / postgres / elasticsearch(IK) / seaweedfs(S3) / redis / backup sidecar
+10:#   服务端 S3 操作走内部 MINIO_ENDPOINT=seaweedfs:8333。封闭环境把 S3_PUBLIC_ENDPOINT
+15:#   自动建桶由 infra/seaweedfs/s3.json.tpl 的桶级 identity 收权（3.79 无 autoCreateBucket flag）。
+34:  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-seaweedfs}
+130:  # image-only：chrislusf/seaweedfs:3.79 已实拉 digest sha256:21425305…；封闭环境不 build、不联网。
+138:  seaweedfs:
+139:    image: chrislusf/seaweedfs:3.79
+140:    container_name: tianji-seaweedfs
+152:      - ./volumes/seaweedfs:/data
+153:      - ./infra/seaweedfs/entrypoint.sh:/scripts/entrypoint.sh:ro
+154:      - ./infra/seaweedfs/s3.json.tpl:/scripts/s3.json.tpl:ro
+202:    depends_on:
+204:        condition: service_healthy
+206:        condition: service_healthy
+207:      seaweedfs:
+208:        condition: service_healthy
+210:        condition: service_healthy
+253:    depends_on:
+255:        condition: service_healthy
+257:        condition: service_healthy
+258:      seaweedfs:
+259:        condition: service_healthy
+261:        condition: service_healthy
+267:        condition: service_healthy
+289:    depends_on:
+291:        condition: service_started
+312:    depends_on:
+314:        condition: service_healthy
+315:      seaweedfs:
+316:        condition: service_healthy
+321:        condition: service_healthy
+324:      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-seaweedfs}
+331:      AWS_ENDPOINT_URL: http://${MINIO_ENDPOINT:-seaweedfs}:${MINIO_PORT:-8333}
+351:  seaweedfs_data:
+
+----- [4] seaweedfs 容器对象是否存在（含 stopped）-----
+  seaweedfs 容器数=0
+
+----- [5] /api/health 可达性（api 未启动时预期失败）-----
+  HTTP_CODE=502
+  BODY=upstream connect failed: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+
+----- [6] volumes/ 数据可读性（不影响，数据在）-----
+  READABLE volumes/postgres
+  READABLE volumes/esdata
+  READABLE volumes/redis
+  READABLE volumes/minio
+  READABLE volumes/backup
+  READABLE volumes/wal_archive
+  PG 容器内 PGDATA:
+    EXISTS entries=24
+
+----- [7] 冻结项与禁止项恪守 -----
+  BUILD-INFO: GIT_HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b RECORD_COMPLETE=no 
+  offline/volumes/=ABSENT  .env=ABSENT
+  本轮未做: build / --record / --check / 导出 tar / 起 offline 栈 / 改任何文件 / nginx.conf
+
+----- [8] 凭据扫描（团队纪律，日志入库前留 LEAK_FOUND=0）-----
+  [CLEAN]   docs/perf/runs/eng-stage-a-restore-20261109135813.log
+  [CLEAN]   docs/perf/runs/eng-stage-a-restore-failstate-20261109140049.log
+  [CLEAN]   docs/perf/runs/eng-stage-a-restore-failstate-20261109140049.log
+  LEAK_FOUND=0
+
+----- [9] git 状态（HEAD 已前进到 3b5a89c，team-lead 期间有新推送）-----
+?? docs/perf/runs/eng-stage-a-restore-20261109135813.log
+?? docs/perf/runs/eng-stage-a-restore-failstate-20261109140049.log
+  HEAD=3b5a89c
+
+==================================================================
+ FAILSTATE_DONE（不自行重建、不改任何配置，等 team-lead 裁定）
+ LOG=docs/perf/runs/eng-stage-a-restore-failstate-20261109140049.log
+==================================================================
