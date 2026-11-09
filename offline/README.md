@@ -26,7 +26,10 @@
 - **改完必须重建容器**：`docker compose -f docker-compose.offline.yml up -d`；`restart` 不重读 `.env`。
 - **两处 CORS 不要混为一谈**：
   - **API 层 `CORS_ORIGINS`**：origin 白名单，解决以 `http://<局域网IP>:8080` 访问时 `/api` 跨域；默认值仅 `http://localhost:5173` 与 `http://localhost:8080`，需要时追加现场 origin。
-  - **S3 层 `Access-Control-Expose-Headers: ETag`**：SeaweedFS 预签名分片直传，浏览器必须读到 ETag 才能完成分片合并。**配了前者不解决后者**；后者由 SeaweedFS 侧配置承接，是本次交付的头号验证项，结论以 QA 阶段二独立复核为准。缺该项的典型表现是「分片 PUT 成功、completeMultipart 失败」，排障时勿误归因到 SigV4 签名或对象存储兼容性（见 §七）。
+  - **S3 层 `Access-Control-Expose-Headers`**：SeaweedFS 预签名分片直传，浏览器必须读到 ETag 才能完成分片合并。**配了前者不解决后者**。
+    **2026-11-09 实测更正**：3.79 内置全局 CORS middleware，**零配置**即返回 `Access-Control-Expose-Headers: *`（**`*` 通配覆盖 `ETag`，不是 `ETag` 字面值**）、`Allow-Origin: *`、`Allow-Credentials: true`，且 PUT / UploadPart 返回 `ETag`；`PutBucketCors` 实测 501、`s3.json` 加 cors 段被忽略、无任何 exposeHeaders flag。**不需要、也不允许做 CORS 配置改造**，更不要把响应头改成字面 `ETag`（3.79 配不出来）。
+    但 CORS 头是**条件性的**：不带 `Origin` 就不返回。故「浏览器直连宿主 8333、不经反代」是 CORS 生效的**前提** —— 若把 8333 收敛到与 Web 同域，浏览器不带 Origin，ETag 读不到。前端须保持 `axios.put` 默认 `withCredentials=false`；`Expose-Headers: *` 只在 credentials mode = omit 时作为通配生效。
+    仍需**交付栈证据**：用真实预签名 partUrl 打一次 PUT，断言 `HTTP 200 + ETag + Expose-Headers: *`，结论以 QA 阶段二独立复核为准。缺 `Origin` 的典型表现是「分片 PUT 成功、completeMultipart 失败」，排障时勿误归因到 SigV4 或对象存储兼容性（见 §七）。
 
 ### 0.2 凭据：demo 阶段用默认值，正式启用前必须全部轮换
 
@@ -231,7 +234,7 @@ R-2 裁定：**seaweedfs 只发布 8333**，master / filer / volume 均不占宿
 | `demo:books` 抽取超时 | `docker compose logs extractor`；确认 extractor 容器健康、Redis 可达、S3 可读 |
 | 备份记录 `minio_status=FAILED` | `docker compose logs backup` 与 `/backup/backup.log`；确认桶已建、aws-cli 可用 |
 | 检索命中数不足 | 确认 ES 索引 `archive_items` 已建且 IK 插件可用；重跑 `demo:books` |
-| 分片 PUT 成功、但 `completeMultipart` 失败 | 先查 S3 层 `Access-Control-Expose-Headers: ETag` 是否生效（浏览器读不到 ETag 就无法汇总分片），用原生 OPTIONS + 真实 PUT 看响应头原值；**勿误判为 SigV4 签名或对象存储兼容性问题**，也不要据此改签名逻辑 |
+| 分片 PUT 成功、但 `completeMultipart` 失败 | 浏览器读不到 ETag 就无法汇总分片。3.79 零配置即返回 `Access-Control-Expose-Headers: *`，故**优先查三件事**：①请求是否带了 `Origin`（不带则无任何 CORS 头）；②8333 是否被反代收敛到与 Web 同域（同域浏览器不带 Origin）；③是否设了 `withCredentials=true` / `credentials: include`（此时 `*` 被当字面量）。用原生 OPTIONS + 真实 PUT 看响应头原值；**勿误判为 SigV4 签名或对象存储兼容性问题**，也不要据此改签名逻辑或去配 CORS |
 
 ---
 
@@ -242,4 +245,5 @@ R-2 裁定：**seaweedfs 只发布 8333**，master / filer / volume 均不占宿
 - `docs/ARCHITECTURE-SEAWEEDFS.md`（架构师）与 `docs/DEMO-ACCEPTANCE.md`（PM）为配套验收文档；
 - 主仓 `docs/DEPLOY.md` / `DELIVERY-CHECKLIST.md` / `DEV-PROCESS.md` / `QA-REPORT.md` 由主理人/QA 后续同步，本包不改。
 - **凭据轮换责任人与时间窗尚未指定到具体岗位 / 人**（见 §0.2）；未落实不得转入正式启用。本项不阻塞封闭试用。
-- S3 层 `Access-Control-Expose-Headers: ETag` 由 SeaweedFS 侧配置承接，与 API 层 `CORS_ORIGINS` 是两回事（见 §0.1）；其结论以 QA 阶段二独立复核为准，`s3:probe` 全绿不等同于该项已验证。
+- S3 层 CORS 与 API 层 `CORS_ORIGINS` 是两回事（见 §0.1）：3.79 内置且**零配置**返回 `Allow-Origin: *` / `Allow-Credentials: true` / `Expose-Headers: *`（`*` 通配覆盖 `ETag`）；其结论以 QA 阶段二独立复核为准，`s3:probe` 全绿不等同于该项已验证。
+- **`Allow-Origin: *` 与 `Expose-Headers: *` 在 3.79 上无法收紧**（flag 无效、`PutBucketCors` 501、`s3.json` cors 段被忽略），会向浏览器暴露 `X-Amz-Request-Id`、`Server` 等全部响应头。样品 demo 封闭内网阶段接受并如实登记；正式启用前若单位要求收紧到具体 origin 或精确暴露头，只有三条替代路径：①前置反代改写响应头（与「浏览器直连 8333」冲突，且同域后无 Origin 连 `*` 也会消失）；②服务端 `listParts` / HEAD 回传 part ETag（改契约、每分片多一次往返）；③分片改走 API 代理（2GB 全量过 API，性能不可接受）。**三条代价都高，本轮不启用，须重新裁定架构**。

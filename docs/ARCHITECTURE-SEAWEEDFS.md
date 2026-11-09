@@ -46,7 +46,7 @@ flowchart LR
         PG[(postgres)] ; ES[(elasticsearch+IK)] ; RD[(redis)]
     end
     W -->|/api| NG --> API
-    W -->|预签名 PUT/GET 直连宿主 8333<br/>已裁定：不经反代，需 CORS 暴露 ETag| SW
+    W -->|预签名 PUT/GET 直连宿主 8333<br/>已裁定：不经反代（CORS 生效前提）；3.79 零配置即暴露 ETag| SW
     API -->|publicClient 仅签发预签名 URL| SW
     API & EX & BK -->|内部 seaweedfs:8333 其余全部 S3 操作| SW
     SW -->|内部 9333/8080/8888| SW
@@ -74,7 +74,14 @@ flowchart LR
 
 - **【假设·高风险｜已由实测项承接】** 预签名 URL 的 host 由 SDK `endPoint` 决定（`apps/api/src/infra/storage/storage.module.ts:35`、配置 `configuration.ts:108`），当前值为容器 DNS `minio`。浏览器直传（`apps/web/src/components/FileUploader.tsx:104,114`）要求该 host 对浏览器可达。若继续使用容器名，浏览器无法解析；若改用宿主 IP/域名，又与 SigV4 签名校验相关（S3 API FAQ §S3 authentication fails when using reverse proxy 要求 `X-Forwarded-Host/Proto/Port`，S3 Configuration 支持 `-s3.externalUrl`）。**这条链路是本方案最高优先实测项**，且属于既有的 MinIO 部署也存在的问题，不是 SeaweedFS 独有。→ **该假设不再作为未决项**：主理人已裁定双端点方案（下条），由工程师自验承接（见 R-1～R-10）。
 - **【已裁定｜双端点】** 主理人正式裁定：新增 `S3_PUBLIC_ENDPOINT` / `S3_PUBLIC_PORT` / `S3_PUBLIC_USE_SSL` 三个配置；`MinioService` 使用**独立 `publicClient`** 且**仅**用于生成预签名 URL（`presignedUrl` / `presignedGetObject`，`storage.module.ts:102-121,263-281`），其余所有 S3 操作（bucketExists/makeBucket/putObject/getObject/statObject/multipart 合并/删除/列举等）继续走内部 `seaweedfs:8333`；浏览器**直连宿主 8333**、**不经 nginx 反代**。效果：把 SigV4 签名 host 与容器内部 DNS 解耦，从结构上绕开反代转发头导致 `SignatureDoesNotMatch` 的整类问题（S3 API FAQ §S3 authentication fails when using reverse proxy）；`/api` 仍走 nginx（`apps/web/nginx.conf:34-49`），两条路径互不干扰。
-  - **【事实·仍需实测】** 双端点不消除跨域问题：浏览器对 8333 的 PUT/GET 仍需 CORS，且分片合并依赖 `ExposeHeaders: ["ETag"]`（§4 #9，S3-CORS §Set CORS Configuration）；`S3_PUBLIC_*` 的取值须为封闭环境内浏览器可达的宿主机名/IP，且须与 SigV4 实际请求的 Host 一致。
+  - **【原假设 → 已实测更正，2026-11-09｜保留更正过程】** 原文写「双端点不消除跨域问题：浏览器对 8333 的 PUT/GET 仍需 CORS，且分片合并依赖 `ExposeHeaders: ["ETag"]`（§4 #9，S3-CORS §Set CORS Configuration）；`S3_PUBLIC_*` 取值须为封闭环境内浏览器可达的宿主机名/IP，且须与 SigV4 实际请求的 Host 一致」，据此一度把 CORS 列为**头号阻断项**并要求工程师配置 `PutBucketCors` / 单列 `ExposeHeaders: ETag`。架构师以 6 组容器内闭环实测（`chrislusf/seaweedfs:3.79`，镜像 `21425305e04b`，`weed version 30GB 3.79 228946369`；镜像无 curl/openssl，改用 busybox `nc` 构造原始 HTTP；上一轮宿主 curl 的 `Empty reply` 已定位为 Docker Desktop 代理的宿主网络层问题、非 S3 未就绪）更正如下：
+    - **【实测证实】** 3.79 S3 网关内置**全局 CORS middleware**：请求带 `Origin` 时响应无条件带 `Access-Control-Allow-Origin: *`、`Access-Control-Allow-Credentials: true`、`Access-Control-Expose-Headers: *`（**`*` 通配覆盖 `ETag`，不是 `ETag` 字面值**）；CreateBucket 200 → CreateMultipartUpload 200 → `PUT ?partNumber=1&uploadId=...` → 200 + `ETag`；OPTIONS 预检 200 + 全套头；**鉴权开启下无签名 OPTIONS 仍 200、403 错误响应也带全套头**（middleware 在鉴权之外包裹所有响应）。
+    - **【实测证实·方案假设被证伪】** `PUT /{bucket}?cors`（合法 CORSConfiguration XML 含 `<ExposeHeader>ETag</ExposeHeader>`）→ **501 NotImplemented**；`GET /{bucket}?cors` → 404 `NoSuchCORSConfiguration`；`s3.json` 静态写 `cors.allowed_origins` / `expose_headers` → 被忽略、响应头不变；`weed server -h`（14 个 `-s3.*` flag）与 `weed s3 -h` **均无** `exposeHeaders` / `allowedHeaders` / `cors.*` / `autoCreateBucket`；`-s3.allowedOrigins` 取具体值、非匹配 Origin、与 `-filer.allowedOrigins` 双置空三种情形响应头恒为 `*`。二进制 strings 中 `PutBucketCorsHandler` / `CORSConfiguration` / `ExposeHeaders` 符号只是 501 占位 —— **符号存在 ≠ 服务端能力**，据此推断「可用 bucket CORS 精确配置」作废。
+    - **【实测证实】** CORS 头是**条件性的**：不带 `Origin` 的请求不返回任何 CORS 响应头。
+    - **结论与唯一落法（零配置）**：CORS **不需要任何配置改造**；禁止 `PutBucketCors`、禁止 s3.json cors 段、禁止 nginx `add_header`，更不得为凑响应头把 `*` 改写成 `ETag`（3.79 配不出来）。「浏览器直连宿主 8333、不经反代」由架构选择升级为 **CORS 生效的前提** —— 若把 8333 收敛到与 Web 同域，浏览器不带 `Origin`，CORS 头消失、`ETag` 读不到。前端须保持 `axios.put` 默认 `withCredentials=false`（显式 `credentials: include` 会让 `Allow-Origin: *` + `Allow-Credentials: true` 被浏览器拒绝，且 `Expose-Headers: *` 被当字面量）；`FileUploader.tsx:108` 的 `res.headers.etag` 无需改动。
+    - **仍需交付栈证据**：架构师实测是独立容器的「能力证据」，不是本系统证据。工程师须在交付栈用真实预签名 partUrl 打一次 PUT，留 `HTTP 200 + ETag + Expose-Headers: * + Allow-Origin: *` 响应头原值日志；该项同时补上【不确定】「带合法 SigV4 签名的预签名 PUT 在鉴权开启下的 200 响应」（镜像无 openssl 未直接实测，强证据链为「403 也带全套头 + 匿名 UploadPart 带 ETag」），并纳入 QA 阶段二 C08 现场验收。两类证据分开留、不合并。
+    - **【主理人裁定·已知边界】** `Allow-Origin: *` / `Expose-Headers: *` 在 3.79 **无法收紧**，会向浏览器暴露 `X-Amz-Request-Id`、`Server` 等全部响应头。样品 demo 封闭内网阶段接受并如实登记；正式启用前若单位要求收紧，只有三条替代路径：①前置反代改写响应头（与直连冲突，且同域后无 Origin 连 `*` 也消失）；②服务端 `listParts` / HEAD 回传 part ETag（改契约、每分片多一次往返）；③分片走 API 代理（2GB 全量过 API，性能不可接受）。三条代价都高且与直连裁定冲突，**本轮不启用，须重新裁定架构**。
+    - **【判据缺陷已发现】** QA 阶段一 `C08` 原按 `/(^|,)\s*etag\s*(,|$)/i` 字面断言暴露头，遇到 `*` 会**必然假红**并误归因为 `INCOMPATIBLE`；已要求 QA 改为接受 `*` 或显式 `etag`，并附 `credentials=omit` 静态守卫。验收验的是「浏览器能否读到 ETag」这一**效果**，不是响应头字面值。
   - **【建议】** `publicClient` 与内部 client 共用同一 `accessKey/secretKey/region/pathStyle`（`storage.module.ts:37-42`），只覆盖 `endPoint/port/useSSL`，避免两份凭据配置漂移。
 - **【事实】** `/api/health` 通过 `MinioService.ping()`（→ `bucketExists`）检查对象存储（`apps/api/src/modules/health/health.module.ts:42-44`），字段名仍为 `minio`；方案 A 下该检查会落到 HeadBucket，需确认展示名是否改名（属工程师改造范围）。
 
@@ -202,7 +209,7 @@ docker run --rm --entrypoint sh chrislusf/seaweedfs:3.79 -c "sed -n '30,90p' /en
 ### 3.5 与四性检测 SHA-256 的关系【事实】
 
 - 完整性基线是**服务端对完整对象重算 SHA-256**：`storage.module.ts:176-190`（`getObject` 流逐块哈希）、`file.service.ts:214-227`（与客户端 `dto.sha256` 比对，不一致即删脏对象并抛 `FILE_HASH_MISMATCH`）、落库字段 `electronic-file.entity.ts:12,37`（`idx_file_sha`）、迁移工具同口径 `apps/cli-migrator/src/migrator.ts:137-158`。
-- 对象存储只提供字节流与元数据；**ETag 不是完整性基线**。SeaweedFS 3.79 的 ETag 语义（是否 MD5、multipart 合并后形式）在现有证据中未给出【假设】，必须实测；但无论结果如何，校验逻辑不应改为信任 ETag。
+- 对象存储只提供字节流与元数据；**ETag 不是完整性基线**。【原假设 → 部分实测更正】原文写「SeaweedFS 3.79 的 ETag 语义（是否 MD5、multipart 合并后形式）在现有证据中未给出【假设】，必须实测」。架构师以 4 组独立样本（hello / abc / world / xyz）实测：**单对象 PUT 与 UploadPart 的 ETag = 请求体内容 MD5【实测证实】**；**multipart 合并后的 ETag 形式仍未实测**（本轮未执行 CompleteMultipartUpload），保留为待实测子项（§7 第 2 条）。但无论结果如何，**校验逻辑不应改为信任 ETag** —— 该结论不受影响，原句保留。
 - `statObject` 只用于大小/存在性（`storage.module.ts:193-209`，`file.service.ts:209-212`），与四性中的真实性/可用性/安全性接口无关。
 
 ---
@@ -228,7 +235,7 @@ docker run --rm --entrypoint sh chrislusf/seaweedfs:3.79 -c "sed -n '30,90p' /en
 | 13 | `listObjectsV2` `storage.module.ts:307-327` | ListObjectsV2 | Yes（E8） | wiki 注明"不允许 `/` 之外的 delimiter"、"同一路径不能同时是文件和文件夹" | 备份清理与 prefix 列表用例 | ✔ |
 | 14 | 桶生命周期（原 `mc ilm`，`docker-compose.yml:152`） | PutBucketLifecycleConfiguration | Yes，Transition 不支持（E8） | `mc` 不可用（E1/E2）；Expiration 执行周期未知【假设】 | 设 `tmp/` 1 天规则 → `GetBucketLifecycleConfiguration` 回读 → 时间加速/等待验证 | ✔ |
 
-**统一验证脚本的最小用例集【建议】**（新增，不影响现有单测）：①四桶存在性与鉴权；②小文件 PUT/GET/HEAD + 自定义 meta；③整对象预签名 PUT；④分片预签名 PUT（≥3 片）+ ETag 回读 + 合并 + SHA-256 比对；⑤`listParts`/abort；⑥预签名 GET + Range；⑦CORS preflight + `Access-Control-Expose-Headers: ETag`；⑧2GB / 5MB 分片（410 片）边界；⑨`statObject` 大小与 `computeSha256` 一致；⑩错误凭据 403。
+**统一验证脚本的最小用例集【建议】**（新增，不影响现有单测）：①四桶存在性与鉴权；②小文件 PUT/GET/HEAD + 自定义 meta；③整对象预签名 PUT；④分片预签名 PUT（≥3 片）+ ETag 回读 + 合并 + SHA-256 比对；⑤`listParts`/abort；⑥预签名 GET + Range；⑦CORS preflight + 响应头 `Access-Control-Expose-Headers: *`（3.79 实测值、零配置、须带 Origin；架构侧容器内已实测通过，QA 现场仍须用真实预签名 URL 复验，验的是「浏览器能否读到 ETag」效果而非字面值）；⑧2GB / 5MB 分片（410 片）边界；⑨`statObject` 大小与 `computeSha256` 一致；⑩错误凭据 403。
 > **【事实】** 现有 `storage.minio-contract.spec.ts:4-8` 明确"不发起网络请求"，只能验证 SDK 方法存在，不能替代上述任何一条。
 
 ---
@@ -320,8 +327,8 @@ flowchart LR
 
 ## 7. 待明确事项（不阻塞 demo，但须在正式上线前闭环）
 
-1. **【假设待验证】** `chrislusf/seaweedfs:3.79` 上 `-s3.config` / `-s3.autoCreateBucket` / `-s3.allowedOrigins` / `-master.volumeSizeLimitMB` 等 flag 的确切名称与可用性（wiki 版本可能新于 3.79）。
-2. **【部分已裁定】** 预签名 URL host 已由主理人裁定为双端点方案（`S3_PUBLIC_*` + 独立 `publicClient`，浏览器直连宿主 8333 不经反代，§1.2），由工程师自验承接；**仍待实测**的是 CORS `ExposeHeaders: ETag` 在 3.79 是否生效与分片 ETag 格式（§4 #9）。
+1. **【部分已实测更正】** flag 名称与可用性：`weed server -h` 实测有 `-s3.allowedOrigins`（默认 `*`）、`-s3.config`、`-s3.port` 等 14 个 `-s3.*`；`weed s3 -h` 有 `-allowedOrigins`；**均无** `exposeHeaders` / `allowedHeaders` / `cors.*` / `autoCreateBucket`。工程师交叉验证一致，并据此改用 `s3.json` 桶级授权关闭自动建桶（不授全局 Admin，否则放行任意桶自动建桶）；`-master.volumeSizeLimitMB=1024` 由镜像内置 `/entrypoint.sh` 的 `server` 分支自带（E11），工程师改造后改为委派该分支以继承调优参数。**剩余待实测**：`-master.volumePreallocate` 实际占用语义与 `-volume.max=0`（第 8 条）。
+2. **【已实测结案 → 拆条】** 原文「仍待实测 CORS `ExposeHeaders: ETag` 在 3.79 是否生效与分片 ETag 格式」：CORS 一项已由架构师 6 组容器内实测结案（3.79 零配置返回 `*` 通配，详见 §1.2 更正段），**不再列为待明确**；仅保留两项证据缺口：①交付栈用真实预签名 partUrl 打一次 PUT 断言 `HTTP 200 + ETag + Expose-Headers: *`（覆盖【不确定】「带合法 SigV4 签名的预签名 PUT 在鉴权开启下的 200 响应」），已纳入 QA 阶段二 C08；②**multipart 合并后的 ETag 形式**仍未实测，但完整性校验不依赖 ETag（§4 结论不变）。
 3. **【待决策】** 备份 sidecar 用何种离线 S3 客户端替换 `mc`（镜像内烤入 / 改用 `weed` 命令 / 用 API 侧 `BackupService`）；`backup.sh:34-36,65-80` 与 `backup.service.ts:304` 的恢复说明需同步。
 4. **【待决策】** 建桶责任单点归属（init sidecar vs 应用 `ensureBuckets`）与 `autoCreateBucket=false` 的取舍（§3.2）。
 5. **【待确认】** 8 项高敏参数的单位确认值、demo 凭据轮换责任人与时间窗（§6.1）。
