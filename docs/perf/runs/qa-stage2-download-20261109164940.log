@@ -1,0 +1,69 @@
+=== QA 阶段二：下载/预览业务放行链路实测（stagec1 · D-1 合规：不制造授权） ===
+2026-11-09T08:49:41Z  HEAD=5a0fbc2
+[0] LOGIN=OK username=stagec1
+--- [1] GET /api/files/080c5bd0-9de6-4d5e-865a-b8d9709c0947 元数据（sha256 基线） ---
+filename=档案管理学基础.pdf mime=application/pdf size=821 sha256=86ce8fc05ad820896a2e5bb69a978490fe8d4625d2920da31753ed145b7adaf7 extractStatus=OK
+--- [2] GET /api/files/080c5bd0-9de6-4d5e-865a-b8d9709c0947/preview（业务放行 presignGet 链路） ---
+code=0 kind=PDF watermarked=true expiresIn=900
+PREVIEW_URL_HOST=127.0.0.1:8333
+node:fs:2430
+    return binding.writeFileUtf8(
+                   ^
+
+Error: ENOENT: no such file or directory, open 'E:\tmp\qa-preview-url.txt'
+    at Object.writeFileSync (node:fs:2430:20)
+    at Object.wrappedWriteFileSync [as writeFileSync] (F:\Software\WorkBuddy\resources\app.asar.unpacked\cli\vendor\shim\node-brokered-fs-shim.cjs:664:20)
+    at Socket.<anonymous> ([eval]:1:261)
+    at Socket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\tmp\\qa-preview-url.txt'
+}
+
+Node.js v22.22.2
+cat: /tmp/qa-preview-url.txt: No such file or directory
+curl: option : blank argument where content is expected
+curl: try 'curl --help' for more information
+--- [3] GET /api/files/080c5bd0-9de6-4d5e-865a-b8d9709c0947/download（approval 模式 + ops 无 DOWNLOAD → 预期 fail-closed 拒绝） ---
+DOWNLOAD_HTTP=403
+node:fs:440
+    return binding.readFileUtf8(path, stringToFlags(options.flag));
+                   ^
+
+Error: ENOENT: no such file or directory, open 'E:\tmp\qa-dl-resp.json'
+    at Object.readFileSync (node:fs:440:20)
+    at Object.wrappedReadFileSync [as readFileSync] (F:\Software\WorkBuddy\resources\app.asar.unpacked\cli\vendor\shim\node-brokered-fs-shim.cjs:629:12)
+    at [eval]:1:34
+    at runScriptInThisContext (node:internal/vm:209:10)
+    at node:internal/process/execution:446:12
+    at [eval]-wrapper:6:24
+    at runScriptInContext (node:internal/process/execution:444:60)
+    at evalFunction (node:internal/process/execution:279:30)
+    at evalTypeScript (node:internal/process/execution:291:3)
+    at node:internal/main/eval_string:74:3 {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\tmp\\qa-dl-resp.json'
+}
+
+Node.js v22.22.2
+--- [4] 授权载体核验（profile grants.FILE.ops） ---
+grants.FILE.ops=["READ","WRITE","DELETE"] hasDownload=false
+--- [5] 强制留痕核验（audit_log 最新记录） ---
+
+DOWNLOAD ELECTRONIC_FILE 080c5bd0 DENIED
+PREVIEW ELECTRONIC_FILE 080c5bd0 SUCCESS
+SEARCH FILE 080c5bd0 SUCCESS
+
+=== 实测结束 ===
+=== 补测（Git Bash 路径修正）：真实取回预览内容 + 拒绝响应体 ===
+PREVIEW_URL_HOST=127.0.0.1:8333
+PREVIEW_GET HTTP=200 SIZE=821
+PREVIEW_DL_SHA256=86ce8fc05ad820896a2e5bb69a978490fe8d4625d2920da31753ed145b7adaf7  (watermarked=true，预览版非原件，完整性以 wire 层 C18 原件比对为准)
+resp.code=4007 resp.message=当前下载模式为「审批后下载」，请先提交下载申请并等待审批通过
+DOWNLOAD_HTTP=403
+=== 补测结束 ===

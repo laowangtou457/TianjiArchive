@@ -1,0 +1,25 @@
+=== QA 阶段二 C4：CORS 响应头独立复核（API 签发真实预签名 URL · 带 Origin · 对照 lead-stage-c4 原值） ===
+2026-11-09T08:51:18Z  HEAD=5a0fbc2
+ITEM_ID=0de90ac4-93be-4cc3-b644-566a6e03b51e
+LOGIN=OK
+PRESIGN_SOURCE=POST /api/files/presign (API 进程 NestJS 签发)
+PRESIGN_HOST=127.0.0.1:8333
+--- [1] OPTIONS 预检（带 Origin）对照 lead-stage-c4 原值 ---
+HTTP/1.1 200 OK
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Headers: *
+Access-Control-Allow-Methods: *
+Access-Control-Allow-Origin: *
+Access-Control-Expose-Headers: *
+X-Amz-Request-Id: 1794214283787441629
+--- [2] 带签名真实 PUT（带 Origin + Content-Type 与签发一致） ---
+HTTP/1.1 200 OK
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+Access-Control-Expose-Headers: *
+ETag: "8832b96b8c876b38cc76ce643f6a97df"
+Server: SeaweedFS 30GB 3.79
+X-Amz-Request-Id: 1794214284318613227
+--- [3] 负向对照：不带 Origin 的 PUT（预期无任何 CORS 头，归因三查①基线） ---
+CORS_HEADERS_COUNT_WITHOUT_ORIGIN=0
+=== C4 复核结束 ===
