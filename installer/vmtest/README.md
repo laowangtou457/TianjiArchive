@@ -202,6 +202,17 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
 
 ### 7.2 步骤
 
+> **先做日志隔离：用一份 vmtest 副本跑验收，基线 `logs/` 一个字节都不碰。**
+> `logs/` 里的 `kylin-install.log` / `kylin-boot.log` 是「两版 OS 六项实测」的唯一凭证，
+> **不可再生**；验收会重写同名文件，所以不能在同一份目录里跑。
+> ```bash
+> mkdir -p E:/tmp-vm/e2e/installer
+> cp -r installer/vmtest E:/tmp-vm/e2e/installer/        # 副本自带独立 logs/
+> export TIANJI_VM_DIR=E:/tmp-vm/e2e-vm                  # 验收用的独立虚拟盘目录
+> # 下面所有 `installer/vmtest/...` 一律换成 `E:/tmp-vm/e2e/installer/vmtest/...`
+> ```
+> （`run-vm.sh` 用脚本自身的 `../..` 定位仓库根，所以副本必须放在 `<副本根>/installer/vmtest/` 这个形状下。）
+
 ```bash
 # 1) 装 OS。--attach-ro 只在 boot 模式生效（装盘阶段挂第三块盘会被 clearpart 波及）
 bash installer/vmtest/run-vm.sh --os kylin --fresh --disk 60G --mem 8192 --smp 4
@@ -229,12 +240,19 @@ curl -fSL --retry 3 -C - -o /root/server-setup.run \
 sha256sum /root/server-setup.run        # 与构建机产物核对
 ```
 
-tar 路径怎么给安装器：
+tar 路径怎么给安装器 —— **标准动作是 `dd` 落成普通文件，不是直接给设备节点**：
 
-- **优先直接把设备节点当 tar 路径**（`--images-tar /dev/vdb`）：tar 是流式格式，`tar -tf /dev/vdb`
-  能读，不需要文件系统。
-- 若安装器只接受普通文件，就落成文件再传路径：
-  `dd if=/dev/vdb of=/root/images.tar bs=4M status=progress`（1.5GB，60G 盘放得下）。
+```bash
+dd if=/dev/vdb of=/root/images.tar bs=4M status=progress   # 1.5GB，一分钟级，60G 盘放得下
+sha256sum /root/images.tar                                  # 与构建机 tar 核对（可选）
+# 然后安装器交互里确认 tar 路径时填 /root/images.tar
+```
+
+为什么不用 `/dev/vdb` 直给：**现场用户手里拿到的是普通文件**（从分发介质拷来的 tar），
+产品只承诺「接受一个可读的普通文件路径」。`/dev/vdb` 是测试环境（只读 virtio 盘）的产物，
+为它给产品加「接受块设备」的行为，是让测试需求污染产品语义。
+（`tar -tf /dev/vdb` 技术上能读，但我们不用这条路径做验收。）
+
 - **不要 `mount -o loop`**：tar 不是文件系统，loop 挂载会失败。
 
 ### 7.3 通过判据（三层 + 一条留痕）
@@ -256,6 +274,28 @@ tar 路径怎么给安装器：
 
 ### 7.5 看哪里判断「卡住还是正常慢」
 
-`installer/vmtest/logs/<os>-boot-stages.log`。`.run` 走 slirp（150MB，估 4-8s）、
-`docker load` 1.5GB tar（30-60s 级）、ES 起来（20-40s）都是正常的长阶段；
-以阶段日志里的 start/end 为准，不要用「几分钟没输出」当失败。
+副本目录里的 `logs/<os>-boot-stages.log`（归档时改名 `kylin-e2e-boot-stages.log`）。
+`.run` 走 slirp（150MB，估 4-8s）、`docker load` 1.5GB tar（30-60s 级）、
+ES 起来（20-40s）都是正常的长阶段；以阶段日志里的 start/end 为准，
+不要用「几分钟没输出」当失败。
+
+### 7.6 证据归档：基线证据与验收证据分开
+
+在副本目录跑完后，把产物**改名**再拷回仓库，两类文件从此互不覆盖：
+
+| 类别 | 文件 | 说明 |
+|---|---|---|
+| 基线实测证据（不可再生） | `kylin-install.log` / `kylin-boot.log` / `*-probe.txt` / `*-dockerd.txt` | 六项基线的唯一凭证，**永不重跑覆盖** |
+| 端到端验收证据（每次新增） | `kylin-e2e-install.log` / `kylin-e2e-boot.log` / `kylin-e2e-boot-stages.log`（统信同理 `uos-e2e-*`） | 每次验收一组，按日期在 commit message 里注明 |
+
+```bash
+# 验收跑完，从副本目录取产物并改名
+for f in install boot boot-stages; do
+  src="E:/tmp-vm/e2e/installer/vmtest/logs/kylin-$f.log"
+  [ -f "$src" ] && cp "$src" "installer/vmtest/logs/kylin-e2e-$f.log"
+done
+git add -f installer/vmtest/logs/kylin-e2e-*.log   # *.log 被 .gitignore 排除，必须 -f
+```
+
+`logs/README.md` 里对这两类文件分别标注「基线实测证据」与「端到端验收证据」；
+`*-stages.log` 只记时间戳，**不是结论证据**，引用耗时数据时要同时给出串口日志的对应段落。
