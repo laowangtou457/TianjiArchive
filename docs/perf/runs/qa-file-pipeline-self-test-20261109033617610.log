@@ -1,0 +1,33 @@
+QA-FILE-PIPELINE-VERIFY | suite=core | tag=self-test | runId=20261109033617-13c507
+plan=docs/QA-FILE-PIPELINE-PLAN.md | log=docs/perf/runs/qa-file-pipeline-self-test-20261109033617610.log
+internal=127.0.0.1:8333 | public=(未设置):8333 | origin=http://localhost:8080
+buckets=archive-original,archive-preview,archive-thumb,archive-backup | checks=20 | timeoutMs=8000
+DISCIPLINE: contract spec 全绿不作 wire 证据；脚本存在 ≠ 验证通过；self-test 全绿 ≠ 服务兼容
+D-4 分层: 技术层=S3 presignGet 下载 wire 链路（C18）；业务层=下载放行链路未验证（approval 授权写入未实现，L2 上线前闭环）；禁止合并写成「下载已验证」
+{"type":"selftest","name":"全 PASS → YES","result":"PASS","extra":""}
+{"type":"selftest","name":"注入 FAIL → NO","result":"PASS","extra":""}
+{"type":"selftest","name":"注入 NOT_RUN → NO","result":"PASS","extra":""}
+{"type":"selftest","name":"注入 BLOCKED → NO","result":"PASS","extra":""}
+{"type":"selftest","name":"注入 ERROR/TOOL_ERROR → NO","result":"PASS","extra":""}
+{"type":"selftest","name":"空清单 → NO（反假绿元断言）","result":"PASS","extra":"空清单不得判通过"}
+{"type":"selftest","name":"归因优先级 SERVICE_DOWN > INCOMPATIBLE","result":"PASS","extra":""}
+{"type":"selftest","name":"三类归因可分辨","result":"PASS","extra":""}
+{"type":"selftest","name":"incomplete 列表逐条列出","result":"PASS","extra":""}
+{"type":"selftest","name":"SigV4 Authorization 结构","result":"PASS","extra":"AWS4-HMAC-SHA256 Credential=AKEXAMPLE/20260101/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=9c3732c38de2bccd2e41e04e9f199fd5467139f9ecb942f0c91cd03f9b2d6001"}
+{"type":"selftest","name":"SigV4 结果确定性（同输入同签名）","result":"PASS","extra":""}
+{"type":"selftest","name":"SigV4 含 x-amz-content-sha256 与 x-amz-date","result":"PASS","extra":""}
+{"type":"selftest","name":"SigV4 canonical query 含 lifecycle=","result":"PASS","extra":""}
+{"type":"selftest","name":"core 清单 20 项","result":"PASS","extra":"实际 20"}
+{"type":"selftest","name":"full 清单 21 项","result":"PASS","extra":"实际 21"}
+{"type":"selftest","name":"重点八项 + D-4 均有对应检查点","result":"PASS","extra":""}
+{"type":"selftest","name":"D-4 技术层不经业务鉴权（无 file.service / PermissionSnapshot import，且 C18 带 WIRE_ONLY 边界声明）","result":"PASS","extra":""}
+{"type":"selftest","name":"exposesEtag: '*' 通配 → PASS","result":"PASS","extra":""}
+{"type":"selftest","name":"exposesEtag: 显式 ETag / 列表含 etag → PASS","result":"PASS","extra":""}
+{"type":"selftest","name":"exposesEtag: 无关头 x-custom → FAIL","result":"PASS","extra":""}
+{"type":"selftest","name":"exposesEtag: 空 / undefined / null → FAIL","result":"PASS","extra":""}
+{"type":"selftest","name":"C08 '*' 前提守卫：干净源码放行 / include 命中 / 目录缺失 / 缺 FileUploader 均 fail-closed","result":"PASS","extra":""}
+{"type":"selftest","name":"C08 'credentials=omit' 守卫生效（三处定向核对 CLEAN + 注入三处 HIT 均 fail-closed）","result":"PASS","extra":"clean=[globalDefaults:CLEAN,axiosCreateConfig:CLEAN,fileUploaderPut:CLEAN]"}
+{"type":"selftest","name":"C08 '*' 前提守卫声明存在（CREDENTIALS_OMIT_REQUIRED，且 C08 两处均调用 exposesEtag 纯函数）","result":"PASS","extra":""}
+{"type":"selftest","name":"日志目录真实可写（flushLog 落盘链路）","result":"PASS","extra":"docs/perf/runs/qa-file-pipeline-self-test-20261109033617610.log"}
+SELFTEST: PASS (25/25)
+NOTE: self-test 只证明判据引擎与日志链路不假绿，不产生任何验收结论（方案 §0 纪律 2）

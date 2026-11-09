@@ -162,6 +162,131 @@ function computeVerdict(checks) {
   };
 }
 
+// ---------------------------------------------------------------- C08 效果判据（纯函数 + 静态守卫）
+
+/**
+ * C08 判据：`Access-Control-Expose-Headers` 是否让「浏览器能读到 ETag」这一**效果**成立。
+ * 两种合法形态（2026-11-09 架构师对 SeaweedFS 3.79 的 6 组容器内只读实测，镜像 21425305e04b）：
+ *   1) '*'         —— 3.79 内置全局 CORS middleware 零配置返回通配；按 CORS 规范，
+ *                      credentials mode=omit 时 '*' 通配所有响应头（含 ETag）；
+ *                      显式 credentials:include 时 '*' 被当作字面量，不暴露 ETag（见 C08_WILDCARD_PREMISE）。
+ *   2) 显式 ETag   —— 逗号分隔列表中含 etag 字面项（大小写不敏感），任何 credentials mode 下都有效。
+ * 3.79 无法配置成单列 ETag（PutBucketCors 501 / s3.json cors 段被忽略 / 无 exposeHeaders flag），
+ * 故原实现只认字面量 etag 会**必然假红**，把正确实现误判为 INCOMPATIBLE。现改为效果判据。
+ * 纯函数；--self-test 直接调用本函数（与 computeVerdict 同源，不另写一套），覆盖四形态。
+ */
+function exposesEtag(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return s === '*' || /(^|,)\s*etag\s*(,|$)/i.test(s);
+}
+
+// 声明式边界（复用 §2.5 D4_SCOPE=WIRE_ONLY 那套静态断言机制）：'*' 通配不得默认成立。
+const C08_WILDCARD_PREMISE = 'C08_WILDCARD_PREMISE=CREDENTIALS_OMIT_REQUIRED'
+  + '（\'*\' 通配仅在 credentials mode=omit 时成立；显式 credentials:include 时 \'*\' 被当字面量；静态源码核对不替代前端运行时配置验证）';
+
+/** 纯函数：返回命中的 credentials 反例模式（带标签，便于定向核对可追溯）。self-test 直接调用做零 I/O 变异验证。 */
+const C08_CREDENTIALS_PATTERNS = [
+  { label: 'globalDefaults', re: /axios\.defaults\.withCredentials\s*=\s*true/i },
+  { label: 'withCredentialsTrue', re: /\bwithCredentials\s*:\s*true/i },
+  { label: 'credentialsInclude', re: /\bcredentials\s*:\s*['"`]include['"`]/i },
+];
+function credentialsPatternsHit(src) {
+  return C08_CREDENTIALS_PATTERNS.filter((p) => p.re.test(String(src || '')));
+}
+
+/** 轻量括号配对：提取 `axios.create(` / `axios.put(` 的调用参数文本；找不到返回 null。 */
+function callArgsText(src, expr) {
+  const i = src.indexOf(expr);
+  if (i < 0) return null;
+  const open = src.indexOf('(', i + expr.length);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let j = open; j < src.length; j += 1) {
+    if (src[j] === '(') depth += 1;
+    else if (src[j] === ')') { depth -= 1; if (depth === 0) return src.slice(open + 1, j); }
+  }
+  return null;
+}
+
+/**
+ * '*' 通配前提的静态源码守卫（主理人 2026-11-09 硬约束）：
+ *   [兜底] 全目录扫描 axios.defaults.withCredentials=true / withCredentials:true / credentials:'include'；
+ *   [定向] 三处可追溯核对 —— ① globalDefaults（axios.defaults 全局赋值）
+ *          ② axiosCreateConfig（axios.create({...}) 配置对象，全局 defaults 的另一来源）
+ *          ③ fileUploaderPut（FileUploader.tsx:104-108 的 axios.put(...) 参数块）。
+ * 三态 CLEAN / HIT / N/A；找不到 create/put 记 N/A 而非 fail（前端可合法改用 fetch，兜底扫描仍覆盖）。
+ * fail-closed：目录不可读 / 文件读不到 / FileUploader.tsx 缺失 / 任一处 HIT，一律 pass=false。
+ * 边界：静态断言只证明「源码里没写」，不等价于运行时未设；C08 detail 仍声明
+ *       「未独立验证前端运行时配置」并列入阶段二报告未验证项，**绝不默认成立**。
+ * audit 保留结构化详情供 self-test 断言与阶段二复核；note 保持精简，避免被 emit 的 600 字截断。
+ */
+function credentialsOmitGuard(rootDir) {
+  const root = rootDir || path.join(REPO_ROOT, 'apps', 'web', 'src');
+  const files = [];
+  const walk = (d) => {
+    let ents;
+    try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return false; }
+    for (const e of ents) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) { if (!walk(p)) return false; }
+      else if (/\.(ts|tsx|js|jsx)$/.test(e.name)) files.push(p);
+    }
+    return true;
+  };
+  const fail = (note) => ({ pass: false, scanned: files.length, hits: [], audit: null, note });
+  const readable = fs.existsSync(root) && walk(root);
+  if (!readable || files.length === 0) return fail(`前端源码不可读或无 .ts/.tsx 文件：${root}（fail-closed，不默认成立）`);
+  const uploader = files.find((f) => /FileUploader\.tsx$/i.test(f));
+  if (!uploader) return fail('FileUploader.tsx 未扫到，无法确认其 axios.put 未设 withCredentials（fail-closed）');
+
+  const hits = [];
+  const srcByFile = new Map();
+  for (const f of files) {
+    let src;
+    try { src = fs.readFileSync(f, 'utf8'); }
+    catch { return fail(`读取失败：${f}（fail-closed，不默认成立）`); }
+    srcByFile.set(f, src);
+    for (const p of credentialsPatternsHit(src)) hits.push(`${path.relative(root, f)} ~ [${p.label}] ${p.re.source}`);
+  }
+
+  // 定向核对三处：从「全目录隐式覆盖」升级为「可追溯定点证据」
+  const audit = {
+    globalDefaults: { status: 'CLEAN', evidence: `全目录 ${files.length} 文件未见 axios.defaults.withCredentials=true` },
+    axiosCreateConfig: { status: 'N/A', evidence: '未发现 axios.create( 调用' },
+    fileUploaderPut: { status: 'N/A', evidence: '未发现 axios.put( 调用（可合法改用 fetch，兜底扫描仍覆盖）' },
+  };
+  const globalDefHits = hits.filter((h) => h.includes('[globalDefaults]'));
+  if (globalDefHits.length) audit.globalDefaults = { status: 'HIT', evidence: globalDefHits.join(' | ') };
+  for (const [f, src] of srcByFile) {
+    const args = callArgsText(src, 'axios.create');
+    if (args === null) continue;
+    const hit = credentialsPatternsHit(args);
+    audit.axiosCreateConfig = hit.length
+      ? { status: 'HIT', evidence: `${path.relative(root, f)} axios.create({...}) 命中 ${hit.map((p) => p.label).join(',')}` }
+      : { status: 'CLEAN', evidence: `${path.relative(root, f)} axios.create({...}) 配置块未见 withCredentials:true / credentials:include` };
+  }
+  const putArgs = callArgsText(srcByFile.get(uploader) || '', 'axios.put');
+  if (putArgs !== null) {
+    const hit = credentialsPatternsHit(putArgs);
+    audit.fileUploaderPut = hit.length
+      ? { status: 'HIT', evidence: `FileUploader.tsx axios.put(...) 参数块命中 ${hit.map((p) => p.label).join(',')}` }
+      : { status: 'CLEAN', evidence: 'FileUploader.tsx:104-108 axios.put(...) 参数块未见 withCredentials:true / credentials:include' };
+  }
+
+  const auditHits = Object.entries(audit).filter(([, v]) => v.status === 'HIT');
+  const pass = hits.length === 0 && auditHits.length === 0;
+  const brief = Object.entries(audit).map(([k, v]) => `${k}=${v.status}`).join('/');
+  return {
+    pass,
+    scanned: files.length,
+    hits,
+    audit,
+    note: pass
+      ? `已扫 ${files.length} 个前端源码文件（含 FileUploader.tsx）；定向核对 ${brief}`
+      : `命中 credentials 写法（'*' 前提被证伪）：${(hits.length ? hits : auditHits.map(([k, v]) => `${k}=${v.evidence}`)).join(' | ')}`,
+  };
+}
+
 function classifyFailure(err, resp, group) {
   const code = err && err.code;
   const msg = String((err && err.message) || '');
@@ -195,7 +320,7 @@ const CHECK_DEFS = [
   { id: 'C05', group: 'wire', wire: '§4 #6', title: '整对象预签名 PUT（host 浏览器可达 + SigV4 + 过期 403）' },
   { id: 'C06', group: 'wire', wire: '§4 #7/#6', title: 'CreateMultipartUpload + ≥3 片预签名 PUT + ETag 回读' },
   { id: 'C07', group: 'wire', wire: '§4 #9', title: 'CompleteMultipartUpload + 合并后 SHA-256 比对 + 错 ETag 负向对照' },
-  { id: 'C08', group: 'wire', wire: '§4 #9', title: 'CORS preflight + Access-Control-Expose-Headers: ETag' },
+  { id: 'C08', group: 'wire', wire: '§4 #9', title: 'CORS preflight + 浏览器可读 ETag（效果判据：Expose-Headers 为 * 或显式 ETag）' },
   { id: 'C09', group: 'wire', wire: '§4 #8', title: 'listParts 返回结构 {part,etag,size} 升序且数量匹配' },
   { id: 'C10', group: 'wire', wire: '§4 #10', title: 'AbortMultipartUpload（2 片后 abort → GET 404）' },
   { id: 'C11', group: 'wire', wire: '§4 #11', title: 'RemoveObject（删除后不存在）' },
@@ -633,7 +758,9 @@ const IMPL = {
   },
 
   C08: async () => {
-    // 重点④：preflight + 实际 PUT 响应的 Access-Control-Expose-Headers: ETag
+    // 重点④：preflight + 实际 PUT 响应，验「浏览器能否读到 ETag」这一**效果**，不验响应头字面值。
+    // 3.79 零配置返回 Access-Control-Expose-Headers: *（通配），显式单列 ETag 反而做不到；
+    // 旧版只认字面量 etag 会必然假红，把正确实现误判成 INCOMPATIBLE（详见 exposesEtag 注释）。
     const target = `${publicBase}/${BUCKETS[0]}/${CTX.mergedKey || CTX.smallKey}`;
     const pre = await rawRequest('OPTIONS', target, {
       headers: {
@@ -647,24 +774,62 @@ const IMPL = {
     const allowMethods = String(h['access-control-allow-methods'] || '');
     const allowHeaders = String(h['access-control-allow-headers'] || '');
     const expose = String(h['access-control-expose-headers'] || '');
+    // 实际分片 PUT 响应也应暴露（若服务端只在实际响应给头）
+    const actualExpose = CTX.partResponses.map((r) => String(r.headers['access-control-expose-headers'] || ''));
     const originOk = allowOrigin === '*' || allowOrigin.includes(CFG.origin);
     const methodsOk = /PUT/i.test(allowMethods);
     const headersOk = /content-type/i.test(allowHeaders);
-    const exposeOk = /(^|,)\s*etag\s*(,|$)/i.test(expose);
-    // 实际分片 PUT 响应也应暴露（若服务端只在实际响应给头）
-    const actualExpose = CTX.partResponses.map((r) => String(r.headers['access-control-expose-headers'] || ''));
-    const actualOk = actualExpose.length > 0 && actualExpose.every((v) => /(^|,)\s*etag\s*(,|$)/i.test(v));
+    const exposeOk = exposesEtag(expose);
+    const actualOk = actualExpose.length > 0 && actualExpose.every(exposesEtag);
+    const exposeLegal = exposeOk || actualOk;
+
+    // 归因纪律（主理人 2026-11-09 裁定）：CORS 头是**条件性**的，不带 Origin 时 3.79 不返回任何
+    // CORS 头。若四头全空，先按三查排查请求/环境，不得直接判「SeaweedFS 与 SigV4 不兼容」。
+    // ① 请求是否带 Origin ② 是否被反代收敛到与 Web 同域（同域浏览器不带 Origin）
+    // ③ 是否设 withCredentials=true / credentials:include（Allow-Origin:* + Allow-Credentials:true 会被浏览器拒）。
+    const anyCorsHeader = [allowOrigin, allowMethods, allowHeaders, expose]
+      .concat(actualExpose).some((v) => String(v).length > 0);
+
+    // '*' 通配成立前提：credentials mode=omit。静态源码守卫不默认成立；
+    // detail 始终显式写出前提与「运行时前端配置未独立验证」，列入阶段二报告未验证项。
+    const wildcardUsed = exposeLegal
+      && [expose].concat(actualExpose).some((v) => exposesEtag(v) && String(v).includes('*'));
+    const guard = wildcardUsed ? credentialsOmitGuard() : null;
+    let premiseText;
+    if (!anyCorsHeader) premiseText = '响应无任何 CORS 头，通配/显式前提均不适用（归因三查）';
+    else if (!exposeLegal) premiseText = '暴露头既非 * 也非显式 ETag，前提不适用';
+    else if (wildcardUsed) {
+      premiseText = `${C08_WILDCARD_PREMISE}；静态源码守卫=${guard.pass ? 'PASS' : 'FAIL'}(${guard.note})；`
+        + '本脚本未独立验证前端运行时配置，列入阶段二报告未验证项';
+    } else premiseText = '暴露头为显式 ETag（无通配前提）';
+
     const problems = [];
     if (!originOk) problems.push(`allow-origin=${allowOrigin || '(缺失)'}`);
     if (!methodsOk) problems.push(`allow-methods=${allowMethods || '(缺失)'}`);
     if (!headersOk) problems.push(`allow-headers=${allowHeaders || '(缺失)'}`);
-    if (!exposeOk && !actualOk) problems.push(`expose-headers=${expose || '(缺失)'}；实际PUT响应=${JSON.stringify(actualExpose)}`);
-    const ok = originOk && methodsOk && headersOk && (exposeOk || actualOk);
+    if (!exposeLegal) problems.push(`expose-headers=${expose || '(缺失)'}；实际PUT响应=${JSON.stringify(actualExpose)}`);
+
+    // fail-closed：'*' 前提守卫不过 → 不判 PASS，也不判 INCOMPATIBLE（不是 SeaweedFS 不兼容，
+    // 是「没验成」：前端 credentials 配置与通配前提冲突或源码不可读，需整改后重跑）。
+    let cause = null;
+    let ok = originOk && methodsOk && headersOk && exposeLegal;
+    if (!anyCorsHeader) {
+      ok = false;
+      cause = 'TOOL_ERROR';
+      problems.push('响应无任何 CORS 头：按归因三查先核 Origin / 同域反代 / credentials，不判 INCOMPATIBLE');
+    } else if (guard && !guard.pass) {
+      ok = false;
+      cause = 'CONFIG_MISSING';
+      problems.push(`'*' 通配前提未成立：${guard.note}`);
+    } else if (!ok) {
+      // 带了 Origin、非同域前提成立、且 CORS middleware 已响应，仍未返回合法暴露头 → 才是兼容结论
+      cause = 'INCOMPATIBLE';
+    }
     return {
-      ok, cause: ok ? null : 'INCOMPATIBLE',
+      ok, cause,
       detail: ok
-        ? `preflight=${pre.statusCode}；origin/methods/headers/expose-headers 四头齐全（浏览器可读 ETag）`
-        : `CORS 未暴露 ETag：${problems.join('；')}（架构 §1.2:77 / §4 #9 / §7 第 2 条）`,
+        ? `preflight=${pre.statusCode}；origin/methods/headers/expose-headers 四头齐全（浏览器可读 ETag，效果判据）；${premiseText}`
+        : `CORS 未让浏览器读到 ETag：${problems.join('；')}；${premiseText}`,
     };
   },
 
@@ -966,6 +1131,96 @@ function doSelfTest() {
   chk('D-4 技术层不经业务鉴权（无 file.service / PermissionSnapshot import，且 C18 带 WIRE_ONLY 边界声明）',
     !/require\(['"][^'"]*file\.service|\bfrom\s+['"][^'"]*file\.service|import\s+[^;]*PermissionSnapshot/.test(selfSrc)
     && /D4_SCOPE=WIRE_ONLY/.test(selfSrc));
+
+  // ---- C08 效果判据：四形态变异（3.79 零配置返回 '*'，字面量断言会必然假红，必须守住）----
+  chk("exposesEtag: '*' 通配 → PASS", exposesEtag('*') === true);
+  chk("exposesEtag: 显式 ETag / 列表含 etag → PASS",
+    exposesEtag('ETag') === true && exposesEtag('Content-Length, ETag') === true);
+  chk("exposesEtag: 无关头 x-custom → FAIL", exposesEtag('x-custom') === false);
+  chk('exposesEtag: 空 / undefined / null → FAIL',
+    exposesEtag('') === false && exposesEtag(undefined) === false && exposesEtag(null) === false);
+  // '*' 前提守卫：既验纯函数命中，也直接调用被测函数 credentialsOmitGuard 做三态变异。
+  // 用 os.tmpdir 临时目录，不依赖真实工作区前端源码是否存在（干净克隆/离线包亦不假红）。
+  let guardVariantsOk = false;
+  let guardTmp = '';
+  try {
+    const os = require('node:os');
+    guardTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-c08-guard-'));
+    fs.writeFileSync(path.join(guardTmp, 'FileUploader.tsx'), 'await axios.put(url, blob);\n', 'utf8');
+    const clean = credentialsOmitGuard(guardTmp);
+    fs.writeFileSync(path.join(guardTmp, 'bad.ts'), 'axios.defaults.withCredentials = true;\n', 'utf8');
+    const dirty = credentialsOmitGuard(guardTmp);
+    const missingDir = credentialsOmitGuard(path.join(guardTmp, '__no_such_dir__'));
+    const noUploader = (() => {
+      const d = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-c08-noup-'));
+      try {
+        fs.writeFileSync(path.join(d, 'a.ts'), 'export const a = 1;\n', 'utf8');
+        return credentialsOmitGuard(d);
+      } finally { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* noop */ } }
+    })();
+    guardVariantsOk = clean.pass === true && dirty.pass === false
+      && missingDir.pass === false && noUploader.pass === false;
+  } catch { guardVariantsOk = false; }
+  finally {
+    try { if (guardTmp) fs.rmSync(guardTmp, { recursive: true, force: true }); } catch { /* noop */ }
+  }
+  chk("C08 '*' 前提守卫：干净源码放行 / include 命中 / 目录缺失 / 缺 FileUploader 均 fail-closed",
+    credentialsPatternsHit('await axios.put(url, blob);').length === 0
+    && credentialsPatternsHit('axios.defaults.withCredentials = true;').length === 1
+    && credentialsPatternsHit("fetch(u, { credentials: 'include' });").length === 1
+    && credentialsPatternsHit('axios.put(u, b, { withCredentials: true });').length === 1
+    && guardVariantsOk,
+    guardVariantsOk ? '' : 'credentialsOmitGuard 三态变异未全通过');
+  // 'credentials=omit' 守卫生效（主理人第 5 点）：定向核对三处 audit + 注入 HIT 后 fail-closed。
+  // 用临时目录构造「axios.create 全局配置 + FileUploader.tsx 的 axios.put 调用」，零依赖真实工作区。
+  let omitGuardOk = false;
+  let omitDetail = '';
+  let omitTmp = '';
+  try {
+    const os = require('node:os');
+    omitTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-c08-omit-'));
+    const clientF = path.join(omitTmp, 'client.ts');
+    const uploaderF = path.join(omitTmp, 'FileUploader.tsx');
+    const cleanClient = "const http = axios.create({ baseURL: '/api', timeout: 60000, headers: { 'Content-Type': 'application/json' } });\n";
+    const cleanUploader = "const res = await axios.put(url, blob, { headers: { 'Content-Type': 'application/octet-stream' }, timeout: 0 });\n";
+    fs.writeFileSync(clientF, cleanClient, 'utf8');
+    fs.writeFileSync(uploaderF, cleanUploader, 'utf8');
+    const clean = credentialsOmitGuard(omitTmp);
+    // 三处定向核对在干净源码下应全 CLEAN，守卫放行
+    const cleanOk = clean.pass === true && clean.audit
+      && clean.audit.globalDefaults.status === 'CLEAN'
+      && clean.audit.axiosCreateConfig.status === 'CLEAN'
+      && clean.audit.fileUploaderPut.status === 'CLEAN';
+    // 注入①：axios.create 配置块含 withCredentials:true → 该处 HIT 且整体 fail-closed
+    fs.writeFileSync(clientF, "const http = axios.create({ withCredentials: true, baseURL: '/api' });\n", 'utf8');
+    const createHit = credentialsOmitGuard(omitTmp);
+    // 注入②：FileUploader axios.put 参数块含 withCredentials:true → 该处 HIT 且整体 fail-closed
+    fs.writeFileSync(clientF, cleanClient, 'utf8');
+    fs.writeFileSync(uploaderF, "await axios.put(url, blob, { withCredentials: true, timeout: 0 });\n", 'utf8');
+    const putHit = credentialsOmitGuard(omitTmp);
+    // 注入③：全局 defaults 赋值 → globalDefaults HIT 且整体 fail-closed
+    fs.writeFileSync(uploaderF, cleanUploader, 'utf8');
+    fs.writeFileSync(path.join(omitTmp, 'entry.ts'), 'axios.defaults.withCredentials = true;\n', 'utf8');
+    const defaultsHit = credentialsOmitGuard(omitTmp);
+    const hitOk = createHit.pass === false && createHit.audit.axiosCreateConfig.status === 'HIT'
+      && putHit.pass === false && putHit.audit.fileUploaderPut.status === 'HIT'
+      && defaultsHit.pass === false && defaultsHit.audit.globalDefaults.status === 'HIT';
+    omitGuardOk = cleanOk && hitOk;
+    omitDetail = clean.audit
+      ? `clean=[${Object.entries(clean.audit).map(([k, v]) => k + ':' + v.status).join(',')}]`
+      : 'clean.audit 缺失';
+  } catch (e) { omitDetail = String((e && e.message) || e); omitGuardOk = false; }
+  finally {
+    try { if (omitTmp) fs.rmSync(omitTmp, { recursive: true, force: true }); } catch { /* noop */ }
+  }
+  chk("C08 'credentials=omit' 守卫生效（三处定向核对 CLEAN + 注入三处 HIT 均 fail-closed）",
+    omitGuardOk, omitDetail);
+  // 声明式边界守卫（复用 D4_SCOPE=WIRE_ONLY 机制）：'*' 前提不得被静默删掉、C08 不得回退成字面量断言
+  chk("C08 '*' 前提守卫声明存在（CREDENTIALS_OMIT_REQUIRED，且 C08 两处均调用 exposesEtag 纯函数）",
+    /C08_WILDCARD_PREMISE=CREDENTIALS_OMIT_REQUIRED/.test(selfSrc)
+    && /function exposesEtag\(v\)/.test(selfSrc)
+    && /const exposeOk = exposesEtag\(expose\);/.test(selfSrc)
+    && /actualExpose\.every\(exposesEtag\)/.test(selfSrc));
 
   // 最后一条：日志落盘链路必须真实可用。self-test 早期版本曾漏调 flushLog，
   // 出现「判据 16/16 全绿但日志根本没写盘」的假绿；本用例真实写盘，专防该形态。
