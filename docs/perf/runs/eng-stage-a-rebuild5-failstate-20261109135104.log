@@ -1,0 +1,55 @@
+==================================================================
+ 阶段 A · Dockerfile 鲁棒性改动后全量重建：失败现场（已按裁定立即停）
+ UTC=2026-11-09T05:51:05Z  HEAD=19d9db4973f13a88fdd0f186b76dd36c9ffc4c22
+==================================================================
+
+----- [1] 本轮失败点与前 3 轮的本质差异 -----
+  前 3 轮：apt-get install 阶段，327 个 .deb 中随机 1~7 个 502（坏包集合 7->7->1）
+  本  轮：apt-get update 阶段，InRelease 元数据文件 502（见下行）
+329:#77 5.122 Err:1 http://deb.debian.org/debian bookworm InRelease
+336:#77 7.722 E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease  502  Bad Gateway [IP: 146.75.46.132 80]
+337:#77 7.722 E: The repository 'http://deb.debian.org/debian bookworm InRelease' is not signed.
+341:5.122 Err:1 http://deb.debian.org/debian bookworm InRelease
+348:7.722 E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease  502  Bad Gateway [IP: 146.75.46.132 80]
+349:7.722 E: The repository 'http://deb.debian.org/debian bookworm InRelease' is not signed.
+
+  判定：Acquire::Retries=5 / --fix-missing 只加在 install 行，未覆盖 update 行；
+        本轮 502 打在 update 的 InRelease，重试参数未作用于该失败点 ⇒ 未生效。
+        裁定批准范围严格限定「只改 apt-get install 行」，把参数扩到 update 行属扩大范围，
+        且裁定 5 明确「加了重试仍 502 → 立即停、不再加码」⇒ 未改、未重试。
+
+----- [2] 重建后 5 镜像 ID（本轮 4 个非 extractor 全部重新导出）-----
+  tianji-archive-api:1.0.0                   sha256:a4094431b782512fcace310de00e8f15c84af3c7990f3c657ed6436a35d101da
+  tianji-archive-web:1.0.0                   sha256:309a6e2c8e7d576f6ae3818e8b2cb51da5939092d95f2c7c24e2bd6caced9238
+  tianji-archive-extractor:1.0.0             
+ABSENT
+  tianji-archive-backup:1.0.0                sha256:6c32e7bb948a25afe09f444720b4171ee85d47d7b0f65c06cacdb295c859a7d1
+  tianji-elasticsearch-ik:8.13.4             sha256:d9605e3f516ad9c67a9f456ba85f738483c0ee0941c079b6a567036bfb2485e8
+  注：4 个非 extractor 镜像 ID 本轮又变化（buildx 每次 export 重新生成 attestation
+      manifest list，created 时间戳仍为旧层 05:21 但 ID 不同）⇒ 更说明 BUILD-INFO
+      的镜像 ID 锚定必须在【最后一次 build 之后】--record。
+
+----- [3] 现场保全（未动整栈、未 --record/--check、未起 B/C、未回滚）-----
+  运行容器数=0
+tianji-api | Exited (0) 31 minutes ago | 48597185433b
+tianji-web | Exited (0) 31 minutes ago | cd07b100dcc2
+tianji-postgres | Exited (0) 31 minutes ago | postgres:16-alpine
+tianji-redis | Exited (0) 31 minutes ago | redis:7-alpine
+tianji-elasticsearch | Exited (143) 31 minutes ago | 8db52fbcb63f
+  volumes/=PRESERVED  offline/volumes/=ABSENT  .env=ABSENT
+  BUILD-INFO 仍为旧值: GIT_HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b RECORD_COMPLETE=no 
+
+----- [4] 凭据扫描（团队纪律：日志入库前必须留 LEAK_FOUND=0）-----
+  [CLEAN]   docs/perf/runs/eng-stage-a-rebuild5-20261109134910.log
+  [CLEAN]   docs/perf/runs/eng-stage-a-rebuild5-failstate-20261109135104.log
+  LEAK_FOUND=0
+
+----- [5] git 状态（Dockerfile 已独立提交 19d9db4，仅新增证据日志）-----
+?? docs/perf/runs/eng-stage-a-rebuild5-20261109134910.log
+?? docs/perf/runs/eng-stage-a-rebuild5-failstate-20261109135104.log
+  HEAD=19d9db4  STATUS_LINES=2
+
+==================================================================
+ FAILSTATE_DONE（未改任何代码/配置/Dockerfile，不再加码、不再换源）
+ LOG=docs/perf/runs/eng-stage-a-rebuild5-failstate-20261109135104.log
+==================================================================
