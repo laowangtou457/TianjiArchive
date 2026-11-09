@@ -1,0 +1,82 @@
+=== stage-B force-recreate all 8 (2026-11-09T15:11:06+08:00) ===
+ Container tianji-postgres Recreate 
+ Container tianji-redis Recreate 
+ Container tianji-seaweedfs Recreate 
+ Container tianji-elasticsearch Recreate 
+ Container tianji-redis Recreated 
+ Container tianji-postgres Recreated 
+ Container tianji-elasticsearch Recreated 
+ Container tianji-seaweedfs Recreated 
+ Container tianji-api Recreate 
+ Container tianji-api Recreated 
+ Container tianji-backup Recreate 
+ Container tianji-web Recreate 
+ Container tianji-extractor Recreate 
+ Container tianji-web Recreated 
+ Container tianji-extractor Recreated 
+ Container tianji-backup Recreated 
+ Container tianji-elasticsearch Starting 
+ Container tianji-redis Starting 
+ Container tianji-postgres Starting 
+ Container tianji-seaweedfs Starting 
+ Container tianji-elasticsearch Started 
+ Container tianji-redis Started 
+ Container tianji-postgres Started 
+ Container tianji-seaweedfs Started 
+ Container tianji-seaweedfs Waiting 
+ Container tianji-redis Waiting 
+ Container tianji-postgres Waiting 
+ Container tianji-elasticsearch Waiting 
+ Container tianji-redis Healthy 
+ Container tianji-postgres Healthy 
+ Container tianji-elasticsearch Healthy 
+ Container tianji-seaweedfs Healthy 
+ Container tianji-api Starting 
+ Container tianji-api Started 
+ Container tianji-web Starting 
+ Container tianji-postgres Waiting 
+ Container tianji-seaweedfs Waiting 
+ Container tianji-postgres Waiting 
+ Container tianji-api Waiting 
+ Container tianji-elasticsearch Waiting 
+ Container tianji-seaweedfs Waiting 
+ Container tianji-redis Waiting 
+ Container tianji-api Waiting 
+ Container tianji-web Started 
+ Container tianji-seaweedfs Healthy 
+ Container tianji-redis Healthy 
+ Container tianji-postgres Healthy 
+ Container tianji-elasticsearch Healthy 
+ Container tianji-postgres Healthy 
+ Container tianji-seaweedfs Healthy 
+ Container tianji-api Healthy 
+ Container tianji-api Healthy 
+ Container tianji-backup Starting 
+ Container tianji-extractor Starting 
+ Container tianji-backup Started 
+ Container tianji-extractor Started 
+ Container tianji-extractor Waiting 
+ Container tianji-web Waiting 
+ Container tianji-elasticsearch Waiting 
+ Container tianji-api Waiting 
+ Container tianji-postgres Waiting 
+ Container tianji-redis Waiting 
+ Container tianji-seaweedfs Waiting 
+ Container tianji-backup Waiting 
+ Container tianji-seaweedfs Healthy 
+ Container tianji-redis Healthy 
+ Container tianji-api Healthy 
+ Container tianji-elasticsearch Healthy 
+ Container tianji-extractor Healthy 
+ Container tianji-postgres Healthy 
+ Container tianji-backup Healthy 
+ Container tianji-web Healthy 
+UP_EXIT=0
+tianji-api Up 23 seconds (healthy)
+tianji-backup Up 18 seconds
+tianji-elasticsearch Up 46 seconds (healthy)
+tianji-extractor Up 18 seconds
+tianji-postgres Up 45 seconds (healthy)
+tianji-redis Up 45 seconds (healthy)
+tianji-seaweedfs Up 45 seconds (healthy)
+tianji-web Up 23 seconds (healthy)

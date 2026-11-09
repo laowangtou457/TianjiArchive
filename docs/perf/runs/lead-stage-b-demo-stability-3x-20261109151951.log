@@ -1,0 +1,16 @@
+=== demo:books stability 3x with fulltext-aggregate fix (2026-11-09T15:19:51+08:00) ===
+--- run 1 ---
+EXTRACTED_OK=12
+DOCUMENT_TEXT_ROWS=7
+SEARCH_HITS=6
+IS_PASS: YES —— 上传挂接 / 全文抽取 / 综合检索 / 预览下载 / sha256 完整性全链路通过
+--- run 2 ---
+EXTRACTED_OK=12
+DOCUMENT_TEXT_ROWS=6
+SEARCH_HITS=6
+IS_PASS: YES —— 上传挂接 / 全文抽取 / 综合检索 / 预览下载 / sha256 完整性全链路通过
+--- run 3 ---
+EXTRACTED_OK=12
+DOCUMENT_TEXT_ROWS=9
+SEARCH_HITS=6
+IS_PASS: YES —— 上传挂接 / 全文抽取 / 综合检索 / 预览下载 / sha256 完整性全链路通过

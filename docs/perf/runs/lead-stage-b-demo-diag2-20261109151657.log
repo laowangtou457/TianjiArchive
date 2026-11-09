@@ -1,0 +1,37 @@
+=== demo diag2: extractor logs + fulltext probe (2026-11-09T15:16:58+08:00) ===
+  全文抽取完成：12/12 个文件，document_text 12 条
+✖ demo 链路失败：综合检索命中不足：hits=5，期望至少 6；未命中的条目=c24df52e-dcd7-413e-aa67-2d639589c053
+DEMO_EXIT=0
+--- extractor logs (recent) ---
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ObjectFetcher] [39m[95m已写入 archive-thumb/e4512af7-10d7-490b-817c-6069d0e00e6c/efa5e79e-475b-48ee-bb4d-8697f3190a53.png（5691 字节）[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 档案管理学基础.pdf：状态=OK，字符数=0，耗时=165ms[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 62[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m处理抽取任务 69：海量小文件存储优化.txt（text/plain; charset=utf-8）[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 电子文件四性检测实践.pdf：状态=OK，字符数=150，耗时=83ms[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 DA/T 22 归档文件整理规则释义.pdf：状态=OK，字符数=150，耗时=184ms[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 66[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m处理抽取任务 70：海量小文件存储优化.pdf（application/pdf）[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 64[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m处理抽取任务 71：档案信息检索与知识服务.txt（text/plain; charset=utf-8）[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 数字档案馆建设导论.pdf：状态=OK，字符数=150，耗时=57ms[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 68[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m处理抽取任务 72：档案信息检索与知识服务.pdf（application/pdf）[39m
+[33m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [33m   WARN[39m [38;5;3m[PdfConverter] [39m[33mPDF 文本层抽取失败（将仅保留原文件预览）：bad XRef entry[39m
+[33m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [33m   WARN[39m [38;5;3m[PdfConverter] [39m[33mPDF 文本层抽取失败（将仅保留原文件预览）：bad XRef entry[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 海量小文件存储优化.txt：状态=OK，字符数=173，耗时=31ms[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 69[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 档案信息检索与知识服务.txt：状态=OK，字符数=175，耗时=19ms[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 71[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ObjectFetcher] [39m[95m已写入 archive-thumb/70ea0881-d556-4fca-96a8-bb63d2358fa9/e1c183bd-ed39-4a68-bb22-83310da0853f.png（5716 字节）[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 海量小文件存储优化.pdf：状态=OK，字符数=0，耗时=25ms[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 70[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ObjectFetcher] [39m[95m已写入 archive-thumb/735e4897-4726-4565-9e21-623337342b12/ea5d9985-9505-41fd-bbdf-3c2b76d70d45.png（5705 字节）[39m
+[32m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [32m    LOG[39m [38;5;3m[ExtractorMain] [39m[32m抽取完成 档案信息检索与知识服务.pdf：状态=OK，字符数=0，耗时=26ms[39m
+[95m[Nest] 1  - [39m11/09/2026, 3:17:04 PM [95m  DEBUG[39m [38;5;3m[ExtractorMain] [39m[95m任务完成 72[39m
+--- fulltext probe ---
+c24df52e len=150 marker=false pdf=true
+735e4897 len=175 marker=true pdf=false
+31d00f63 len=150 marker=false pdf=true
+e4512af7 len=150 marker=false pdf=true
+0de90ac4 len=168 marker=true pdf=false
+70ea0881 len=173 marker=true pdf=false

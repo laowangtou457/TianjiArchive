@@ -1,0 +1,12 @@
+=== demo flake diagnosis (2026-11-09T15:14:14+08:00) ===
+PRESIGNED_DOWNLOADS_OK=12
+PREVIEW_DOWNLOADS_OK=12
+SHA256_VERIFIED=12
+IS_PASS: YES —— 上传挂接 / 全文抽取 / 综合检索 / 预览下载 / sha256 完整性全链路通过
+DEMO_EXIT=0
+--- ES _count ---
+{"count":6,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0}}
+--- ES _refresh then _count ---
+{"count":6,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0}}
+--- search c24df52e after refresh ---
+{"took":9,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"max_score":null,"hits":[]}}

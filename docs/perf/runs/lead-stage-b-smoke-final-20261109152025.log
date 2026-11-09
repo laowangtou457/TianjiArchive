@@ -1,0 +1,65 @@
+=== stage-B smoke.sh FINAL (2026-11-09T15:20:31+08:00) ===
+[smoke] 1/4 健康检查：/api/health 必须 status=ok 且 objectStorage.ok=true
+{"code":0,"data":{"status":"ok","version":"1.0.0","uptimeSeconds":529,"deps":[{"name":"postgres","ok":true,"latencyMs":29},{"name":"elasticsearch","ok":true,"latencyMs":2},{"name":"objectStorage","ok":true,"latencyMs":2},{"name":"redis","ok":true,"latencyMs":0}]},"message":"成功","timestamp":"2026-11-09T07:20:32.868Z"}
+[smoke] 2/4 S3 兼容性 9 项探针
+
+> @tianji/api@1.0.0 s3:probe /app/apps/api
+> ts-node src/scripts/seaweedfs-s3-probe.ts
+
+════════════ SeaweedFS S3 兼容性探针 ════════════
+端点=seaweedfs:8333 pathStyle=true region=us-east-1 探测桶=tianji-s3-probe-1794208836153
+  bucketExists（新建前，应为 false）= false
+探测桶清理完成：tianji-s3-probe-1794208836153
+
+──────────── 逐项结果 ────────────
+PASS | bucketExists | false
+PASS | makeBucket | created
+PASS | bucketExists(created) | true
+PASS | putObject | size=55 sha256=e4081d0c89a0…
+PASS | statObject | size=55 etag=c8b8bc7ed774128bde6e461518604dc0
+PASS | getObject | bytes=55 内容一致
+PASS | presignedUrl(PUT 直传) | http=200
+PASS | presignedGetObject | http=200 内容一致
+PASS | initiateNewMultipartUpload | 59cf26284fbff4854a5e1557d13d8f013086f150_aa99f250b650420397c17489f887cbef
+PASS | presignedUrl(PUT 分片签名) | http=200 etag="0111b902b0a410e023fbbf87fb721e41"
+PASS | listParts | parts=1 firstPart=1
+PASS | completeMultipartUpload | ok
+PASS | getObject(multipart 合成结果) | bytes=27
+
+OPS_TOTAL=13 OPS_PASSED=13 OPS_FAILED=0
+IS_PASS: YES —— 9 类 S3 操作与 SeaweedFS 3.79 S3 Gateway 全部兼容
+[smoke] 3/4 模拟书籍样品全链路
+
+> @tianji/api@1.0.0 demo:books /app/apps/api
+> ts-node src/scripts/demo-books-seed.ts
+
+════════════ 离线样品 demo：模拟书籍档案全链路 ════════════
+S3=seaweedfs:8333（SeaweedFS S3 Gateway） ES=http://elasticsearch:9200 index=archive_items 全宗=DEMO-BOOK 书目=6 本
+▶ 数据库已连接
+  著录：DEMO-BOOK-2026-0001-0001 《档案管理学基础》
+  著录：DEMO-BOOK-2026-0001-0002 《DA/T 22 归档文件整理规则释义》
+  著录：DEMO-BOOK-2026-0001-0003 《电子文件四性检测实践》
+  著录：DEMO-BOOK-2026-0002-0001 《数字档案馆建设导论》
+  著录：DEMO-BOOK-2026-0002-0002 《海量小文件存储优化》
+  著录：DEMO-BOOK-2026-0002-0003 《档案信息检索与知识服务》
+IMPORTANT! Eviction policy is allkeys-lru. It should be "noeviction"
+  ES 文档写入：6 条
+  已投抽取任务：12 个（等待 extractor worker 处理）
+  全文抽取完成：12/12 个文件，document_text 6 条
+  综合检索命中：6 条（全文标记 + 全宗/状态过滤）
+
+──────────── demo 链路汇总 ────────────
+DEMO_BOOKS_TOTAL=6
+DEMO_VOLUMES_TOTAL=2
+FILES_UPLOADED=12
+EXTRACTED_OK=12
+DOCUMENT_TEXT_ROWS=6
+SEARCH_HITS=6
+DOWNLOAD_SCOPE=S3_WIRE_LAYER_ONLY（PRESIGNED_DOWNLOADS_OK / PREVIEW_DOWNLOADS_OK 为 S3 wire 层自检，不绕鉴权，不构成下载功能已验证；业务放行链路 L2 未实现，本轮不验不修）
+PRESIGNED_DOWNLOADS_OK=12
+PREVIEW_DOWNLOADS_OK=12
+SHA256_VERIFIED=12
+IS_PASS: YES —— 上传挂接 / 全文抽取 / 综合检索 / 预览下载 / sha256 完整性全链路通过
+[smoke] 4/4 IK 中文分词
+[smoke] IS_PASS: YES —— 离线冒烟四项全通过（日志：s3-probe.log / demo-books.log）
+SMOKE_EXIT=0

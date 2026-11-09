@@ -1,0 +1,15 @@
+=== extractor rebuild with fulltext-aggregate fix (2026-11-09T15:18:41+08:00) ===
+#22 DONE 0.0s
+#23 DONE 0.0s
+#24 exporting to image
+#24 exporting layers 0.1s done
+#24 exporting manifest sha256:ea1bdba6e91342a6e8353e20f9f3ef1f6ef8da05171237fde91b020ba5a5d606 done
+#24 exporting config sha256:b654eed4f24f023124a15dc3c59bb6b17296ffda86907ef1bb8912d1b5e46591
+#24 exporting config sha256:b654eed4f24f023124a15dc3c59bb6b17296ffda86907ef1bb8912d1b5e46591 done
+#24 exporting attestation manifest sha256:3482fe83a40395d2d1b75abef3e006da6032456dbad8dab129b7c397a34b5369 done
+#24 exporting manifest list sha256:939e1a91ac8c36891c8e4b432c09684369d3570bf2fb2fc4461442f5f503195c done
+#24 naming to docker.io/library/tianji-archive-extractor:1.0.0 done
+#24 DONE 0.2s
+#25 DONE 0.0s
+BUILD_EXIT=0
+939e1a91ac8c 2026-11-09 15:18:53 +0800 CST

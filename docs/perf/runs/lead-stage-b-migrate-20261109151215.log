@@ -1,0 +1,23 @@
+=== stage-B env-check / migration / seed (2026-11-09T15:12:15+08:00) ===
+--- api env S3_PUBLIC (注入必核) ---
+S3_PUBLIC_USE_SSL=false
+S3_PUBLIC_PORT=8333
+S3_PUBLIC_ENDPOINT=127.0.0.1
+--- migration:run ---
+      UPDATE "borrow_order"
+         SET "borrow_date" = "created_at"::date
+       WHERE "borrow_date" IS NULL
+         AND "status" IN ('LENT', 'OVERDUE', 'RETURNED')
+    
+query: INSERT INTO "typeorm_migrations"("timestamp", "name") VALUES ($1, $2) -- PARAMETERS: [1700000002000,"AddBorrowDate1700000002000"]
+Migration AddBorrowDate1700000002000 has been executed successfully.
+query: COMMIT
+MIGRATION_EXIT=0
+--- seed ---
+  已创建示例全宗 WS
+  已创建示例机构「综合处」
+  已创建档号规则（模板 [目录号]-[年度(4)]-[保管期限]-[卷号(4)]-[件号(4)]）
+✔ 初始化完成
+  登录地址：http://localhost:8080
+  账号：admin / Tianji@2024
+SEED_EXIT=0

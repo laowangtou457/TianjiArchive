@@ -77,12 +77,20 @@ export class ExtractProcessor {
       const text = output.text ?? '';
       if (text.length > 0) {
         await this.saveDocumentText(itemId, fileId, text);
+      } else {
+        // 本次抽取正文为空时清掉该文件历史残留行（重抽取由有文字变无文字的场景），
+        // 保证下方按条目聚合的 fulltext 不含过期内容。无残留行时为空操作。
+        await this.dataSource.query(`DELETE FROM document_text WHERE file_id = $1`, [fileId]);
       }
 
-      // 4) ES 正文更新
-      if (text.length > 0) {
-        await this.indexer.updateFulltext(itemId, text);
-      }
+      // 4) ES 正文更新：按条目聚合重建，而非单文件覆盖。
+      //    修复（2026-11-09 离线 demo 实证）：同一条目多文件（如 TXT+PDF）时，
+      //    旧逻辑各文件各自 updateFulltext，last-write-wins——后完成的文件会把
+      //    先完成文件的正文整段覆盖（实证：PDF 后到，把含校验标记的 TXT 正文
+      //    冲掉，综合检索漏检且命中数随调度波动 3~5/6）。document_text（PG）
+      //    是正文唯一权威源，按条目聚合后整体回写：与文件完成顺序无关、幂等
+      //    （重复抽取不叠加）、单文件重抽取后聚合自动修正。
+      await this.rebuildItemFulltext(itemId);
 
       // 5) 文件状态与派生键
       // 列名以 InitSchema 为准：electronic_file 无 extract_meta 列，
@@ -163,6 +171,20 @@ export class ExtractProcessor {
                      item_id = EXCLUDED.item_id`,
       [itemId, fileId, content.slice(0, 5 * 1024 * 1024)],
     );
+  }
+
+  /** 按条目聚合 document_text 重建 ES fulltext。
+   *
+   * 多文件条目（如 TXT+PDF）不再互相覆盖：每次任一文件抽取完成后，
+   * 从 document_text 取该条目全部正文按 file_id 稳定排序拼接，
+   * 整体回写 ES。与文件完成顺序无关；重复执行幂等（整体替换，不叠加）。 */
+  private async rebuildItemFulltext(itemId: string): Promise<void> {
+    const rows = (await this.dataSource.query(
+      `SELECT content FROM document_text WHERE item_id = $1 ORDER BY file_id`,
+      [itemId],
+    )) as Array<{ content: string }>;
+    const fulltext = rows.map((r) => r.content ?? '').join('\n');
+    await this.indexer.updateFulltext(itemId, fulltext);
   }
 
   /** 更新抽取状态 */
