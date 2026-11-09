@@ -108,6 +108,10 @@ func main() {
 		os.Exit(runVerifyOnly(sess))
 	case cfg.uninstall:
 		os.Exit(runUninstall(sess, cfg.purgeVolumes))
+	case cfg.resume:
+		// --resume 是「无人值守把剩下的步骤跑完」，与 --tui 的逐步确认是两条路：
+		// 现场掉线续装、或某步修好后继续，都不该再要求人守在终端前按回车。
+		os.Exit(runResume(sess))
 	case cfg.tui:
 		os.Exit(runTUI(sess))
 	default:
@@ -257,6 +261,52 @@ func runVerifyOnly(sess *session) int {
 	}
 	fmt.Fprintln(out, "IS_PASS: YES —— 载荷与镜像 tar 校验全部通过")
 	return 0
+}
+
+// runResume 从 state.json 的断点一路跑到完成，逐步打印进度（无人值守续装）。
+//
+// 与 Web 向导的「一键执行」共用 session.RunAll，所以不存在第二套顺序逻辑；
+// 这里只负责把结果画到终端。失败时区分两类，因为处置完全不同：
+//   - formRequiredError：还差第 ④ 步的 8 项表单值，属「缺输入」，不是安装故障，
+//     必须引导去 --web（TUI 没有表单输入界面，硬填这些凭据等于让人在命令行历史里留密码）；
+//   - 其它：真正的安装故障，给出该步日志路径与「修好后重跑 --resume」的指引。
+func runResume(sess *session) int {
+	// 总上限取各步上限之和的量级：超时也要能明确说「卡在哪一步」，而不是无限等。
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Minute)
+	defer cancel()
+
+	out := os.Stdout
+	names := buildplan.StepNames()
+	next := sess.st.NextStep()
+	fmt.Fprintf(out, "断点续装：当前应执行 %s（%s）\n", names[string(next)], next)
+
+	var failed state.Step
+	err := sess.RunAll(ctx, func(step state.Step, stepErr error) {
+		if stepErr != nil {
+			failed = step
+			return
+		}
+		fmt.Fprintf(out, "OK   %-10s %s\n", step, names[string(step)])
+	})
+	if err == nil {
+		fmt.Fprintf(out, "安装完成。访问地址与凭据见 %s\n", sess.log.Path(stepLogFile[state.StepDone]))
+		return 0
+	}
+
+	var formErr *formRequiredError
+	if ok, _ := asForm(err, &formErr); ok {
+		fmt.Fprintf(os.Stderr, "需要先填写部署表单：%s\n", formErr.Error())
+		fmt.Fprintln(os.Stderr, "请改用 Web 向导填写（sh 安装包 --web），凭据不要写进命令行历史。")
+		return 1
+	}
+
+	fmt.Fprintf(os.Stderr, "断点续装失败：%v\n", err)
+	if failed != "" {
+		fmt.Fprintf(os.Stderr, "   失败步骤：%s（%s）\n", names[string(failed)], failed)
+		fmt.Fprintf(os.Stderr, "   该步日志：%s\n", sess.log.Path(stepLogFile[failed]))
+	}
+	fmt.Fprintln(os.Stderr, "   修好之后重新执行 --resume（已完成的步骤不会重跑）。")
+	return 1
 }
 
 // runUninstall 卸载。

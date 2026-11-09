@@ -35,6 +35,7 @@ INSTALLER_BIN=''
 IMAGES_TAR=''
 OUT_DIR=''
 DO_SIGN='no'
+GPG_KEY=''
 
 log() { printf '[package] %s\n' "$*"; }
 die() { printf '[package] FAIL: %s\n' "$*" >&2; exit 1; }
@@ -51,6 +52,7 @@ usage() {
   --images-tar <f>    镜像 tar 路径（用于记录 sha256 并与 offline/SHA256SUMS 同源核对）
   --out <dir>         产物目录，默认 <仓库>/dist/installer
   --sign              给 SHA256SUMS.txt 做 gpg 分离签名
+  --gpg-key <id>      指定签名密钥（默认取 gpg 默认密钥；建议显式指定专用构建密钥）
   -h | --help         显示本帮助
 EOF
 }
@@ -64,6 +66,7 @@ while [ "$#" -gt 0 ]; do
     --images-tar) IMAGES_TAR="${2:-}"; shift 2 ;;
     --out) OUT_DIR="${2:-}"; shift 2 ;;
     --sign) DO_SIGN='yes'; shift ;;
+    --gpg-key) GPG_KEY="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数：$1（用 --help 看用法）" ;;
   esac
@@ -265,6 +268,11 @@ if [ -n "${IMAGES_TAR}" ]; then
 fi
 if [ "${DO_SIGN}" = 'yes' ]; then
   MANIFEST_ARGS+=( --sign )
+  # 显式指定密钥：构建机上往往还有开发用密钥，靠「默认密钥」会在换机器时静默
+  # 签到另一把钥匙上，现场的 public key 就对不上了。
+  if [ -n "${GPG_KEY}" ]; then
+    MANIFEST_ARGS+=( --gpg-key "${GPG_KEY}" )
+  fi
 fi
 bash "${SCRIPT_DIR}/make-manifest.sh" "${MANIFEST_ARGS[@]}"
 

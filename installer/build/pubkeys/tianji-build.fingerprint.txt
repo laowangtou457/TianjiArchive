@@ -1,0 +1,4 @@
+pub   rsa4096 2026-11-09 [SC] [expires: 2027-11-09]
+      0AD2 912C F8FE 57E2 02C2  75F2 0A03 8555 B153 ACC9
+uid           [ultimate] tianji-build (offline installer release signing) <build@tianji.invalid>
+

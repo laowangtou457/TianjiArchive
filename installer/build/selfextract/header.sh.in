@@ -96,11 +96,15 @@ if [ "$NEED_ROOT" = 'no' ]; then
   #   逐文件深度校验：解包后由安装器按 manifest.json 复核每个载荷文件 + 镜像 tar。
   # 因此：非 root 到 L-a 就结束（不写系统目录）；root 则继续解包，把深度校验也做完。
   if [ "${TIANJI_VERIFY_SHELL_ONLY:-0}" = '1' ]; then
-    say 'PASS：安装包完整（仅壳层 sha256，构建机 G3 闸门用）'
+    say '壳层校验通过（仅 payload 完整性 sha256，构建机 G3 闸门用；不代表可安装）'
     exit 0
   fi
   if [ "$(id -u)" != '0' ]; then
-    say 'PASS：安装包完整（非 root：仅校验载荷 sha256；用 sudo 可继续做逐文件深度校验）'
+    # 措辞刻意写得不可误读：这一步只证明「这一个字节流没坏」，
+    # 既不证明包内每个文件与 manifest 一致，也不证明镜像 tar 可用（镜像 tar 根本不在包内）。
+    # 现场若把这句话当成「可以装了」，后面每一步都会在别处以更难懂的方式失败。
+    say '壳层校验通过（仅 payload 完整性 sha256；未做逐文件深度校验与镜像校验——不代表可安装）'
+    say '如需完整校验：sudo sh 本文件 --verify-only'
     exit 0
   fi
   say '载荷 sha256 通过；当前为 root，继续解包做逐文件深度校验'

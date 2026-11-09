@@ -6,7 +6,7 @@
 #   - manifest.json 记录变体/版本/期望内核/文件清单与每文件 sha256，
 #     以及 images.tar 的 sha256（必须与 offline/SHA256SUMS 同源，§2.2 关键约定）
 #   - SHA256SUMS.txt 供现场 --verify-only 逐文件校验
-#   - --sign 时用 gpg 分离签名出 SHA256SUMS.sig（公钥内置于安装器二进制）
+#   - --sign 时用 gpg 分离签名出 SHA256SUMS.asc（公钥内置于安装器二进制）
 #
 # 用法：
 #   bash installer/build/make-manifest.sh --dir dist/installer/staging \
@@ -40,7 +40,7 @@ usage() {
   --version <v>       版本号，默认 1.0.0
   --codename <c>      变体 A 的目标 codename（jammy/noble/bookworm）
   --images-tar <f>    镜像 tar 路径；给了就记录其 sha256，没给则 manifest 里留空并 WARN
-  --sign              用 gpg 分离签名生成 SHA256SUMS.sig
+  --sign              用 gpg 分离签名生成 SHA256SUMS.asc
   --gpg-key <id>      签名用密钥 ID（默认取 gpg 默认密钥）
   -h | --help         显示本帮助
 EOF
@@ -124,7 +124,7 @@ while IFS= read -r rel; do
     | sed -e 's/^\\//' -e 's/^\([0-9a-f]\{64\}\) [ *]/\1  /' >> "${SUMS_FILE}"
   FILE_COUNT=$((FILE_COUNT + 1))
 done < <( cd "${STAGE_DIR}" && find . -type f \
-            ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.sig' ! -name 'manifest.json' \
+            ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.asc' ! -name 'manifest.json' \
             -printf '%P\n' | LC_ALL=C sort )
 [ "${FILE_COUNT}" -gt 0 ] || die '暂存目录里没有任何文件'
 log "文件清单：${FILE_COUNT} 个"
@@ -166,11 +166,16 @@ JSON="${STAGE_DIR}/manifest.json"
   printf '}\n'
 } > "${JSON}"
 
-# JSON 合法性自校验（缺 python3 时退化为结构检查，不静默放过）
-if command -v python3 >/dev/null 2>&1; then
+# JSON 合法性自校验。
+# 分三种情况处理，关键是别把「工具缺失」误报成「JSON 坏了」——实测踩到过：
+# 只在容器里装了 python3-minimal 时 import json 直接 ModuleNotFoundError，
+# 报错却写着「manifest.json 不是合法 JSON」，会把人引到完全错误的方向。
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
   python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "${JSON}" \
-    || die 'manifest.json 不是合法 JSON'
+    || die "manifest.json 不是合法 JSON：${JSON}（这是生成逻辑的 bug，不是环境问题）"
   log 'manifest.json 解析 OK'
+elif command -v python3 >/dev/null 2>&1; then
+  log 'WARN: python3 存在但缺 json 模块（精简安装？），跳过解析自校验——建议装完整 python3 后再出包'
 else
   log 'WARN: 无 python3，跳过 JSON 解析自校验'
 fi
@@ -178,7 +183,7 @@ fi
 # ---------------------------------------------------------------- 签名
 if [ "${DO_SIGN}" = 'yes' ]; then
   command -v gpg >/dev/null 2>&1 || die '--sign 需要 gpg，但未安装'
-  SIG="${SUMS_FILE}.sig"
+  SIG="${SUMS_FILE%.txt}.asc"
   rm -f "${SIG}"
   if [ -n "${GPG_KEY}" ]; then
     gpg --batch --yes --local-user "${GPG_KEY}" --detach-sign --armor -o "${SIG}" "${SUMS_FILE}" \
