@@ -124,7 +124,8 @@ while IFS= read -r rel; do
     | sed -e 's/^\\//' -e 's/^\([0-9a-f]\{64\}\) [ *]/\1  /' >> "${SUMS_FILE}"
   FILE_COUNT=$((FILE_COUNT + 1))
 done < <( cd "${STAGE_DIR}" && find . -type f \
-            ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.asc' ! -name 'manifest.json' \
+            ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.asc' ! -name 'SHA256SUMS.asc.tmp' \
+            ! -name 'manifest.json' \
             -printf '%P\n' | LC_ALL=C sort )
 [ "${FILE_COUNT}" -gt 0 ] || die '暂存目录里没有任何文件'
 log "文件清单：${FILE_COUNT} 个"
@@ -184,14 +185,31 @@ fi
 if [ "${DO_SIGN}" = 'yes' ]; then
   command -v gpg >/dev/null 2>&1 || die '--sign 需要 gpg，但未安装'
   SIG="${SUMS_FILE%.txt}.asc"
-  rm -f "${SIG}"
-  if [ -n "${GPG_KEY}" ]; then
-    gpg --batch --yes --local-user "${GPG_KEY}" --detach-sign --armor -o "${SIG}" "${SUMS_FILE}" \
-      || die 'gpg 签名失败（用了 --gpg-key ${GPG_KEY}）'
-  else
-    gpg --batch --yes --detach-sign --armor -o "${SIG}" "${SUMS_FILE}" || die 'gpg 签名失败'
+  # 先签临时文件、成功后再 mv：签失败时不会把上一次的有效签名删掉。
+  # （现场最常见的补救动作就是「重跑一次打包」，如果那次签名失败，旧签名不该跟着没。）
+  TMP_SIG="${SIG}.tmp"
+  rm -f "${TMP_SIG}"
+  # --batch/--no-tty：构建机没有 TTY；不加时 pinentry 可能一直等输入，
+  #   表现为脚本卡死而不是报错。--yes 允许覆盖已有 .asc。
+  # 另注：gpg 会在 GNUPGHOME 里创建/删除 *.lock。**同一 GNUPGHOME 上的 gpg 调用要串行**，
+  #   并发跑两个打包任务会偶发 `gpg: waiting for lock`（不是失败，但会让构建超时）。
+  sign_detach() {
+    # 用函数而不是把参数拼进变量：避免未加引号的变量展开被 shellcheck/维护者误改。
+    if [ -n "${GPG_KEY}" ]; then
+      gpg --batch --no-tty --yes --local-user "${GPG_KEY}" --detach-sign --armor \
+        -o "${TMP_SIG}" "${SUMS_FILE}"
+    else
+      gpg --batch --no-tty --yes --detach-sign --armor -o "${TMP_SIG}" "${SUMS_FILE}"
+    fi
+  }
+  if ! sign_detach; then
+    if [ -n "${GPG_KEY}" ]; then
+      die "gpg 签名失败（用了 --gpg-key ${GPG_KEY}）"
+    fi
+    die 'gpg 签名失败（未指定 --gpg-key，用的是默认密钥）'
   fi
-  [ -s "${SIG}" ] || die '签名文件为空'
+  [ -s "${TMP_SIG}" ] || die '签名文件为空'
+  mv -f "${TMP_SIG}" "${SIG}"
   log "已签名：${SIG}"
 else
   log 'WARN: 未签名（--sign 未开启）。正式交付必须签名，见设计 §4.4 L-b'
