@@ -1,0 +1,28 @@
+== [0] 环境快照 2026-11-09T16:31:08Z ==
+NAME="Kylin Linux Advanced Server"
+VERSION="V10 (Halberd)"
+ID="kylin"
+firewalld: active rc=0
+selinux:   Disabled
+== [1] is-active 四态采样 ==
+  firewalld -> out='active' rc=0
+  sshd -> out='active' rc=0
+  tianji-docker.service -> out='inactive' rc=3
+  nonexistent-unit.service -> out='inactive' rc=3
+== [2] 拉 .run（固定别名 server-setup.run，走 10.0.2.2:8000）==
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100 95.3M  100 95.3M    0     0   173M      0 --:--:-- --:--:-- --:--:--  173M
+curl rc=0
+-rw-r--r-- 1 root root 99961381 Nov 10 00:31 /root/server-setup.run
+2558b63049e3056641855895c786803d516c5e17aa148d1da5a1f5c19b598c49  /root/server-setup.run
+期望: 2558b63049e3056641855895c786803d516c5e17aa148d1da5a1f5c19b598c49
+== [3] 起 web 安装器 ==
+launcher pid=7068
+18080 就绪（1s）
+      ssh -L 18080:127.0.0.1:18080 <本机用户>@<服务器IP>
+========================================================================
+  日志目录：/var/log/tianji-install/20261109T163110Z
+  状态文件：/var/lib/tianji-install/state.json
+========================================================================
+== 阶段A 前置就绪 ==

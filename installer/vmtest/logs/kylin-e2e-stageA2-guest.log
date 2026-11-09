@@ -1,0 +1,33 @@
+== A2 2026-11-09T17:02:36Z mem=8700MB ==
+** Resuming transfer from byte position 99961381
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100  1715  100  1715    0     0   837k      0 --:--:-- --:--:-- --:--:--  837k
+ad9154b12c71322d61187b8cb91f7c0702f103f5c546623c7f26d2cc9aea16ff  /root/server-setup.run
+期望: 79da68e0f7b46f8fb187cb4f3196a5d05de017d4a3db408846916923bda62f7c
+1416
+== A2 2026-11-09T17:03:03Z mem=8700MB ==
+** Resuming transfer from byte position 99963096
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (22) The requested URL returned error: 416
+curl rc=22
+ad9154b12c71322d61187b8cb91f7c0702f103f5c546623c7f26d2cc9aea16ff  /root/server-setup.run
+期望: 79da68e0f7b46f8fb187cb4f3196a5d05de017d4a3db408846916923bda62f7c
+launcher pid=1682
+18080 未就绪
+[tianji-setup] 校验安装包完整性（payload f21b70bc1907080c8d274b0dfe73810ec8022af7c82b0468ee0e5177a60d0d89）
+[tianji-setup] FAIL: payload sha256 不匹配：期望 f21b70bc1907080c8d274b0dfe73810ec8022af7c82b0468ee0e5177a60d0d89，实际 0fa878bd0e218dde778efae76af92434d5bc472b8f314ba38de7d8c0e9ad1843。请重新拷贝介质并重试
+== A2 2026-11-09T17:04:21Z mem=8700MB ==
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0 70 95.3M   70 67.1M    0     0   187M      0 --:--:-- --:--:-- --:--:--  186M100 95.3M  100 95.3M    0     0   183M      0 --:--:-- --:--:-- --:--:--  182M
+curl rc=0
+79da68e0f7b46f8fb187cb4f3196a5d05de017d4a3db408846916923bda62f7c  /root/server-setup.run
+期望: 79da68e0f7b46f8fb187cb4f3196a5d05de017d4a3db408846916923bda62f7c
+launcher pid=1942
+18080 就绪（1s）
+  日志目录：/var/log/tianji-install/20261109T170422Z
+  状态文件：/var/lib/tianji-install/state.json
+S1 已发起 pid=1965

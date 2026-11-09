@@ -1,0 +1,4 @@
+[2026-11-09T16:33:00Z] S1_PREFLIGHT FAIL (206ms) 环境体检有 3 项不通过，已阻断：
+  - [K3] overlay2 文件系统：/proc/filesystems 中无 overlay（只能退回 vfs，磁盘占用与性能不可接受；请换内核或开启 overlay 模块）
+  - [K5] vm.max_map_count：65530（要求 ≥ 262144）（ES 8 会因 mmap 数量不足直接退出（bootstrap.memory_lock: true）；安装器会写入 /etc/sysctl.d/99-tianji.conf）
+  - [K10] 内存：6 GB（要求 ≥ 8，建议 ≥ 16）（内存不足 8GB：ES 1g heap + PG shared_buffers 512MB + 8 个容器必然 OOM）

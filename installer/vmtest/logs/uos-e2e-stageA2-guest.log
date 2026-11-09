@@ -1,0 +1,12 @@
+== A2 2026-11-09T17:11:47Z mem=9476MB ==
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0 83 95.3M   83 79.3M    0     0   210M      0 --:--:-- --:--:-- --:--:--  210M100 95.3M  100 95.3M    0     0   211M      0 --:--:-- --:--:-- --:--:--  210M
+curl rc=0
+79da68e0f7b46f8fb187cb4f3196a5d05de017d4a3db408846916923bda62f7c  /root/server-setup.run
+期望: 79da68e0f7b46f8fb187cb4f3196a5d05de017d4a3db408846916923bda62f7c
+launcher pid=7093
+18080 就绪（1s）
+  日志目录：/var/log/tianji-install/20261109T171149Z
+  状态文件：/var/lib/tianji-install/state.json
+S1 已发起 pid=7116

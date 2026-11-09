@@ -1,0 +1,72 @@
+{
+  "formatVersion": 1,
+  "product": "tianji-archive",
+  "version": "1.0.0",
+  "variant": "kylin-uos",
+  "arch": "amd64",
+  "createdAt": "2026-11-09T16:31:10.179347336Z",
+  "updatedAt": "2026-11-09T17:04:48.742430023Z",
+  "steps": {
+    "S10_DONE": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S1_PREFLIGHT": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T17:04:48.580782581Z",
+      "finishedAt": "2026-11-09T17:04:48.742429593Z",
+      "exitCode": 0,
+      "output": "环境体检 用时 162ms"
+    },
+    "S2_VERIFY": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S3_DOCKER": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S4_IMAGES": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S5_ENV": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S6_UP": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S7_MIGRATE": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S8_SEED": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    },
+    "S9_SMOKE": {
+      "status": "",
+      "startedAt": "0001-01-01T00:00:00Z",
+      "finishedAt": "0001-01-01T00:00:00Z",
+      "exitCode": 0
+    }
+  }
+}
