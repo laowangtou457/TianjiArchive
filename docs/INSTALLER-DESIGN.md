@@ -712,7 +712,7 @@ bash installer/build/make-manifest.sh --sign
 |---|---|---|
 | v1.0 | 2026-11-09 | 首版。裁定图形化向导形态（本机临时 Web 安装器 + 同源 TUI 降级入口）；Docker 双变体（deb 闭包 / static 二进制）；tar 分离分发；用户端两阶段；8 项开放问题待裁定 |
 | v1.1 | 2026-11-09 | 新增 §14 实施与验证状态：①② 闭环（真闭包 / 真签名 / 独立验签），③ **部分闭环**（未覆盖项与接手人写明，不算完成） |
-| v1.2 | 2026-11-09 | ③ 升级为**容器内十步闭环**（S1→S10 全 DONE），并登记由此抓到的两个只在真栈上暴露的缺陷（Pre-Depends 顺序、卷属主）；包体因代码变更重打包，sha256 更新；真机与变体 B 仍交 vm-harness |
+| v1.2 | 2026-11-09 | ③ 升级为**容器内十步闭环**（S1→S10 全 DONE），并登记由此抓到的两个只在真栈上暴露的缺陷（Pre-Depends 顺序、卷属主）；包体因代码变更重打包，sha256 更新；真机与变体 B 仍交 vm-harness；新增 §14.4：变体 B 六项 OS 基线预检落成 Go 代码（只探测不处置，10 条单测，真机复跑待做） |
 
 ---
 
@@ -739,8 +739,8 @@ bash installer/build/make-manifest.sh --sign
 | 密钥 | `tianji-build`，RSA4096，**无口令**（构建机无人值守），有效期至 2027-11-09 |
 | 公钥 | `installer/build/pubkeys/tianji-build.asc` + 指纹文件入库；**私钥只在构建机 `~/.gnupg`，绝不入库** |
 | 指纹 | `0AD2 912C F8FE 57E2 02C2 75F2 0A03 8555 B153 ACC9` |
-| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,089,731 字节**，sha256 `7082d4cf2b8e33fffa14b9b2d4fc915ebec85f7a0350f5a7ecec6d5d75318b0a`，payload sha256 `d744bbdb…`（v1.2 因卷属主修法 + gofmt 重打包；上一版 150,088,493 / `85478f08…` 已被替换，签名与验签流程不变。**容器内十步是在这一版产物上跑的**，包 sha256 与容器内 `sha256sum` 逐字一致） |
-| 闸门 | G1 载荷同源 7/7 · G2 ELF64/amd64（6,348,952 字节）· G3 壳层 `--verify-only` PASS |
+| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,106,892 字节**，sha256 `25bd5b42f328ad4da19c59237350400962ee1e20400970771ce98474286ae608`，payload sha256 `f401c341…`（v1.2 因卷属主修法 + 变体 B 六项预检 + gofmt 重打包；上一版 150,088,493 / `85478f08…` 已被替换，签名与验签流程不变。**容器内十步是在这一版产物上跑的**，包 sha256 与容器内 `sha256sum` 逐字一致） |
+| 闸门 | G1 载荷同源 7/7 · G2 ELF64/amd64（6,385,816 字节）· G3 壳层 `--verify-only` PASS |
 | 验签 | **在新导出的 `GNUPGHOME` 里验签通过**（只 import 仓库公钥，不在生成它的 keyring 里自证）：`Good signature from "tianji-build (Tianji Archive build key)"` + `sha256sum -c` **98/98 OK** |
 | 重打包后复核 | 容器内 `sh <run> --verify-only` → `IS_PASS: YES`；包 sha256 与构建机公布值逐字一致 |
 
@@ -792,4 +792,24 @@ Docker Desktop 的 overlayfs 上**被静默忽略**），并用 `fallocate` 超�
 
 **因此 `#41` 的验收口径是**：①② 闭环；③ **容器内闭环**（十步全 DONE，两个缺陷已修）；
 真机与变体 B 由 vm-harness 覆盖，未绿之前**「服务器端安装包已通过真机验收」这句话不能写**。
+
+### 14.4 变体 B 六项 OS 基线预检 —— **代码与单测就绪，真机复跑待做**
+
+落点：`installer/server/internal/preflight/variantb.go`（`CheckVariantB`），
+在 `S1_PREFLIGHT` 里**仅当变体为 `kylin-uos`** 时追加执行，产出复用 `Report/Item` 结构
+（`Raw` 留原始输出、`Level` 归一化为 PASS/WARN/FAIL/N-A、`Hint` 给一句话处置）。
+判据与实测校正来自 `docs/VARIANT-B-OS-BASELINE.md` §4（含麒麟 V10 SP3 真机实测）。
+
+| 边界 | 落法 |
+|---|---|
+| 只探测与报告，不做自动处置 | `setstatus -t` / `setenforce 0` / `systemctl disable firewalld` 均不写进代码；WARN/FAIL 里只给「现场可执行的动作」话术 |
+| 「探测失败」≠「确认关闭」 | `Facts["kysec"]` 区分 `probe-failed` / `disabled` / `unknown`；`describeRunErr` 区分「命令不存在 / 命令超时 / 命令失败（退出码）」 |
+| SELinux 判定口径 | 只认 `getenforce`（旁证 `/sys/fs/selinux/enforce`）；**不读 `/etc/selinux/config`**——麒麟实测该文件写 `enforcing` 而实际 `Disabled` |
+| firewalld 处置口径 | 写「`disable --now` 并留痕」，并明写**不要加 trusted zone**（麒麟实测：restart firewalld 会让 SSH 不可达且不自愈，加 trusted zone 无效） |
+| xfs `ftype=1` | 不在预检做，放到安装时数据目录建好之后查（预检阶段目录可能还不存在） |
+
+验证：10 条单测全部用 fake runner（覆盖命令不存在 / 超时 / 输出无法解析 / 麒麟与非麒麟分支），
+`go test ./...` 85 pass / 3 skip。**这 10 条跑的是构造输出，不是真机**——
+vm-harness 已用 shell 在麒麟真机上实测六项并回写基线；Go 侧需在真机复跑一次才能说「代码与实测一致」。
+
 

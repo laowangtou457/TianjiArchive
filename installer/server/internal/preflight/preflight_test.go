@@ -15,7 +15,9 @@ type stubRunner struct {
 }
 
 func (s stubRunner) Run(_ context.Context, name string, args ...string) (string, error) {
-	key := name + " " + strings.Join(args, " ")
+	// 无参数命令若不 TrimSpace，键会变成 "getenforce "（末尾多一个空格），
+	// 于是「明明给了输出却当成命令不存在」——这种假失败会误导用例本身。
+	key := strings.TrimSpace(name + " " + strings.Join(args, " "))
 	if err, ok := s.err[key]; ok {
 		return "", err
 	}

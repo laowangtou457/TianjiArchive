@@ -4,11 +4,11 @@
 服务器端运行期逻辑在 `server/`（Go 静态二进制），用户端在 `client-lite/`。
 
 > 状态（本轮）：`build/` 与 `server/` 两侧均已打通，**真载荷、真签名、真体积的包已经出来了**。
-> `server/` 为 16 个 Go 文件 / 10 个测试文件，`go test ./...` **74 pass / 3 skip（Windows
+> `server/` 为 16 个 Go 文件 / 10 个测试文件，`go test ./...` **85 pass / 3 skip（Windows
 > 无 `sh` 的三个用例）**，`gofmt -l` 与 `go vet` 均干净；交叉编译产物
-> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,348,952 字节。
-> 真实安装包 = 150,089,731 字节（含 85 个真 `.deb` / 147,505,075 字节闭包），G1/G2/G3 全绿，
-> `SHA256SUMS.asc` 已签，sha256 = `7082d4cf2b8e33fffa14b9b2d4fc915ebec85f7a0350f5a7ecec6d5d75318b0a`。
+> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,385,816 字节。
+> 真实安装包 = 150,106,892 字节（含 85 个真 `.deb` / 147,505,075 字节闭包），G1/G2/G3 全绿，
+> `SHA256SUMS.asc` 已签，sha256 = `25bd5b42f328ad4da19c59237350400962ee1e20400970771ce98474286ae608`。
 > **第 ③ 步「特权 systemd 容器十步端到端」已跑通 S1→S10 全 DONE**（8/8 容器 healthy、
 > 迁移执行、种子完成、四项冒烟 4/4 PASS）；真机（含变体 B 麒麟/UOS）仍由 vm-harness 覆盖，
 > 容器不能替代真机，见文末「仍然没验证的事」。
@@ -205,6 +205,14 @@ Web 安全边界（设计 §3.3）：默认只绑回环；`--listen` 到非回�
     `wal_archive → 70:70`（后者错不会让 postgres 起不来，只会让 WAL 归档静默失败）。
     表里只登记「必须由安装器给属主」的卷；其余交给镜像 entrypoint，避免与镜像未来版本打架。
     chown 失败只 WARN 不中断（NFS/CIFS 上会被拒而 runc 仍能起来），但必须把后果写进输出。
+17. **变体 B 六项预检只探测不处置，且只对 `kylin-uos` 生效**。核定过的三条边界：
+    ① `setstatus -t` / `setenforce 0` / `systemctl disable firewalld` 一概不写进代码——
+    这些改的是现场安全策略，必须由人签认，工具不能替人决定；
+    ② 「探测失败」与「确认关闭」在数据结构上就分开（`Facts["kysec"]=probe-failed` vs `disabled`），
+    不允许把失败折叠成放行；
+    ③ SELinux 只认 `getenforce`，绝不读 `/etc/selinux/config`——麒麟实测该文件写 enforcing
+    而实际 Disabled，按文件判断会误报并触发不必要的处置。
+    另外变体 A 的 K1–K13 一项不掺，避免把「Ubuntu 上跑通的东西」和「麒麟上要判的东西」混成一张表。
 
 ## 本轮验证结果（可复现）
 
@@ -213,7 +221,7 @@ Web 安全边界（设计 §3.3）：默认只绑回环；`--listen` 到非回�
 ```text
 gofmt -l .            → 空
 go vet ./...          → 空
-go test ./...         → 11 个包全绿，74 pass / 3 skip（Windows 无 sh）
+go test ./...         → 11 个包全绿，85 pass / 3 skip（Windows 无 sh）
 ```
 
 关键回归用例（都指向真实踩过的坑）：
@@ -237,15 +245,15 @@ go test ./...         → 11 个包全绿，74 pass / 3 skip（Windows 无 sh）
 ### 2. 交叉编译与打包（真载荷）
 
 ```text
-binary  : 6,348,952 字节（ELF64 / e_machine=0x3e / CGO_ENABLED=0）
+binary  : 6,385,816 字节（ELF64 / e_machine=0x3e / CGO_ENABLED=0）
 deb 闭包 : 85 个 .deb / 147,505,075 字节
            docker-ce 5:29.9.3-1~ubuntu.22.04~jammy
            docker-ce-cli 5:29.9.3 · containerd.io 2.4.2-3
            docker-compose-plugin 5.7.0-1 · libseccomp2 2.5.3-2ubuntu3~22.04.1
 package : tianji-server-setup-ubuntu-debian-amd64-1.0.0.run
-          150,089,731 字节
-          sha256 7082d4cf2b8e33fffa14b9b2d4fc915ebec85f7a0350f5a7ecec6d5d75318b0a
-          payload sha256 d744bbdb96b716bcaa1aeea1c48b9db31e9ef5a1f12723cdc468c07f7eb3e1b9
+          150,106,892 字节
+          sha256 25bd5b42f328ad4da19c59237350400962ee1e20400970771ce98474286ae608
+          payload sha256 f401c341982ba2ae3cff4c90500494f05a317ca007e270e78292a478005da7ca
 闸门    : G1 7/7 逐字节一致 · G2 ELF64/amd64 · G3 壳层校验 PASS
 签名    : SHA256SUMS.asc（gpg armor 分离签名，key 0A038555B153ACC9）
 ```
@@ -323,10 +331,12 @@ docker run -d --name tj-e2e --privileged --cgroupns=host \
 | S9_SMOKE | **DONE** | **4/4 PASS**：`/api/health status=ok 且 objectStorage.ok=true`、S3 九项探针 `IS_PASS: YES`、样品书籍全链路 `IS_PASS: YES`（6 册 / 12 文件 / 抽取 12-12 / 检索命中 6）、IK 切出「中华人民共和国」 |
 | S10_DONE | **DONE** | `99-summary.txt` 输出访问地址与部署根；S5→S10 合计 **46s** |
 
-> 上表是**冷启动**那一轮（容器全新建、ES 首次建索引）。因源码过了 `gofmt`（纯格式）导致
-> 二进制字节变化，交付件按格式后的源码**重打包**，并在新产物（sha256 `7082d4cf…`）上**复跑**
-> 了 S5→S10：仍全部 DONE，合计 23s（容器已就绪，S6 只花 130ms）。十步证据对应的是
-> **最终交付的那个包**，不是中间产物。
+> 上表是**冷启动**那一轮（容器全新建、ES 首次建索引，S5→S10 合计 46s）。
+> 此后代码又有两次变动（`gofmt` 纯格式；变体 B 六项预检接入 S1），二进制字节随之变化，
+> 交付件按最终源码**重打包**，并在最终产物（sha256 `25bd5b42…`）上**复跑**了 S5→S10：
+> 仍全部 DONE（容器已就绪，S6 只花 130ms，五步合计 23s）。
+> 也就是说：**十步证据对应的是最终交付的那个包**，不是中间产物。
+> S1–S4 的 DONE 记录来自最早那一轮（预检新增项只对变体 B 生效，变体 A 路径未改动）。
 
 **本轮在真栈上抓到并修掉的缺陷（这是做这一层的价值）**
 
@@ -363,6 +373,32 @@ tar 本体 1.51GB。**按 30 倍留盘**。详见 `installer/e2e/README.md`「�
 并因此在真栈上抓到两个单测抓不到的缺陷（S3 的 Pre-Depends 顺序、S6 的卷属主）。
 **它仍然不是真机验证**——差异见下一节第 2 条，该条仍由 vm-harness 覆盖。
 
+### 5. 变体 B 六项 OS 基线探测（`internal/preflight/variantb.go`）
+
+`docs/VARIANT-B-OS-BASELINE.md` §4.1–§4.6 写成了代码：`preflight.CheckVariantB`，
+在 `S1_PREFLIGHT` 里**仅当变体为 `kylin-uos`** 时追加执行（变体 A 的检查项一项不动）。
+
+| 项 | 探测 | 归一化判定 |
+|---|---|---|
+| B1 cgroup 版本 | `stat -fc %T /sys/fs/cgroup` | `tmpfs`=v1 / `cgroup2fs`=v2，**只记录不设阈值**；认不出 → WARN |
+| B2 SELinux | `getenforce`（旁证 `/sys/fs/selinux/enforce`） | Disabled/Permissive → PASS；Enforcing 且 `rpm -q container-selinux` 查不到 → WARN；**绝不读 `/etc/selinux/config` 下结论**（麒麟实测该文件写 enforcing 而实际 Disabled） |
+| B3 麒麟 kysec | `command -v getstatus` → `getstatus` → 解析 `KySec status:` 与 `exectl:` | 无工具且无 `/etc/kysec` → PASS「确认未启用」；**工具在但查询失败 → WARN「探测失败」**（不得当放行）；enforcing + exectl on → FAIL；有 `/etc/kysec` 但无工具 → WARN |
+| B4 iptables 后端 | `iptables --version` + `command -v iptables-legacy / iptables-nft` | 只记录后端（nf_tables/legacy）；完全找不到 iptables → WARN |
+| B5 overlay2 前置 | `uname -r` + `/proc/filesystems` + `modprobe overlay` + `stat -f -c %T <DataDir>` | 内核 <4.19 或 overlay 载不上 → WARN（会退回 vfs，放大 14~26 倍）；**xfs `ftype=1` 放到安装时在数据目录建好后查** |
+| B6 firewalld | `firewall-cmd --state` | 未装 → N/A；在跑 → WARN，处置写「`disable --now` 并留痕」，**明写不要加 trusted zone**（麒麟实测无效） |
+
+三条纪律写进代码注释也写进用例：
+
+1. **只探测、不处置**。`setstatus -t` / `setenforce 0` / 停 firewalld 一个都不做——它们要现场签认；
+2. **「探测失败」≠「确认关闭」**。kysec 守护没起时 `getstatus` 必然失败，按放行处理就是赌；
+3. **命令不存在 / 命令超时 / 输出无法解析**三类必须产出可读结论（`describeRunErr` 区分），
+   既不能 panic，也不能静默变成 PASS。
+
+10 条用例全部用 `execx` 的 fake 形态（`stubRunner` 喂固定输出与错误），覆盖：
+麒麟最小化基线全绿、`/etc/selinux/config` 说谎、Enforcing 无 container-selinux、
+kysec 探测失败不当放行、enforcing+exectl on 判 FAIL、命令不存在、命令超时、输出无法解析、
+非麒麟标 N/A、每项都留 Raw 与 Hint。
+
 
 ## 仍然没验证的事（如实登记，不打包成「已通过」）
 
@@ -378,7 +414,10 @@ tar 本体 1.51GB。**按 30 倍留盘**。详见 `installer/e2e/README.md`「�
 3. **变体 B（static）端到端**：载荷已抓到并验过静态性（`ldd` 全部 not a dynamic executable）、
    二进制在容器里能起 27.5.1 + compose v2.29.7，但 `installStatic` 的 `systemctl` 分支
    没有 systemd 可用，**未在麒麟/UOS 上装过**。基线已从 ISO 离线取证，见
-   `docs/VARIANT-B-OS-BASELINE.md`；真机六项预检（kysec/SELinux/overlay2/cgroup/firewalld/CA）仍等真机。
+   `docs/VARIANT-B-OS-BASELINE.md`。
+   六项预检已写成 Go（见上一节第 5 小节）并有 10 条单测，但**这 10 条跑的是 fake 输出，
+   不是真机**：vm-harness 用 shell 在麒麟 V10 SP3 真机上实测过这六项（结论已回写基线文档），
+   Go 侧需要在真机上再复跑一次，才能说「代码与实测一致」。
 4. **18080 端口冲突回退（18081/18082）**：代码已实现，未在容器里制造占用验证。
 5. **`--sign` 的现场侧闭环**：包已签、公钥已入库，但「现场拿公钥验签名」这条流程
    只在构建机上跑过，没有第二个人照 README 独立走过一遍。签名链路的价值全靠这一步。
