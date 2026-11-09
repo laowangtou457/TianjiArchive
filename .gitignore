@@ -28,6 +28,18 @@ packages/shared/.build/
 # client-lite 的 zip 由 installer/client-lite/ 下的源文件现场打包生成（含 BOM/CRLF
 # 与 zip 中文文件名等平台相关字节），入库会随平台漂移，故不入库；源文件必须入库。
 /installer/client-lite/*.zip
+# 变体载荷（.deb 闭包 / docker static tgz）由构建机现场抓取，体积大且平台相关。
+# 注意只忽略这两个目录，不能写成 payload/（会把 common/ 一起吞掉）。
+/installer/build/payload/ubuntu-debian/
+/installer/build/payload/kylin-uos/
+
+# ---------------------------------------------------------------- 定向豁免：installer/build
+# 上面第 4 行的 `build/` 是**无锚点**规则，会把 installer/build/ 整个吞掉（实测
+# git check-ignore 命中 .gitignore:4）。该目录是安装包**源码**（构建脚本 + 载荷模板），
+# 必须入库。同类缺陷本项目已踩过一次（见下方「运行时数据卷」段的说明）。
+# 由于 git 不允许在「父目录被排除」后重新包含其中的文件，这里豁免的正是被排除的
+# 那个目录本身，其内容随后即恢复正常可见。
+!/installer/build/
 
 # ---------------------------------------------------------------- 运行时数据卷
 # docker compose 的宿主机挂载目录（PG/ES/SeaweedFS/Redis 数据 + WAL 归档）

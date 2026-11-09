@@ -1,0 +1,120 @@
+#!/bin/sh
+# =============================================================================
+# 天玑档案管理系统 · 服务器端安装包自解压头（POSIX sh）
+#
+# 本文件是 .run 的前缀；其后紧跟 payload.tar.gz 的原始字节。
+# 构建脚本 build-server-package.sh 会把下面两个占位符替换成真实值，
+# 且保证替换前后文件长度不变（占位符定长），因此 PAYLOAD_OFFSET 始终准确。
+#
+# 职责（仅此四件，业务逻辑全在 Go 安装器里）：
+#   1. 自校验 payload 的 sha256（防传输损坏/U盘静默错误）
+#   2. 释放到 /opt/tianji-installer（安装完成后保留，供重跑与卸载）
+#   3. 校验 bin/tianji-installer 存在且可执行
+#   4. exec 安装器，参数原样透传（--web / --tui / --resume / --verify-only）
+#
+# 设计约束：本脚本不得有任何出网调用（服务器端全程无公网，见设计 §5.3）。
+# =============================================================================
+set -eu
+
+FORMAT_VERSION='1'
+PRODUCT='tianji-archive'
+VERSION='__VERSION__'
+VARIANT='__VARIANT__'
+ARCH='__ARCH__'
+PAYLOAD_SHA256='__PAYLOAD_SHA256__'
+PAYLOAD_OFFSET=__PAYLOAD_OFFSET__
+
+INSTALL_ROOT='/opt/tianji-installer'
+SELF="$0"
+
+say() { printf '[tianji-setup] %s\n' "$*"; }
+die() { printf '[tianji-setup] FAIL: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<EOF
+天玑档案管理系统 · 服务器端离线安装包 ${VERSION}（${VARIANT} / ${ARCH}）
+
+用法： sudo sh $(basename "$SELF") [安装器参数]
+
+  （无参数）        启动本机 Web 安装向导，终端会打印访问地址
+  --tui             无第二台机器时的终端向导（降级入口）
+  --resume          断点重入：从第一个未完成的步骤继续
+  --verify-only     只校验本包完整性，不安装（无需 root）
+  --uninstall       卸载容器与单元，保留业务数据卷
+  --help            显示本帮助
+
+说明：
+  * 安装日志落在 /var/log/tianji-install/<UTC 时间戳>/
+  * 部署根目录为 /opt/tianji/，其中 volumes/ 为业务数据，卸载时默认永不删除
+  * 本安装包全程离线，不会访问任何外网地址
+EOF
+}
+
+# ---- 参数里只看两类：帮助与 --verify-only，其余原样透传给安装器
+NEED_ROOT='yes'
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    --verify-only) NEED_ROOT='no' ;;
+  esac
+done
+
+command -v sha256sum >/dev/null 2>&1 || die '缺少 sha256sum（coreutils），无法自校验'
+command -v tar >/dev/null 2>&1 || die '缺少 tar，无法解包'
+[ -f "$SELF" ] || die "找不到自身文件：$SELF"
+
+# ---- 1. 自校验：只对 payload 段算 sha256，与构建时记录值比对
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tianji-setup.XXXXXX")" || die '无法创建临时目录'
+# 清理必须「尽力而为且不影响退出码」：在 set -e 下，EXIT trap 里的失败命令会
+# 改写整个脚本的退出码——表现为「校验已 PASS 但外部看到非 0」，这是实测踩到的坑。
+cleanup() { rm -rf "$TMP_DIR" >/dev/null 2>&1 || true; }
+trap cleanup EXIT INT TERM
+
+# PAYLOAD_OFFSET 由构建脚本写成定宽 10 位（前导补 0），目的是让替换前后头部
+# 字节数完全相同。但 POSIX sh 的算术展开会把带前导 0 的数字当**八进制**解析，
+# 直接 $((PAYLOAD_OFFSET + 1)) 会算错（实测偏差导致 sha256 校验失败）。
+# 这里先剥掉前导 0 再参与运算。
+OFF="${PAYLOAD_OFFSET#"${PAYLOAD_OFFSET%%[!0]*}"}"
+[ -n "$OFF" ] || OFF=0
+
+say "校验安装包完整性（payload ${PAYLOAD_SHA256}）"
+tail -c "+$((OFF + 1))" "$SELF" > "$TMP_DIR/payload.tar.gz" \
+  || die '无法从自身截取 payload 段（文件可能被截断）'
+
+ACTUAL_SHA="$(sha256sum "$TMP_DIR/payload.tar.gz" | awk '{print $1}')"
+# coreutils 在文件名需要转义时（例如 Windows 风格含反斜杠的路径）会在整行前加
+# 一个反斜杠，awk 取第一列就会把它带进来，导致「哈希其实相同却判定不匹配」。
+# 这里剥掉可能存在的单个前导反斜杠。
+ACTUAL_SHA="${ACTUAL_SHA#\\}"
+if [ "$ACTUAL_SHA" != "$PAYLOAD_SHA256" ]; then
+  die "payload sha256 不匹配：期望 ${PAYLOAD_SHA256}，实际 ${ACTUAL_SHA}。请重新拷贝介质并重试"
+fi
+
+if [ "$NEED_ROOT" = 'no' ]; then
+  say 'PASS：安装包完整（--verify-only 模式，未做任何安装动作）'
+  exit 0
+fi
+
+# ---- 2. 释放到 /opt/tianji-installer
+[ "$(id -u)" = '0' ] || die '需要 root 权限：请用 sudo sh 本文件'
+
+if [ -e "$INSTALL_ROOT" ] && [ ! -w "$INSTALL_ROOT" ]; then
+  die "${INSTALL_ROOT} 存在但不可写：请先处理权限（不自动删除既有安装器目录）"
+fi
+mkdir -p "$INSTALL_ROOT"
+
+say "解包到 ${INSTALL_ROOT}"
+tar -xzf "$TMP_DIR/payload.tar.gz" -C "$INSTALL_ROOT" \
+  || die "解包失败：目标目录 ${INSTALL_ROOT} 可能空间不足"
+
+# ---- 3. 安装器可执行性
+BIN="${INSTALL_ROOT}/bin/tianji-installer"
+[ -f "$BIN" ] || die "载荷缺少 ${BIN}（包不完整）"
+[ -x "$BIN" ] || chmod 0755 "$BIN" 2>/dev/null || die "${BIN} 不可执行且无法赋权"
+
+MANIFEST="${INSTALL_ROOT}/manifest.json"
+[ -f "$MANIFEST" ] || die '载荷缺少 manifest.json（包不完整）'
+
+# ---- 4. 交给安装器（版本/变体由安装器自己从 manifest.json 复读并二次校验）
+say "启动安装器（variant=${VARIANT} version=${VERSION}）"
+exec "$BIN" "$@"

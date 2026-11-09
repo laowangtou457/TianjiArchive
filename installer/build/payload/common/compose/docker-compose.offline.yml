@@ -1,0 +1,299 @@
+# ============================================================================
+# 天玑档案管理系统 —— 封闭环境离线部署编排（方案 A / SeaweedFS S3 Gateway）
+#
+# 与 docker-compose.yml 的唯一差异：**所有服务只用 image:，没有任何 build:**。
+# 镜像由构建机执行 `offline/save-images.sh` 导出为 tar，现场 `load-images.sh` 导入；
+# 全过程不访问公网、不执行 build、不下载任何二进制（含 dl.min.io / mc / npm / apk）。
+# 端口、卷、环境变量与主 compose 保持一致，便于同一份 .env 复用。
+# ============================================================================
+name: tianji-archive
+
+x-common-env: &common-env
+  TZ: ${TZ:-Asia/Shanghai}
+  NODE_ENV: ${NODE_ENV:-production}
+
+x-db-env: &db-env
+  POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_DB: ${POSTGRES_DB:-tianji_archive}
+  POSTGRES_USER: ${POSTGRES_USER:-tianji}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tianji_pwd_change_me}
+
+x-infra-env: &infra-env
+  ES_NODE: ${ES_NODE:-http://elasticsearch:9200}
+  ES_INDEX: ${ES_INDEX:-archive_items}
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-seaweedfs}
+  MINIO_PORT: ${MINIO_PORT:-8333}
+  MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tianji_minio}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
+  MINIO_BUCKET_ORIGINAL: ${MINIO_BUCKET_ORIGINAL:-archive-original}
+  MINIO_BUCKET_PREVIEW: ${MINIO_BUCKET_PREVIEW:-archive-preview}
+  MINIO_BUCKET_THUMB: ${MINIO_BUCKET_THUMB:-archive-thumb}
+  MINIO_BUCKET_BACKUP: ${MINIO_BUCKET_BACKUP:-archive-backup}
+  # R-1 双端点：仅 API 用它签发预签名 URL；与 docker-compose.yml L45-47 逐字一致。
+  # demo 默认 127.0.0.1（浏览器与 Docker 同机）；封闭环境改成宿主机局域网 IP。
+  # api.environment 通过 `<<: [*common-env, *db-env, *infra-env]` 合并继承这三项，
+  # 容器 env 里必须有实际取值，否则 MinioService.publicClient 会退回 127.0.0.1 默认。
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-127.0.0.1}
+  S3_PUBLIC_PORT: ${S3_PUBLIC_PORT:-8333}
+  S3_PUBLIC_USE_SSL: ${S3_PUBLIC_USE_SSL:-false}
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_DB: ${REDIS_DB:-0}
+
+services:
+  # ---------------------------------------------------------------- PostgreSQL 16
+  postgres:
+    image: postgres:16-alpine
+    container_name: tianji-postgres
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      POSTGRES_DB: ${POSTGRES_DB:-tianji_archive}
+      POSTGRES_USER: ${POSTGRES_USER:-tianji}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tianji_pwd_change_me}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /wal_archive/%f && cp %p /wal_archive/%f
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data
+      - ./volumes/wal_archive:/wal_archive
+    ports:
+      - '${POSTGRES_EXPOSED_PORT:-5432}:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-tianji} -d ${POSTGRES_DB:-tianji_archive}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - tianji-net
+
+  # ---------------------------------------------------------------- Elasticsearch 8 + IK（预构建镜像）
+  elasticsearch:
+    image: tianji-elasticsearch-ik:8.13.4
+    container_name: tianji-elasticsearch
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      discovery.type: single-node
+      xpack.security.enabled: 'false'
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms1g -Xmx1g}
+      bootstrap.memory_lock: 'true'
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+      - ./volumes/esdata:/usr/share/elasticsearch/data
+    ports:
+      - '${ES_EXPOSED_PORT:-9200}:9200'
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:9200/_cluster/health || exit 1']
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks:
+      - tianji-net
+
+  # ---------------------------------------------------------------- SeaweedFS S3 Gateway
+  # 凭据：entrypoint.sh 启动时由 MINIO_ACCESS_KEY / MINIO_SECRET_KEY 渲染 /tmp/s3.json，
+  # 模板 s3.json.tpl 不含真实凭据；离线现场不联网、不构建镜像。
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.79
+    container_name: tianji-seaweedfs
+    restart: unless-stopped
+    entrypoint: ['/bin/sh', '/scripts/entrypoint.sh']
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tianji_minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
+      # 与 docker-compose.yml 的 seaweedfs.environment 一致：entrypoint.sh 用这 4 个
+      # 桶名渲染 s3.json 的桶级授权。若不注入，封闭环境自定义桶名时 API 用的桶名
+      # 与 s3.json 授权的桶名会静默错配（回落到默认名）→ putObject AccessDenied。
+      MINIO_BUCKET_ORIGINAL: ${MINIO_BUCKET_ORIGINAL:-archive-original}
+      MINIO_BUCKET_PREVIEW: ${MINIO_BUCKET_PREVIEW:-archive-preview}
+      MINIO_BUCKET_THUMB: ${MINIO_BUCKET_THUMB:-archive-thumb}
+      MINIO_BUCKET_BACKUP: ${MINIO_BUCKET_BACKUP:-archive-backup}
+    volumes:
+      - ./volumes/seaweedfs:/data
+      - ./seaweedfs/entrypoint.sh:/scripts/entrypoint.sh:ro
+      - ./seaweedfs/s3.json.tpl:/scripts/s3.json.tpl:ro
+    ports:
+      # R-2：宿主只发布 S3(8333) 一条，与 docker-compose.yml 一致；master / filer /
+      # volume(8081) / gRPC 端口全部只在容器网络内可达（见 offline/README.md §四端口表）。
+      - '${SEAWEEDFS_S3_EXPOSED_PORT:-8333}:8333'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -qE "HTTP/1\.[01] (200|403)" || exit 1',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - tianji-net
+
+  # ---------------------------------------------------------------- Redis 7
+  redis:
+    image: redis:7-alpine
+    container_name: tianji-redis
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes
+      --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - ./volumes/redis:/data
+    ports:
+      - '${REDIS_EXPOSED_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - tianji-net
+
+  # ---------------------------------------------------------------- API（NestJS，预构建镜像）
+  api:
+    image: tianji-archive-api:1.0.0
+    container_name: tianji-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: [*common-env, *db-env, *infra-env]
+      API_PORT: ${API_PORT:-3000}
+      API_PREFIX: ${API_PREFIX:-api}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-please_change_this_access_secret_32chars}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-please_change_this_refresh_secret_32chars}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-2h}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-14d}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
+      PWD_MIN_LENGTH: ${PWD_MIN_LENGTH:-10}
+      PWD_EXPIRE_DAYS: ${PWD_EXPIRE_DAYS:-90}
+      PWD_MAX_FAILED: ${PWD_MAX_FAILED:-5}
+      PWD_LOCK_MINUTES: ${PWD_LOCK_MINUTES:-30}
+      PREVIEW_WATERMARK: ${PREVIEW_WATERMARK:-true}
+      DOWNLOAD_ENABLED: ${DOWNLOAD_ENABLED:-false}
+      EXTRACT_QUEUE_NAME: ${EXTRACT_QUEUE_NAME:-archive-extract}
+    ports:
+      - '${API_EXPOSED_PORT:-3000}:3000'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://127.0.0.1:3000/api/health'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    networks:
+      - tianji-net
+
+  # ---------------------------------------------------------------- Extractor Worker
+  extractor:
+    image: tianji-archive-extractor:1.0.0
+    container_name: tianji-extractor
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      <<: [*common-env, *db-env, *infra-env]
+      EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-4}
+      EXTRACT_QUEUE_NAME: ${EXTRACT_QUEUE_NAME:-archive-extract}
+      OFFICE_SOFFICE_PATH: ${OFFICE_SOFFICE_PATH:-/usr/bin/soffice}
+      FFMPEG_PATH: ${FFMPEG_PATH:-/usr/bin/ffmpeg}
+      THUMB_MAX_EDGE: ${THUMB_MAX_EDGE:-480}
+    networks:
+      - tianji-net
+
+  # ---------------------------------------------------------------- Web（Nginx + SPA）
+  web:
+    image: tianji-archive-web:1.0.0
+    container_name: tianji-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - '${WEB_PORT:-8080}:80'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O - http://127.0.0.1/healthz || exit 1']
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tianji-net
+
+  # ---------------------------------------------------------------- 备份 sidecar（aws-cli）
+  backup:
+    image: tianji-archive-backup:1.0.0
+    container_name: tianji-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      <<: [*common-env, *db-env]
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-seaweedfs}
+      MINIO_PORT: ${MINIO_PORT:-8333}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tianji_minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
+      MINIO_BUCKET_BACKUP: ${MINIO_BUCKET_BACKUP:-archive-backup}
+      MINIO_BUCKET_ORIGINAL: ${MINIO_BUCKET_ORIGINAL:-archive-original}
+      AWS_ENDPOINT_URL: http://${MINIO_ENDPOINT:-seaweedfs}:${MINIO_PORT:-8333}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-tianji_minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: 'true'
+      BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_DIR: ${BACKUP_DIR:-/backup}
+    volumes:
+      - ./volumes/backup:/backup
+    networks:
+      - tianji-net
+
+networks:
+  tianji-net:
+    driver: bridge

@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# =============================================================================
+# 构建机脚本：生成 manifest.json + SHA256SUMS.txt（可签名）
+#
+# 这是安装包「可信起点」的落点：
+#   - manifest.json 记录变体/版本/期望内核/文件清单与每文件 sha256，
+#     以及 images.tar 的 sha256（必须与 offline/SHA256SUMS 同源，§2.2 关键约定）
+#   - SHA256SUMS.txt 供现场 --verify-only 逐文件校验
+#   - --sign 时用 gpg 分离签名出 SHA256SUMS.sig（公钥内置于安装器二进制）
+#
+# 用法：
+#   bash installer/build/make-manifest.sh --dir dist/installer/staging \
+#        --variant ubuntu-debian --version 1.0.0 --images-tar offline/tianji-offline-images.tar
+#   bash installer/build/make-manifest.sh --dir ... --sign
+#
+# 退出码：0 成功；1 参数或前置不满足；2 生成失败；3 签名失败
+# =============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+STAGE_DIR=''
+VARIANT=''
+VERSION='1.0.0'
+CODENAME=''
+IMAGES_TAR=''
+DO_SIGN='no'
+GPG_KEY=''
+
+log() { printf '[manifest] %s\n' "$*"; }
+die() { printf '[manifest] FAIL: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+用法: make-manifest.sh --dir <staging> --variant <a|b> [选项]
+
+  --dir <dir>         必填。已组装好的 payload 暂存目录（内含 bin/ common/ docker/ 等）
+  --variant <v>       必填。ubuntu-debian | kylin-uos
+  --version <v>       版本号，默认 1.0.0
+  --codename <c>      变体 A 的目标 codename（jammy/noble/bookworm）
+  --images-tar <f>    镜像 tar 路径；给了就记录其 sha256，没给则 manifest 里留空并 WARN
+  --sign              用 gpg 分离签名生成 SHA256SUMS.sig
+  --gpg-key <id>      签名用密钥 ID（默认取 gpg 默认密钥）
+  -h | --help         显示本帮助
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dir) STAGE_DIR="${2:-}"; shift 2 ;;
+    --variant) VARIANT="${2:-}"; shift 2 ;;
+    --version) VERSION="${2:-}"; shift 2 ;;
+    --codename) CODENAME="${2:-}"; shift 2 ;;
+    --images-tar) IMAGES_TAR="${2:-}"; shift 2 ;;
+    --sign) DO_SIGN='yes'; shift ;;
+    --gpg-key) GPG_KEY="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "未知参数：$1（用 --help 看用法）" ;;
+  esac
+done
+
+[ -n "${STAGE_DIR}" ] || die '必须指定 --dir'
+[ -d "${STAGE_DIR}" ] || die "目录不存在：${STAGE_DIR}"
+STAGE_DIR="$(cd "${STAGE_DIR}" && pwd)"
+
+case "${VARIANT}" in
+  ubuntu-debian|kylin-uos) : ;;
+  *) die "--variant 只能是 ubuntu-debian 或 kylin-uos，收到：${VARIANT}" ;;
+esac
+if [ "${VARIANT}" = 'ubuntu-debian' ]; then
+  [ -n "${CODENAME}" ] || die '变体 A 必须给 --codename（安装器按现场 os-release 精确匹配，不匹配即 fail-closed）'
+fi
+
+command -v sha256sum >/dev/null 2>&1 || die '缺少 sha256sum'
+
+# ---------------------------------------------------------------- images tar
+IMAGES_NAME='tianji-offline-images.tar'
+IMAGES_SHA=''
+IMAGES_COUNT='0'
+if [ -n "${IMAGES_TAR}" ]; then
+  [ -f "${IMAGES_TAR}" ] || die "镜像 tar 不存在：${IMAGES_TAR}"
+  IMAGES_NAME="$(basename "${IMAGES_TAR}")"
+  log '计算镜像 tar 的 sha256（约 1.5GB，需要等待）'
+  IMAGES_SHA="$(sha256sum "${IMAGES_TAR}" | awk '{print $1}')"
+  # 与 offline/SHA256SUMS 同源：若该文件存在，必须逐字一致，不允许各算各的
+  SUMS="${REPO_ROOT}/offline/SHA256SUMS"
+  if [ -f "${SUMS}" ]; then
+    RECORDED="$(awk -v n="${IMAGES_NAME}" '$2 == n || $2 == "./" n {print $1; exit}' "${SUMS}")"
+    if [ -n "${RECORDED}" ] && [ "${RECORDED}" != "${IMAGES_SHA}" ]; then
+      die "镜像 tar 的 sha256 与 offline/SHA256SUMS 记录不一致：记录 ${RECORDED} 实际 ${IMAGES_SHA}"
+    fi
+    if [ -n "${RECORDED}" ]; then
+      log '与 offline/SHA256SUMS 记录一致'
+    fi
+  else
+    log 'WARN: 未找到 offline/SHA256SUMS，无法做同源交叉核对'
+  fi
+else
+  log 'WARN: 未指定 --images-tar，manifest.images_tar.sha256 将为空'
+fi
+
+# ---------------------------------------------------------------- 文件清单
+SUMS_FILE="${STAGE_DIR}/SHA256SUMS.txt"
+: > "${SUMS_FILE}"
+FILE_COUNT=0
+# 用相对路径、按字典序，保证同样输入产出同样清单（可复现）
+while IFS= read -r rel; do
+  [ -n "${rel}" ] || continue
+  ( cd "${STAGE_DIR}" && sha256sum "${rel}" ) >> "${SUMS_FILE}"
+  FILE_COUNT=$((FILE_COUNT + 1))
+done < <( cd "${STAGE_DIR}" && find . -type f \
+            ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.sig' ! -name 'manifest.json' \
+            -printf '%P\n' | LC_ALL=C sort )
+[ "${FILE_COUNT}" -gt 0 ] || die '暂存目录里没有任何文件'
+log "文件清单：${FILE_COUNT} 个"
+
+# ---------------------------------------------------------------- manifest.json
+GIT_HEAD='unknown'
+if command -v git >/dev/null 2>&1 && [ -d "${REPO_ROOT}/.git" ]; then
+  GIT_HEAD="$(cd "${REPO_ROOT}" && git rev-parse HEAD 2>/dev/null || echo unknown)"
+fi
+BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BUILDER="$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)"
+
+JSON="${STAGE_DIR}/manifest.json"
+{
+  printf '{\n'
+  printf '  "format_version": 1,\n'
+  printf '  "product": "tianji-archive",\n'
+  printf '  "version": "%s",\n' "${VERSION}"
+  printf '  "variant": "%s",\n' "${VARIANT}"
+  printf '  "arch": "amd64",\n'
+  printf '  "min_kernel": "4.19",\n'
+  if [ -n "${CODENAME}" ]; then
+    printf '  "os_codename": "%s",\n' "${CODENAME}"
+  fi
+  if [ "${VARIANT}" = 'ubuntu-debian' ]; then
+    printf '  "docker": { "channel": "deb", "version": "from DEBS-MANIFEST.txt" },\n'
+  else
+    printf '  "docker": { "channel": "static", "version": "from STATIC-MANIFEST.txt" },\n'
+  fi
+  printf '  "images_tar": { "filename": "%s", "sha256": "%s" },\n' "${IMAGES_NAME}" "${IMAGES_SHA}"
+  printf '  "file_count": %d,\n' "${FILE_COUNT}"
+  printf '  "build": { "git_head": "%s", "built_at_utc": "%s", "builder": "%s" }\n' \
+    "${GIT_HEAD}" "${BUILT_AT}" "${BUILDER}"
+  printf '}\n'
+} > "${JSON}"
+
+# JSON 合法性自校验（缺 python3 时退化为结构检查，不静默放过）
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "${JSON}" \
+    || die 'manifest.json 不是合法 JSON'
+  log 'manifest.json 解析 OK'
+else
+  log 'WARN: 无 python3，跳过 JSON 解析自校验'
+fi
+
+# ---------------------------------------------------------------- 签名
+if [ "${DO_SIGN}" = 'yes' ]; then
+  command -v gpg >/dev/null 2>&1 || die '--sign 需要 gpg，但未安装'
+  SIG="${SUMS_FILE}.sig"
+  rm -f "${SIG}"
+  if [ -n "${GPG_KEY}" ]; then
+    gpg --batch --yes --local-user "${GPG_KEY}" --detach-sign --armor -o "${SIG}" "${SUMS_FILE}" \
+      || die 'gpg 签名失败（用了 --gpg-key ${GPG_KEY}）'
+  else
+    gpg --batch --yes --detach-sign --armor -o "${SIG}" "${SUMS_FILE}" || die 'gpg 签名失败'
+  fi
+  [ -s "${SIG}" ] || die '签名文件为空'
+  log "已签名：${SIG}"
+else
+  log 'WARN: 未签名（--sign 未开启）。正式交付必须签名，见设计 §4.4 L-b'
+fi
+
+log "完成：${JSON}"
+log "      ${SUMS_FILE}"
