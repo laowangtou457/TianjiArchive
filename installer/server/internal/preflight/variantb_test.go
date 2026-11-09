@@ -237,22 +237,80 @@ func TestCheckVariantBCommandMissingIsReported(t *testing.T) {
 	}
 }
 
-// TestCheckVariantBTimeoutIsReported 超时必须与「失败」区分开。
-func TestCheckVariantBTimeoutIsReported(t *testing.T) {
-	root := kylinFixture(t, nil)
+// TestCheckVariantBTimeoutWithoutOverlayWarns 超时必须与「失败」区分开。
+//
+// 口径（与 K3 同源，2026-11-10）：modprobe 超时/失败且 /proc/filesystems 也没有
+// overlay → WARN（dockerd 会退回 vfs，磁盘放大 14~26 倍）；Raw 要留下「命令超时」。
+func TestCheckVariantBTimeoutWithoutOverlayWarns(t *testing.T) {
+	root := kylinFixture(t, map[string]string{
+		// 全新机器的形态：overlay 模块没加载，文件里自然没有 overlay。
+		"proc/filesystems": "nodev\tsysfs\n\txfs\n",
+	})
 	r := kylinRunner()
 	r.err = map[string]error{"modprobe overlay": context.DeadlineExceeded}
 	rep := CheckVariantB(context.Background(), VariantBOptions{RootDir: root, Runner: r})
 
 	got := itemByID(t, rep, "B5")
 	if got.Level != LevelWarn {
-		t.Fatalf("modprobe 超时应 WARN（会退回 vfs），实际 %v", got.Level)
+		t.Fatalf("modprobe 超时且无 overlay 应 WARN（会退回 vfs），实际 %v", got.Level)
 	}
 	if !strings.Contains(got.Raw, "命令超时") {
 		t.Errorf("Raw 里要留下「命令超时」，实际:\n%s", got.Raw)
 	}
 	if !strings.Contains(got.Hint, "vfs") {
 		t.Errorf("提示要说明会退回 vfs 及其代价，实际: %s", got.Hint)
+	}
+	if got := rep.Facts["overlay_usable"]; got != "false" {
+		t.Errorf("Facts[overlay_usable] = %q，期望 false", got)
+	}
+}
+
+// TestCheckVariantBTimeoutWithOverlayPasses 超时但 overlay 已在：以文件为准，判 PASS。
+//
+// 旧写法在这里误报 WARN，且理由自相矛盾（同一份日志里「modprobe: ok」与
+// 「含 overlay: false」并存）。模块已加载/内建时 modprobe 失败是正常现象。
+func TestCheckVariantBTimeoutWithOverlayPasses(t *testing.T) {
+	root := kylinFixture(t, nil) // fixture 默认含 `nodev overlay`
+	r := kylinRunner()
+	r.err = map[string]error{"modprobe overlay": context.DeadlineExceeded}
+	rep := CheckVariantB(context.Background(), VariantBOptions{RootDir: root, Runner: r})
+
+	got := itemByID(t, rep, "B5")
+	if got.Level != LevelPass {
+		t.Fatalf("overlay 已列出时应 PASS（modprobe 失败不算数），实际 %v: %s", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Raw, "modprobe 之后读取") {
+		t.Errorf("Raw 要注明读取时序（modprobe 之后），实际:\n%s", got.Raw)
+	}
+	if got := rep.Facts["overlay_usable"]; got != "true" {
+		t.Errorf("Facts[overlay_usable] = %q，期望 true", got)
+	}
+}
+
+// TestCheckVariantBFreshMachineOverlay 全新麒麟机器的 B5 用例。
+//
+// 真机实测：overlay 模块默认不加载，/proc/filesystems 里没有 overlay 行；
+// 旧写法先读文件（没有）再 modprobe 且成功后不重读，于是 B5 必然误报 WARN。
+// 新口径：modprobe 退出码 0 即支持，即使文件里没有 overlay。
+func TestCheckVariantBFreshMachineOverlay(t *testing.T) {
+	root := kylinFixture(t, map[string]string{
+		"proc/filesystems": "nodev\tsysfs\n\txfs\n",
+	})
+	r := kylinRunner() // "modprobe overlay": "" → 退出码 0
+	rep := CheckVariantB(context.Background(), VariantBOptions{RootDir: root, Runner: r})
+
+	got := itemByID(t, rep, "B5")
+	if got.Level != LevelPass {
+		t.Fatalf("modprobe 成功即支持，全新机器不应误报，实际 %v: %s", got.Level, got.Detail)
+	}
+	if !strings.Contains(got.Raw, "modprobe overlay: ok") {
+		t.Errorf("Raw 要记录 modprobe 成功，实际:\n%s", got.Raw)
+	}
+	if got := rep.Facts["overlay_usable"]; got != "true" {
+		t.Errorf("Facts[overlay_usable] = %q，期望 true", got)
+	}
+	if got := rep.Facts["overlay_in_proc_filesystems"]; got != "false" {
+		t.Errorf("Facts[overlay_in_proc_filesystems] = %q，期望 false（modprobe 前后都不含）", got)
 	}
 }
 

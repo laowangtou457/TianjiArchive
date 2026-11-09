@@ -156,16 +156,54 @@ func Check(ctx context.Context, opts Options) *Report {
 		}
 	}
 
-	// K3 overlay2
-	if out, err := readFile(filepath.Join(opts.RootDir, "proc/filesystems")); err == nil {
-		if strings.Contains(out, "overlay") {
-			add(Item{ID: "K3", Title: "overlay2 文件系统", Level: LevelPass, Detail: "内核支持 overlay", Raw: strings.TrimSpace(out)})
-		} else {
-			add(Item{ID: "K3", Title: "overlay2 文件系统", Level: LevelFail, Detail: "/proc/filesystems 中无 overlay",
-				Hint: "只能退回 vfs，磁盘占用与性能不可接受；请换内核或开启 overlay 模块"})
-		}
+	// K3 overlay2 —— 判定顺序必须是「先 modprobe，再读 /proc/filesystems」。
+	//
+	// 真机实测（麒麟 V10 SP3，2026-11-10）：全新机器的 overlay 模块默认不加载，
+	// /proc/filesystems 只在模块加载**之后**才列 `nodev overlay`。旧写法先读文件再
+	// modprobe，于是同一份预检日志自相矛盾——「modprobe overlay: ok」与
+	// 「/proc/filesystems 含 overlay: false」并存，且在全新机器上必然误报 FAIL。
+	// 统一口径（K3 与变体 B 的 B5 同源）：支持 = modprobe 退出码 0 或 modprobe 后
+	// /proc/filesystems 含 overlay。modprobe 的输出/错误要留在 Raw 里，不许静默。
+	modOut, modErr := opts.Runner.Run(ctx, "modprobe", "overlay")
+	fsOut, fsErr := readFile(filepath.Join(opts.RootDir, "proc/filesystems"))
+	hasOverlay := fsErr == nil && strings.Contains(fsOut, "overlay")
+
+	raw := "modprobe overlay: "
+	switch {
+	case modErr == nil:
+		raw += "ok"
+	default:
+		raw += "失败（" + modErr.Error() + "）"
+	}
+	if strings.TrimSpace(modOut) != "" {
+		raw += "\n  输出: " + strings.TrimSpace(modOut)
+	}
+	if fsErr != nil {
+		raw += "\n/proc/filesystems 读不到: " + fsErr.Error()
 	} else {
-		add(Item{ID: "K3", Title: "overlay2 文件系统", Level: LevelWarn, Detail: "读不到 /proc/filesystems: " + err.Error()})
+		raw += "\n/proc/filesystems 含 overlay（modprobe 之后读取）: " + strconv.FormatBool(hasOverlay)
+	}
+
+	switch {
+	case modErr == nil || hasOverlay:
+		how := "modprobe 成功"
+		if modErr != nil {
+			how = "模块已加载/内建（/proc/filesystems 直接列出）"
+		}
+		rep.Facts["overlay"] = "supported"
+		add(Item{ID: "K3", Title: "overlay2 文件系统", Level: LevelPass,
+			Detail: "内核支持 overlay（" + how + "）", Raw: raw})
+	case fsErr != nil:
+		rep.Facts["overlay"] = "unknown"
+		add(Item{ID: "K3", Title: "overlay2 文件系统", Level: LevelWarn,
+			Detail: "modprobe 失败且读不到 /proc/filesystems，无法判定 overlay 支持", Raw: raw,
+			Hint: "手工跑 `modprobe overlay && grep overlay /proc/filesystems` 后重装"})
+	default:
+		rep.Facts["overlay"] = "unsupported"
+		add(Item{ID: "K3", Title: "overlay2 文件系统", Level: LevelFail,
+			Detail: "内核不支持 overlayfs，无法运行 Docker", Raw: raw,
+			Hint: "modprobe overlay 失败且 /proc/filesystems 无 overlay：内核没有 overlay 模块。" +
+				"只能退回 vfs（磁盘占用与性能不可接受）；请换内核或开启 overlay 模块"})
 	}
 
 	// K4 cgroup
@@ -183,7 +221,13 @@ func Check(ctx context.Context, opts Options) *Report {
 		add(Item{ID: "K4", Title: "cgroup", Level: LevelWarn, Detail: "stat /sys/fs/cgroup 失败: " + err.Error()})
 	}
 
-	// K5 vm.max_map_count —— ES 启动的硬门槛
+	// K5 vm.max_map_count —— ES 启动的硬门槛。
+	//
+	// 判级是 WARN 不是 FAIL（真机 e2e 2026-11-10 裁定）：payload 里带
+	// /etc/sysctl.d/99-tianji.conf（vm.max_map_count=262144），S3_DOCKER 会落盘并
+	// `sysctl --system` 生效、回读核对。S1 把一个会被 S3 自动修复的项判成阻断 FAIL
+	// 是自相矛盾——但这只能由 S3 的回读来背书（kernel.EnsureKernelParams 留了
+	// before/after，生效值仍 < 262144 会在 S3 阻断），不能在这里静默放行了事。
 	if out, err := opts.Runner.Run(ctx, "sysctl", "-n", "vm.max_map_count"); err == nil {
 		val := strings.TrimSpace(out)
 		rep.Facts["vm.max_map_count"] = val
@@ -191,13 +235,17 @@ func Check(ctx context.Context, opts Options) *Report {
 			add(Item{ID: "K5", Title: "vm.max_map_count", Level: LevelPass,
 				Detail: fmt.Sprintf("%d（要求 ≥ 262144）", n), Raw: val})
 		} else {
-			add(Item{ID: "K5", Title: "vm.max_map_count", Level: LevelFail,
-				Detail: fmt.Sprintf("%s（要求 ≥ 262144）", val), Raw: val,
-				Hint: "ES 8 会因 mmap 数量不足直接退出（bootstrap.memory_lock: true）；安装器会写入 /etc/sysctl.d/99-tianji.conf"})
+			add(Item{ID: "K5", Title: "vm.max_map_count", Level: LevelWarn,
+				Detail: fmt.Sprintf("%s（要求 ≥ 262144；S3_DOCKER 将自动修复）", val), Raw: val,
+				Hint: "ES 8 会因 mmap 数量不足直接退出（bootstrap.memory_lock: true）。" +
+					"S3_DOCKER 将写入 /etc/sysctl.d/99-tianji.conf 并 `sysctl --system` 生效，" +
+					"生效后回读核对 ≥ 262144，不满足会在 S3 阻断；想提前修可手工 " +
+					"`sysctl -w vm.max_map_count=262144`"})
 		}
 	} else {
-		add(Item{ID: "K5", Title: "vm.max_map_count", Level: LevelFail, Detail: "sysctl 不可用: " + err.Error(),
-			Hint: "读不到该参数就无法确认 ES 能否启动"})
+		add(Item{ID: "K5", Title: "vm.max_map_count", Level: LevelWarn, Detail: "sysctl 不可用: " + err.Error(),
+			Hint: "现在读不到无法预判，但 S3_DOCKER 会写入 /etc/sysctl.d/99-tianji.conf 并回读核对 ≥ 262144；" +
+				"届时仍低于要求会在 S3 阻断（不会静默放行）"})
 	}
 
 	// K6/K7 ulimit（用 sh -c 读当前 shell 的软限制）
@@ -281,8 +329,14 @@ func Check(ctx context.Context, opts Options) *Report {
 				level, hint := LevelPass, ""
 				switch {
 				case gb < 8:
+					// 判据不动（真机 e2e 2026-11-10 裁定）：内存不足就是不足，S1 不许放行。
+					// 只改文案——真麒麟默认 crashkernel=1024M,high 占约 1GB，8GB 物理机
+					// MemTotal ≈ 6.5GB，只说「内存不足」会让现场以为唯一出路是换机器。
 					level = LevelFail
-					hint = "内存不足 8GB：ES 1g heap + PG shared_buffers 512MB + 8 个容器必然 OOM"
+					hint = "内存不足 8GB：ES 1g heap + PG shared_buffers 512MB + 8 个容器必然 OOM。" +
+						"注意麒麟默认 crashkernel=1024M,high 会占约 1GB，MemTotal ≈ 物理内存 − 1GB" +
+						"（8GB 物理机的 MemTotal ≈ 6.5GB，按本判据 FAIL 是正确行为）。出路两条：" +
+						"① 加内存到 8GB 以上；② 确认不需要 kdump 后，在内核参数中去掉 crashkernel（grub 配置）并重启"
 				case gb < 16:
 					level = LevelWarn
 					hint = "建议 ≥ 16GB：8GB 能跑但无余量"

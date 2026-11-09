@@ -324,10 +324,18 @@ func checkOverlay2Prereq(ctx context.Context, opts VariantBOptions, rep *Report)
 	}
 	major, minor := parseKernel(kernel)
 
-	fsList, _ := readFile(filepath.Join(opts.RootDir, "proc/filesystems"))
-	hasOverlay := strings.Contains(fsList, "overlay")
-
+	// 判定顺序必须是「先 modprobe，再读 /proc/filesystems」，与 K3 同一口径。
+	//
+	// 真机实测（麒麟 V10 SP3，2026-11-10）：全新机器的 overlay 模块默认不加载，
+	// /proc/filesystems 只在模块加载**之后**才列 `nodev overlay`。旧写法先读文件再
+	// modprobe，且 modprobe 成功后不重读——同一份日志里「modprobe overlay: ok」与
+	// 「/proc/filesystems 含 overlay: false」并存，WARN 理由永远错。
+	// 支持 = modprobe 退出码 0 或 modprobe 后 /proc/filesystems 含 overlay。
 	modOut, modErr := opts.Runner.Run(ctx, "modprobe", "overlay")
+	fsList, fsListErr := readFile(filepath.Join(opts.RootDir, "proc/filesystems"))
+	hasOverlay := fsListErr == nil && strings.Contains(fsList, "overlay")
+	overlayUsable := modErr == nil || hasOverlay
+
 	fsTypeRaw, fsTypeErr := opts.Runner.Run(ctx, "stat", "-f", "-c", "%T", opts.DataDir)
 	fsType := strings.TrimSpace(fsTypeRaw)
 
@@ -335,22 +343,28 @@ func checkOverlay2Prereq(ctx context.Context, opts VariantBOptions, rep *Report)
 		rep.Facts["kernel"] = kernel
 	}
 	rep.Facts["overlay_in_proc_filesystems"] = strconv.FormatBool(hasOverlay)
+	rep.Facts["overlay_usable"] = strconv.FormatBool(overlayUsable)
 	if fsTypeErr == nil {
 		rep.Facts["data_fs"] = fsType
 	}
 
 	var raw strings.Builder
 	fmt.Fprintf(&raw, "uname -r: %s\n", orDash(kernel))
-	fmt.Fprintf(&raw, "/proc/filesystems 含 overlay: %v\n", hasOverlay)
-	if modErr != nil {
-		fmt.Fprintf(&raw, "modprobe overlay: %s\n", describeRunErr(modErr))
-	} else {
+	if modErr == nil {
 		raw.WriteString("modprobe overlay: ok\n")
-		_ = modOut
+	} else {
+		fmt.Fprintf(&raw, "modprobe overlay: 失败（%s）\n", describeRunErr(modErr))
+	}
+	if strings.TrimSpace(modOut) != "" {
+		fmt.Fprintf(&raw, "  输出: %s\n", strings.TrimSpace(modOut))
+	}
+	if fsListErr != nil {
+		fmt.Fprintf(&raw, "/proc/filesystems 读不到: %s\n", fsListErr.Error())
+	} else {
+		// 注明读取时序：这是 modprobe 之后读的，不再是「载入前」的旧状态。
+		fmt.Fprintf(&raw, "/proc/filesystems 含 overlay（modprobe 之后读取）: %v\n", hasOverlay)
 	}
 	fmt.Fprintf(&raw, "stat -f %s: %s\n", opts.DataDir, orDash(fsType))
-
-	overlayUsable := hasOverlay && modErr == nil
 	switch {
 	case kernelErr != nil:
 		return Item{ID: id, Title: title, Level: LevelWarn,
