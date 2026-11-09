@@ -3,12 +3,15 @@
 本目录是 `docs/INSTALLER-DESIGN.md` 的实现落点。**只放构建机侧代码与载荷模板**，
 服务器端运行期逻辑在 `server/`（Go 静态二进制），用户端在 `client-lite/`。
 
-> 状态（本轮）：`build/` 与 `server/` 两侧均已打通。
-> `server/` 为 25 个 Go 文件 / 9 个测试文件，`go test ./...` **67 pass / 3 skip（Windows
+> 状态（本轮）：`build/` 与 `server/` 两侧均已打通，**真载荷、真签名、真体积的包已经出来了**。
+> `server/` 为 16 个 Go 文件 / 10 个测试文件，`go test ./...` **71 pass / 3 skip（Windows
 > 无 `sh` 的三个用例）**，`gofmt -l` 与 `go vet` 均干净；交叉编译产物
-> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,332,568 字节，真实 `.run` 已在
-> `ubuntu:22.04` 容器内跑通「自解压 → 逐文件深度校验 → Web 向导 → 环境体检」。
-> 未验证的部分见文末「仍然没验证的事」，逐条如实登记。
+> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,344,856 字节。
+> 真实安装包 = 150,088,493 字节（含 85 个真 `.deb` / 147,505,075 字节闭包），G1/G2/G3 全绿，
+> `SHA256SUMS.asc` 已签。
+> 安装器本体在 `ubuntu:22.04` 容器内跑到过 `S3_DOCKER` 完成（真 dpkg 装真闭包 + 真 dockerd 起来），
+> 第 ③ 步「特权 systemd 容器十步端到端」**在 S4 因构建机磁盘写满而中断**，未跑完，
+> 详见文末「仍然没验证的事」第 1 条——不打包成「已通过」。
 
 ## 目录
 
@@ -20,6 +23,8 @@ installer/
 │   ├── build-server-package.sh     # 主打包脚本，产出 .run（三道 fail-closed 闸门）
 │   ├── make-manifest.sh            # manifest.json（含 files[] 与 image_count）+ SHA256SUMS + 签名
 │   ├── selfextract/header.sh.in    # .run 的自解压头模板（POSIX sh）
+│   ├── pubkeys/tianji-build.asc    # 构建密钥公钥 + 指纹（现场核验用；私钥不入库）
+│   ├── README.md                   # 本目录的职责/坑/签名核验（改脚本前先读）
 │   └── payload/
 │       ├── common/
 │       │   ├── compose/docker-compose.offline.yml
@@ -62,16 +67,29 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
   -ldflags '-s -w -X main.version=1.0.0' \
   -o installer/server/dist/tianji-installer ./installer/server/cmd/tianji-installer
 bash installer/build/build-server-package.sh --variant ubuntu-debian --codename jammy \
-  --images-tar offline/tianji-offline-images.tar --sign
+  --images-tar offline/tianji-offline-images.tar \
+  --sign --gpg-key 0AD2912CF8FE57E202C275F20A038555B153ACC9
 
 # 变体 B（麒麟 V10 / 统信 UOS）
 bash installer/build/fetch-docker-static.sh
 bash installer/build/build-server-package.sh --variant kylin-uos \
-  --images-tar offline/tianji-offline-images.tar --sign
+  --images-tar offline/tianji-offline-images.tar \
+  --sign --gpg-key 0AD2912CF8FE57E202C275F20A038555B153ACC9
 
 # 只重算清单与签名
 bash installer/build/make-manifest.sh --dir <staging> --variant ubuntu-debian --sign
 ```
+
+> `--gpg-key` 建议**总是显式给**：构建机上通常还有开发用密钥，靠「默认密钥」会在换机器时
+> 静默签到另一把钥匙上，现场拿公钥一验就对不上，而错因会指向「包被篡改」这个完全错误的方向。
+>
+> `go build` 必须在 `installer/server`（Go 模块目录）里执行；在仓库根执行
+> `go build ./installer/server/...` 会报 `cannot find main module`。
+>
+> 抓闭包只需要**直连**，不要设 `HTTP(S)_PROXY`（实测设了反而被中间设备掐 TLS：
+> `curl: (35) error:0A000126:SSL routines::unexpected eof while reading`）；
+> 镜像源抖动时用 `--docker-base https://mirrors.aliyun.com/docker-ce/linux/ubuntu` 换源，
+> 换源不降低安全性——摘要才是可信锚点。
 
 产物落在 `dist/installer/`（不入库），与 `offline/tianji-offline-images.tar`
 **分离分发**（设计 §7.1），交付时必须同目录。
@@ -152,6 +170,26 @@ Web 安全边界（设计 §3.3）：默认只绑回环；`--listen` 到非回�
     假警报会直接让现场操作员不信任安装器的判定。
 11. **`DEBS-MANIFEST.txt` 兼容 `hash *name`**。GNU coreutils 的二进制模式（`sha256sum -b`
     或 Git Bash 默认）会在文件名前加 `*`，不认就会报「哈希明明相同却未登记」。
+12. **`dpkg -i` 允许补装一轮**。实测（85 个真 deb，特权 systemd 容器）：单次 `dpkg -i`
+    按**参数顺序**逐个检查 Pre-Depends，`python3-minimal` 的 Pre-Depends 是
+    `python3.10-minimal`，而字典序把它排在前面 → 报「`python3.10-minimal` is not installed」，
+    连带 `networkd-dispatcher`/`python3-dbus`/`python3-gi` 失败，整步 S3 判 FAIL。
+    可那个包就在同一批参数里，只是还没轮到解包。修法：第 1 轮失败 → `dpkg --configure -a`
+    → 补装第 2 轮，两轮都失败才判失败。**仍然不自动 `--force-depends`**：
+    那会把「依赖真不满足」降级成「装上了但起不来」，现场更难查。
+13. **`--resume` 从 `.env` 读回表单值**。`--resume` 此前只是 usage 里写了、`main` 的
+    switch 没有分支（实际落 `--web`，等于文档骗人）；接上之后还有个坑：重入时 8 项凭据
+    是空的，用户得为已填过的表单再抄一遍，且 `S10` 汇总的访问地址取自
+    `values.Endpoint`，读不回来会印出 `http://:8080`——「装完了但地址是空的」比报错更吓人。
+    因此启动时从 `<部署根>/.env` 读回，且要求 8 个占位键**全部非空**才认：
+    半份值渲染出的 `.env` 会让容器起来但一连 Redis 就认证失败。
+14. **签名产物名用 `SHA256SUMS.asc`（armor 分离签名）**，不是 `.sig`。二进制签名现场
+    贴不进工单/邮件，armor 文本可以直接比对；配合 `gpg --verify SHA256SUMS.asc SHA256SUMS.txt`
+    加指纹比对，构成 L-b 层可执行的最小核验流程（见 `build/README.md`）。
+15. **`fetch-docker-*.sh` 里禁止 `… | awk '{print $2; exit}'` 与 `… | grep -q`**。
+    上游命令吃 SIGPIPE（141）后，`set -o pipefail` 判整条失败，`set -e` 又让脚本静默退出——
+    现象是「刚打印抓到 N 个 deb 就退出，既不报错也不生成清单」，只能靠 `bash -x` 定位。
+    统一改 `awk '…' | sed -n '1p'` 与 `[ -n "$(find … -print -quit)" ]`。
 
 ## 本轮验证结果（可复现）
 
@@ -160,7 +198,7 @@ Web 安全边界（设计 §3.3）：默认只绑回环；`--listen` 到非回�
 ```text
 gofmt -l .            → 空
 go vet ./...          → 空
-go test ./...         → 11 个包全绿，67 pass / 3 skip（Windows 无 sh）
+go test ./...         → 11 个包全绿，71 pass / 3 skip（Windows 无 sh）
 ```
 
 关键回归用例（都指向真实踩过的坑）：
@@ -171,27 +209,44 @@ go test ./...         → 11 个包全绿，67 pass / 3 skip（Windows 无 sh）
 - `TestSmokeUsesSameTokensAsSmokeSh`：判据字符串与 `offline/smoke.sh` 完全同口径
 - `TestRunIsIdempotent`：selfclean 在 defer 与信号两路都调用时不能互相干扰
 - `TestVerifyDebManifestDetectsTamper`：能定位到具体被换掉的 deb 文件名
+- `TestInstallDebsRetriesOnceOnPreDependsOrder`：Pre-Depends 顺序失败必须补装一轮，
+  且两轮都失败才算失败（真机踩过，见实现决定 12）
+- `TestLoadEnvValuesRejectsPartialEnv`：`--resume` 只认 8 个键全非空的 `.env`（实现决定 13）
 
-### 2. 交叉编译与打包
+### 2. 交叉编译与打包（真载荷）
 
 ```text
-binary  : 6,332,568 字节（ELF64 / e_machine=0x3e / CGO_ENABLED=0）
+binary  : 6,344,856 字节（ELF64 / e_machine=0x3e / CGO_ENABLED=0）
+deb 闭包 : 85 个 .deb / 147,505,075 字节
+           docker-ce 5:29.9.3-1~ubuntu.22.04~jammy
+           docker-ce-cli 5:29.9.3 · containerd.io 2.4.2-3
+           docker-compose-plugin 5.7.0-1 · libseccomp2 2.5.3-2ubuntu3~22.04.1
 package : tianji-server-setup-ubuntu-debian-amd64-1.0.0.run
-          2,744,690 字节
-          sha256 fb7dd67de98adea5ba942bb8bdd6f9392f85935cabeade984c1bd62a6291f747
+          150,088,493 字节
+          sha256 85478f08b5d42d8120a7262015762cd04cfb1844c51f42dac3af79d6a834c138
+          payload sha256 e1380de63e484535eae9d5f07da5496e46b7ccf85bf1eed702cff0ebf916c1e0
+闸门    : G1 7/7 逐字节一致 · G2 ELF64/amd64 · G3 壳层校验 PASS
+签名    : SHA256SUMS.asc（gpg armor 分离签名，key 0A038555B153ACC9）
 ```
 
-> 体积远小于设计 §9.1 的 ≈130MB 估算，因为**本地验证用的是假 `.deb`**（5 个几十字节
-> 的占位文件）。真实包 = 本包 + 真实 deb 闭包（≈95MB）。体积结论在拿到真载荷后需复测。
-
-包内 `manifest.json`：`file_count=18`、`files[]` 18 条、`images_tar.image_count=8`、
-镜像 tar sha256 与 `offline/SHA256SUMS` 记录**逐字一致**。
+> 与设计 §9.1 的 ≈130MB 估算同一量级（实测 150MB，其中 147.5MB 是 deb 闭包）。
+> 包内 `manifest.json`：`file_count=98`、`images_tar.image_count=8`，镜像 tar sha256 与
+> `offline/SHA256SUMS` 记录**逐字一致**。
+>
+> 签名密钥：`tianji-build`，RSA4096，有效期至 **2027-11-09**，指纹
+> `0AD2 912C F8FE 57E2 02C2 75F2 0A03 8555 B153 ACC9`。**私钥只在构建机 `~/.gnupg`，
+> 不入库**；入库的只有 `installer/build/pubkeys/tianji-build.asc` 与指纹文件。
+> 现场核验：`gpg --import pubkeys/tianji-build.asc` → `gpg --fingerprint 0A038555B153ACC9`
+> （指纹必须逐字一致，不一致即停：说明公钥本身被换过）→
+> `gpg --verify SHA256SUMS.asc SHA256SUMS.txt` → `sha256sum -c SHA256SUMS.txt`。
 
 ### 3. `ubuntu:22.04` 容器内实测（真实目标环境，非模拟）
 
+> 这一节的 A~F 是最早一轮（载荷还是**假 .deb**）跑出来的，判据与话术仍有效，保留作回归基线。
+
 | # | 场景 | 结果 |
 |---|---|---|
-| A | `sh <run> --verify-only`（非 root 语义校核） | `PASS：安装包完整`，退出码 0 |
+| A | `sh <run> --verify-only`（非 root 语义校核） | `壳层校验通过（仅 payload 完整性 sha256；未做逐文件深度校验与镜像校验——不代表可安装）`，退出码 0 |
 | B | root 深度校验 + **真实 1.5GB 镜像 tar** | `IS_PASS: YES`，18/18 文件 + 镜像 tar 全通过，耗时 **18.5s** |
 | C | root 深度校验但**不给镜像 tar** | `IS_PASS: NO`，18/18 仍全对，卡在 tar 并给出「放同目录 / 用 --images-tar」的可执行处置 |
 | D | `--tui` 环境体检 | 13 PASS + 1 WARN（K13 AppArmor），`nextStep` 推进到 `S2_VERIFY` |
@@ -207,16 +262,63 @@ package : tianji-server-setup-ubuntu-debian-amd64-1.0.0.run
 [K11] PASS dpkg 锁 —— 未被占用
 ```
 
+### 4. 特权 systemd 容器内的十步端到端（本轮，**未跑完**）
+
+构建机没有虚拟化工具（`wsl.exe` 与 Hyper-V 均被策略拦、无 VirtualBox/VMware），
+因此第 ③ 步按 team-lead 的降级口径做：特权 systemd 容器 + 嵌套 dockerd。
+
+```bash
+docker run -d --name tj-e2e --privileged --cgroupns=host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock \
+  -v //e/TianjiArchive:/repo tianji-e2e-base:22.04 /lib/systemd/systemd
+```
+
+> `ubuntu:22.04` 官方镜像里**没有** `/lib/systemd/systemd`（只有 `libsystemd0`），
+> 直接当 init 起会 `stat /lib/systemd/systemd: no such file or directory`；
+> 必须先 `apt-get install systemd systemd-sysv dbus` 做一个派生镜像。
+> 另外容器里 `dockerd` 只能用 `--storage-driver=vfs`（外层是 overlayfs），
+> 且必须 `"iptables": false` —— 这两项是**容器适配**，真机不需要。
+
+驱动方式：`--web` 起向导 → `POST /api/env` 填 8 项表单 → `POST /api/run-all`，
+即真实前端路径（不是绕过 UI 直接调内部函数）。
+
+| 步 | 结果 | 证据 |
+|---|---|---|
+| S1_PREFLIGHT | **DONE** | OS 识别 `Ubuntu 22.04.5 LTS` → `osMatch.level=exact`；`vm.max_map_count=262144`；磁盘 1007GB |
+| S2_VERIFY | **DONE** | `IS_PASS: YES —— 载荷与镜像 tar 校验全部通过`，真 1.5GB tar **12.8s** |
+| S3_DOCKER | **DONE**（修 bug 后才通） | `client=29.9.3 server=29.9.3`、`driver=vfs cgroup=2`、`systemctl is-active docker=active` |
+| S4_IMAGES | **未完成** | 镜像 tar sha256 校验通过，`docker load` 成功载入 **7/8** 个镜像（缺 `tianji-archive-extractor:1.0.0`）后构建机磁盘写满 |
+| S5–S10 | **未验证** | compose up / migrate / seed / 四项冒烟 全部没跑到 |
+
+**中断原因（如实登记，不是「通过」）**：vfs 驱动对镜像每一层做完整复制，1.5GB tar 展开后
+把 Docker Desktop 的 ext4 虚拟盘（`docker_data.vhdx`，45.3GB，位于只有 199GB 的 C 盘）
+撑满，daemon 随即报 `read-only file system`、容器 fs 变只读、Docker Desktop 起不来。
+恢复需要人工退出 Docker Desktop → 腾空间 → `Clean/Purge data` → 重启（这些操作需要 GUI
+或提权，构建机当前 `isAdmin=False` 且 `wsl.exe`/`com.docker.service` 被策略拦）。
+
+**结论**：第 ③ 步只能记作「**特权 systemd 容器内分段验证，未跑完整十步**」。
+已证明的是 S1–S3 在真 OS 基线 + 真 deb 闭包 + 真 dockerd 下成立；
+**S4 之后（compose up / migrate / seed / 四项冒烟）仍未在真实栈上验证过**。
+
+顺带一个必须写下来的负面经验：**别在这类「外层 Docker Desktop」的机器上用 vfs 跑嵌套
+dockerd 加载 GB 级镜像**。要么给虚拟盘留足空间并换 overlay2（需要非 overlay 的 backing fs），
+要么直接在真 VM / 独立机器上做——这本身就是「容器降级方案」的固有代价。
+
 ## 仍然没验证的事（如实登记，不打包成「已通过」）
 
-1. **真 `.deb` 闭包的安装**：本机没有 `fetch-docker-debs.sh` 的出网条件，`dpkg -i`
-   路径只跑了「载荷缺失即停」的负向用例。`fetch-docker-debs.sh` 需要构建机联网执行。
-2. **变体 B（static）**：`docker-XX.tgz` 与 compose v2 单二进制未下载，`installStatic`
-   只覆盖了「载荷缺失即停」；`systemctl` 分支在本机与容器都没有 systemd 可用。
-3. **compose up / migrate / seed / 四项冒烟**：容器内无 systemd、无 dockerd，
-   `docker` 客户端与 8 个镜像都不可用，故这四步是**分段验证**：逻辑由单测覆盖
-   （`TestSmokeUsesSameTokensAsSmokeSh` 用 httptest 复刻了 `/api/health` 与 `_analyze`
-   的真实响应形状），真实栈联动留待有 Docker 的构建机或现场首次安装。
-4. **GPG 签名（L-b 层）**：`--sign` 需要 `gpg` 与密钥，未执行；`make-manifest.sh`
-   在不签名时会 WARN。**正式交付必须签名**，否则「包被篡改」这一层防线是空的。
-5. **18080 端口冲突回退（18081/18082）**：代码已实现，未在容器里制造占用验证。
+1. **十步端到端（S4 之后）**：`S4_IMAGES` 只载入 7/8 个镜像就被构建机磁盘占满打断，
+   `S5_ENV → S6_UP → S7_MIGRATE → S8_SEED → S9_SMOKE` **一次都没在真栈上跑过**。
+   单测覆盖了逻辑（`TestSmokeUsesSameTokensAsSmokeSh` 用 httptest 复刻 `/api/health`
+   与 `_analyze` 响应形状），但「8 个容器真起来、迁移真跑、四项冒烟真绿」仍属未验证。
+   需要一个真 VM（Ubuntu 22.04 / 4C8G / 120G，dockerd 用 overlay2）或磁盘充裕的机器。
+2. **真机安装（ISO 装系统后跑 `--tui` 十步）**：构建机无虚拟化工具，这一层完全没做。
+   注意真机与容器有三处硬差异：真 systemd（无 `--cgroupns host` 这类妥协）、
+   cgroup v1 hybrid（Ubuntu 22.04 默认，Docker 28+ 已标记 deprecated → 我们钉 29.9.3 需现场确认）、
+   AppArmor 策略真生效（容器里基本是关的）。
+3. **变体 B（static）端到端**：载荷已抓到并验过静态性（`ldd` 全部 not a dynamic executable）、
+   二进制在容器里能起 27.5.1 + compose v2.29.7，但 `installStatic` 的 `systemctl` 分支
+   没有 systemd 可用，**未在麒麟/UOS 上装过**。基线已从 ISO 离线取证，见
+   `docs/VARIANT-B-OS-BASELINE.md`；真机六项预检（kysec/SELinux/overlay2/cgroup/firewalld/CA）仍等真机。
+4. **18080 端口冲突回退（18081/18082）**：代码已实现，未在容器里制造占用验证。
+5. **`--sign` 的现场侧闭环**：包已签、公钥已入库，但「现场拿公钥验签名」这条流程
+   只在构建机上跑过，没有第二个人照 README 独立走过一遍。签名链路的价值全靠这一步。
