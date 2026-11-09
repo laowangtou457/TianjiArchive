@@ -1,8 +1,13 @@
 # 变体 B（麒麟 / 统信）系统基线实测
 
-> 状态：**已从 ISO 离线取证**（2026-11-09）。本文所有版本号均直接读自用户提供的两个
+> 状态：**已从 ISO 离线取证**（2026-11-09），并**已由麒麟真机实测校正**（同日，
+> 见 §8）。本文所有版本号均直接读自用户提供的两个
 > 安装镜像的 `Packages/` 与 repodata 元数据，不是凭经验推测；凡未验证的一律标注
 > 「未验证」，不做默认假设。
+>
+> ⚠️ **§2 中有三处推断被真机推翻**（iptables 后端、kysec 是否生效、SELinux 默认态），
+> 已在 §8 逐条列出并给出证据。**读本文时以 §8 为准**；§2–§4 保留原始推断是为了
+> 留下「推断 vs 实测」的对照，不是仍然有效的结论。
 >
 > 关联文档：`docs/INSTALLER-DESIGN.md` §4.3（变体 B 载荷策略）、§9（交付物清单）。
 
@@ -41,7 +46,7 @@ Mount-DiskImage -ImagePath 'E:\国产OS镜像\<iso>' -PassThru | Get-Volume
 | glibc | `2.28-98.p02.ky10` | `2.28-69.up1.uel20` | **两者同为 2.28**。静态二进制本来不依赖它，但意味着「按 glibc 2.28 编的动态包」在两边都够用 |
 | systemd | `243-67.p05.ky10` | `243-38.up6.uel20` | **两者同为 243** → 默认 **cgroup v1（hybrid）**，这是选 Docker 版本的决定性约束 |
 | kernel | `4.19.90-89.11.v2401.ky10`（含 `kernel-core`/`-modules`/`-modules-extra`） | `4.19.90-2106.3.0.0095.up2.uel20` | 同代 4.19.90 → satisfies Docker ≥3.10、overlay2 需 ≥4.0 |
-| iptables | `1.8.5-6.ky10`（含 `iptables-libs`） | `1.8.5-2.uel20` | 1.8.x 系；RHEL8 系默认 `iptables-nft`，Docker 27 支持 nft backend |
+| iptables | `1.8.5-6.ky10`（含 `iptables-libs`） | `1.8.5-2.uel20` | 1.8.x 系。~~RHEL8 系默认 `iptables-nft`~~ → **麒麟实测是 legacy，且无 `iptables-nft` 二进制，见 §8.3** |
 | nftables | `0.9.6-7.ky10` + `libnftnl 1.1.7` | `0.9.6-2.uel20` + `libnftnl 1.1.7` | nft 后端具备 |
 | conntrack | `libnetfilter_conntrack 1.0.8-3` | `libnetfilter_conntrack 1.0.8-1` + `conntrack-tools 1.4.6` | 端口映射/会话跟踪所需模块齐备 |
 | libseccomp | `2.5.0-5.p03.ky10` | `2.5.0-3.uel20` | 满足 Docker 27 的 seccomp 需求（≥2.4） |
@@ -96,6 +101,15 @@ Mount-DiskImage -ImagePath 'E:\国产OS镜像\<iso>' -PassThru | Get-Volume
 - 处置：无需动作，仅记录；**同时禁止把 docker 升到 28+**。
 
 ### 4.2 麒麟 kysec 执行控制（概率未知，代价最高）
+
+> **【实测校正 2026-11-09】** 麒麟 V10 SP3 **最小化安装**下 kysec **根本没启用**：
+> dmesg 里是 `KYSEC: Disabled.`；`/usr/sbin/` 下**没有** `getstatus`/`setstatus`/`kysec_get`
+> （它们属于 `kysec-utils` 包，最小化安装不装），也没有 `kysec-daemon` 进程、
+> 没有 `/etc/kysec/db/`，只留了 `libkysec*` 三个动态库。
+> → **preflight 里 kysec 从「一票否决」降为「记录」**；下面这套命令与处置仍然有效，
+> 但只在**装过 `kysec-utils`、且 daemon 在跑**时才用得上。
+> 诚实边界：只测了最小化安装；交付场景就是最小化，故按实测口径处理。
+
 - 现象：`kysec-*` 在麒麟上是一个独立的安全模块，其「执行控制（exectl）」可拒绝运行未授权
   的可执行文件，「文件保护（fpro）」可拒绝对受保护路径的写入。若为强制态，我们解包到
   `/usr/local/**` 的静态二进制、写 `/etc/systemd/system/*.service`、写 `/etc/docker/`、
@@ -136,18 +150,44 @@ Mount-DiskImage -ImagePath 'E:\国产OS镜像\<iso>' -PassThru | Get-Volume
 > `KySec status:` 与 `selinux status:`），处置时必须分别判断，不能只查一个。
 
 ### 4.3 SELinux（麒麟 Enforcing 时概率中，UOS 无 container-selinux 时代价高）
+
+> **【实测校正 2026-11-09】** 麒麟 V10 SP3 最小化安装的 SELinux 是 **Disabled**，
+> 而且是一个**会骗人的 Disabled**：
+> - `getenforce` → `Disabled`
+> - `/sys/kernel/security/lsm` → 只有 `capability`（SELinux 未挂上）
+> - 内核 `CONFIG_DEFAULT_SECURITY_DAC=y`
+> - **但 `/etc/selinux/config` 里写着 `SELINUX=enforcing`**
+>
+> ⚠️ **判定口径必须改**：只认 `getenforce` 或 `/sys/fs/selinux/enforce`，
+> **绝不能读 `/etc/selinux/config`**——配置文件写的是「下次启用时的目标态」，不是当前态。
+> 按配置文件判断会把 Disabled 误判成 Enforcing，进而触发一整套不必要的处置。
+> → 麒麟侧**不需要任何 SELinux 处置**；统信待测。
+
 - 探测：`getenforce`（`Enforcing`/`Permissive`/`Disabled`）。
 - 麒麟：仓库自带 `container-selinux 2.138.0` → Enforcing 时可用 ISO 作为本地仓库
   `rpm -i` 装该包（离线可行）。
 - 统信：**仓库内无 container-selinux**。若 Enforcing，容器启动会因 `mounton` 被拒。
   处置：改 `Permissive` 并在安装报告里显式记录为交付例外（需现场签认），不要静默改。
-- 未验证：两版 OS 的**默认** SELinux 状态（要装系统才知道）。
+- 未验证：统信的默认 SELinux 状态（麒麟已实测 Disabled，见上方校正）。
 
 ### 4.4 firewalld 与 docker 的 iptables 共存（高概率，低-中代价）
-- 两版都带 `firewalld 0.6.6`。docker 直接写 iptables，firewalld reload 会清掉 docker 链，
-  表现为「装完能用，重启或 reload 后端口全不通」。
-- 处置：安装时把 `docker0` 与 `br-*` 接口加入 `trusted` zone（`firewall-cmd --permanent`），
-  或明确关闭 firewalld（内网单机 appliance 场景可接受，需留痕）。
+
+> **【实测校正 2026-11-09】** 实测比预想严重，且**原来给的处置是错的**：
+> - `firewall-cmd --reload`：DOCKER 链**没被清**（`grep -c DOCKER` 4→4），SSH 正常；
+> - `systemctl restart firewalld`（dockerd 在跑时）：**SSH 立即不可达且不自愈**；
+>   sshd 仍在监听、loopback:22 可连、IP 仍是 10.0.2.15；
+> - 断网 30 秒窗口里从宿主连发 12 次 SSH，窗口结束时 **iptables 所有链的计数都是 0**
+>   （包括 `--dport 22 ACCEPT` 和末尾的 `-j REJECT`）→ **不是被防火墙规则丢弃，SYN 根本没进 INPUT**；
+> - 对照实验：**不带 docker** 时 restart firewalld 不掉线；
+> - **把 `docker0` 加进 trusted zone 也没用**（试过，照样断）。
+>
+> → **处置改为：安装时 `systemctl disable --now firewalld` 并留痕**，
+> 不要再写「加 trusted zone」——那条建议经实测无效，写进手册会误导现场反复试。
+
+- 两版都带 `firewalld 0.6.6`。docker 直接写 iptables，firewalld 与 docker 的网桥/规则交叠，
+  表现为「装完能用，动一次 firewalld 就失联」。
+- 处置：内网单机 appliance 场景直接停用 firewalld（需留痕），端口管控交由 docker 的
+  publish 与上层网络策略承担。
 
 ### 4.5 overlay2 的 xfs `ftype=1`（低概率，中代价）
 - kernel 4.19 支持 overlay2，但若 `/var/lib/docker` 落在 `ftype=0` 的 xfs 上，docker 会
@@ -221,8 +261,8 @@ COMPOSE_CONFIG_OK
 ## 6. 变体 B 安装逻辑的实现要求（给 #41 的输入）
 
 1. **落点**：二进制解到 `/usr/local/lib/tianji/docker-static/`，**不要**放 `/usr/local/bin`
-   或 `/usr/bin`——前者会与未来可能安装的发行版 docker 抢 PATH，后者在麒麟上正处在
-   kysec 文件保护的高危区。
+   或 `/usr/bin`——前者会与未来可能安装的发行版 docker 争 PATH，后者在装了 `kysec-utils`
+   的麒麟上可能落在文件保护范围内（最小化安装无此模块，见 §4.2 校正）。
 2. **compose 插件**：放 `/usr/local/lib/docker/cli-plugins/docker-compose`（已实测被
    CLI 识别）；不要指望 `/usr/libexec/docker/cli-plugins`（RPM 系自带的 docker 会争抢）。
 3. **systemd unit**：`ExecStart=` 写绝对路径，`After=network-online.target firewalld.service`，
@@ -235,17 +275,68 @@ COMPOSE_CONFIG_OK
 
 ---
 
-## 7. 未验证项（不做假设，等真机）
+## 7. 验证状态（2026-11-09 更新：麒麟已全部结案）
 
-| # | 未验证内容 | 卡在哪 |
+### 7.1 麒麟 V10 SP3 2403 —— 六项实测结果
+
+真机安装（QEMU/KVM，KVM 加速，**4 分钟装完 499 包**，无缺包），证据原文在
+`installer/vmtest/logs/kylin-probe.txt`，提交 `d58836b`。
+
+| # | 项 | 实测 | 关键证据 |
+|---|---|---|---|
+| 1 | SELinux | **Disabled** | `getenforce`→Disabled；`/sys/kernel/security/lsm` 只有 `capability`；内核 `CONFIG_DEFAULT_SECURITY_DAC=y`；而 `/etc/selinux/config` 仍写 `SELINUX=enforcing`（**误导项**） |
+| 2 | kysec | **未启用** | dmesg `KYSEC: Disabled.`；无 `getstatus`/`setstatus`/`kysec-daemon`/`/etc/kysec/db`，只装 `libkysec*` 三个库 |
+| 3 | cgroup | **v1** | `stat -fc %T /sys/fs/cgroup`→`tmpfs`，12 个 controller 各自挂载 |
+| 4 | iptables | **legacy** | `iptables v1.8.5 (legacy)`；只有 `iptables-legacy`，**无 `iptables-nft` 二进制** |
+| 5 | xfs ftype | **ftype=1** | `xfs_info /` 与 `xfs_info /boot` 均为 1 → overlay2 可用 |
+| 6 | firewalld | **restart 会打断管理面** | 详见 §4.4 校正块；`reload` 无害、`restart` 致命、trusted zone 无效 |
+
+**附加（原 §7 第 4 项）**：dockerd **27.5.1 在 cgroup v1 上真跑起来了** ——
+`Storage Driver: overlay2`、`Cgroup Version: 1`、`Cgroup Driver: cgroupfs`、
+`Daemon has completed initialization`，**没有退回 vfs**。§3.1「锁 27.5.1」的决定有实测支持。
+
+### 7.2 仍未验证
+
+| # | 内容 | 状态 |
 |---|---|---|
-| 1 | 两个 OS 默认 SELinux 状态 | 需装系统 |
-| 2 | 麒麟 kysec 默认是否强制（命令语法已解出，见 §4.2） | 需装系统 |
-| 3 | kernel 4.19.90 上 overlay2 是否可用（xfs ftype） | 需装系统 |
-| 4 | cgroup v1 上 dockerd 27.5.1 的实际启动行为 | 需装系统 |
-| 5 | 安装向导在 4.19 内核 + cgroup v1 下的端到端一次通过 | 需装系统 |
-| 6 | firewalld 重启后端口是否仍通 | 需装系统 |
+| 1 | 统信 UOS 20 的六项（尤其 SELinux 默认态与 container-selinux 缺口） | 进行中 |
+| 2 | 安装向导在 4.19 内核 + cgroup v1 下的端到端一次通过 | 未开始（依赖变体 B 安装流程实现） |
+| 3 | 麒麟装 `kysec-utils` 后是否翻强制态 | 不做（交付场景是最小化安装） |
 
-**本机无法启动 ISO 做真 VM 测试**（`wsl.exe` 被沙箱黑名单拦截、无 VirtualBox/VMware、
-PowerShell 非提升态无法启用 Hyper-V、`qemu.weilnetz.de` 不可达），此项待用户裁定：
-装 VirtualBox / 提权放行 Hyper-V / 授权算力机 `117.157.77.4`（当前 SSH `Permission denied`）。
+**真机测试环境已打通**：宿主 Docker Desktop 的 WSL2 内核在容器内暴露 `/dev/kvm`
+（`--privileged --device /dev/kvm` 即可，QEMU 6.2 + ovmf 镜像 `tianji-qemu:1`），
+无需 VirtualBox/Hyper-V/算力机。注意 `/dev/kvm` **不是恒定的**：宿主磁盘满或 Docker
+daemon 重启的窗口里会消失，加速器必须在每次运行时实测选择（`run-vm.sh` 已按此实现）。
+
+---
+
+## 8. 麒麟真机实测对本文的校正汇总
+
+本节存在的目的：**留档「推断 vs 实测」的差异**，避免后面有人照着 §2–§4 的推断去实施。
+凡与本节冲突，一律以本节为准。
+
+| # | 原文推断（§2–§4） | 实测 | 影响 |
+|---|---|---|---|
+| 1 | 「RHEL8 系默认 `iptables-nft`，Docker 27 支持 nft backend」 | 麒麟是 **legacy**，且**没有** `iptables-nft` 二进制 | 任何依赖 nft 语法/后端假设的脚本与文档都要改；preflight 必须记录实际后端 |
+| 2 | 「kysec 是最大未知风险，可能一票否决」 | 最小化安装下 **`KYSEC: Disabled.`**，`kysec-utils` 都未安装 | preflight 从「一票否决」降为「记录」；处置流程保留但基本用不上 |
+| 3 | 「默认是否 Enforcing 未验证」 | **Disabled**，但 `/etc/selinux/config` 写的是 `enforcing` | **判定口径改为只看 `getenforce`/`/sys/fs/selinux/enforce`**，读配置文件会误判 |
+| 4 | 「firewalld reload 会清掉 docker 链；加 trusted zone 可解」 | `reload` 无害；`restart` 直接打断管理面且不自愈；**trusted zone 无效** | 处置改为 `systemctl disable --now firewalld` 并留痕 |
+| 5 | 「cgroup v1 上 dockerd 27.5.1 能否起来未知」 | **能**：overlay2 + cgroup v1 + cgroupfs，正常初始化 | 版本锁定（禁升 28/29）得到实测支持 |
+| 6 | 「xfs ftype 可能为 0，会退 vfs」 | `/` 与 `/boot` 均 **ftype=1** | 无需处置，但 preflight 仍要记录，换机器可能不同 |
+
+### 8.1 由此定下的三条硬口径
+
+1. **SELinux 判定只看运行时**：`getenforce` / `/sys/fs/selinux/enforce`；`/etc/selinux/config`
+   只反映「下次启动的目标态」，**不得作为当前状态依据**。
+2. **iptables 后端必须实测记录**（`iptables --version` + 是否存在 `iptables-legacy`/`iptables-nft`），
+   不要按发行版血缘推断。
+3. **kysec 的存在性检测与状态检测分开**：`command -v getstatus` 只说明「工具在」，
+   `getstatus` 的输出才说明「模块在不在管」。且 `getstatus` 走 D-Bus 查 `kysec-daemon`，
+   **查询失败 ≠ 已关闭**，两者必须在安装报告里分开记。
+
+### 8.2 麒麟安装过程本身的事实（对交付有用）
+
+- KVM 加速下 **4 分钟**装完 499 个包，无缺包（22:21:30 → 22:25:31）。
+- kickstart 必须写 `reboot`，否则 anaconda 停在 `Installation complete. Press ENTER to quit:`
+  等键盘输入，看起来像卡死；qemu 侧配 `-no-reboot` 可让它装完干净退出（rc=0）。
+- 首次开机约 30 秒到 SSH 可用。
