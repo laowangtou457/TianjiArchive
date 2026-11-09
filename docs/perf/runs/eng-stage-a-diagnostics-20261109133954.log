@@ -1,0 +1,75 @@
+==================================================================
+ 阶段 A · 2 次重试仍 502 —— 只读网络诊断（不修改任何配置）
+ UTC=2026-11-09T05:40:06Z  HEAD=6af978c
+ 裁定依据：2 次仍 502 → 立即停、保留现场、允许只读记录代理/docker info
+ 注：本日志为脱敏版，仅打印标准代理变量值，不打印任何含凭据的环境变量。
+==================================================================
+
+----- [1] 三次 build 的 502 坏包集合对比（随机抖动、非固定坏包）-----
+--- docs/perf/runs/eng-stage-a-build-20261109132030.log ---
+  502 行命中数: 21
+  Failed-to-fetch 包（去重）:
+    libcairo-gobject2_1.16.0-7_amd64.deb
+    libice6_1.0.10-1_amd64.deb
+    libmhash2_0.9.9.9-9_amd64.deb
+    libnumbertext-data_1.0.11-1_all.deb
+    librav1e0_0.5.1-6_amd64.deb
+    libreoffice-core_7.4.7-1%2bdeb12u14_amd64.deb
+    shared-mime-info_2.2-1_amd64.deb
+  Fetched 汇总: Fetched 284 MB in 3min 7s (1520 kB/s)
+  退出码行: BUILD_EXIT=1
+--- docs/perf/runs/eng-stage-a-retry1-20261109132942.log ---
+  502 行命中数: 37
+  Failed-to-fetch 包（去重）:
+    gpg_2.2.40-1.1%2bdeb12u2_amd64.deb
+    libcurl3-gnutls_7.88.1-10%2bdeb12u15_amd64.deb
+    liblapack3_3.11.0-2_amd64.deb
+    liborcus-parser-0.17-0_0.17.2-2%2bb2_amd64.deb
+    libqxp-0.0-0_0.0.2-1%2bb3_amd64.deb
+    libreoffice-style-colibre_7.4.7-1%2bdeb12u14_all.deb
+    libusb-1.0-0_1.0.26-1_amd64.deb
+  Fetched 汇总: Fetched 308 MB in 3min 43s (1378 kB/s)
+  退出码行: RETRY1_EXIT=1
+--- docs/perf/runs/eng-stage-a-retry2-20261109133421.log ---
+  502 行命中数: 6
+  Failed-to-fetch 包（去重）:
+    libsm6_1.2.3-1_amd64.deb
+  Fetched 汇总: Fetched 319 MB in 2min 19s (2290 kB/s)
+  退出码行: RETRY2_EXIT=1
+
+----- [2] 502 上游 IP（三份日志去重）-----
+  Bad Gateway [IP: 146.75.46.132 80]
+
+----- [3] 标准代理变量（只读；精确匹配变量名，避免打印含凭据的大 JSON）-----
+  https_proxy=http://127.0.0.1:52066
+  HTTPS_PROXY=http://127.0.0.1:52066
+  HTTP_PROXY=http://127.0.0.1:52066
+  http_proxy=http://127.0.0.1:52066
+
+----- [4] docker daemon/buildkit 侧代理（只读）-----
+  HTTP_PROXY="http.docker.internal:3128" HTTPS_PROXY="http.docker.internal:3128" NO_PROXY="hubproxy.docker.internal"
+  buildx driver:
+    NAME/NODE           DRIVER/ENDPOINT     STATUS    BUILDKIT   PLATFORMS
+    default             docker                                   
+     \_ default          \_ default         running   v0.34.0    linux/amd64 (+3), linux/arm64, linux/arm (+2), linux/ppc64le, (2 more)
+    desktop-linux*      docker                                   
+     \_ desktop-linux    \_ desktop-linux   running   v0.34.0    linux/amd64 (+3), linux/arm64, linux/arm (+2), linux/ppc64le, (2 more)
+  注：apt RUN 层未成功 ⇒ 该层无缓存，每次重试重新 apt-get update + 全量下载 ~320MB；
+      327 个 .deb 中随机 1~7 个被上游 502，三次坏包集合互不相同。
+
+----- [5] 现场保全核查（未动任何配置）-----
+  运行容器数=0
+tianji-api | Exited (0) 20 minutes ago | 48597185433b
+tianji-web | Exited (0) 20 minutes ago | cd07b100dcc2
+tianji-postgres | Exited (0) 20 minutes ago | postgres:16-alpine
+tianji-redis | Exited (0) 20 minutes ago | redis:7-alpine
+tianji-elasticsearch | Exited (143) 20 minutes ago | 8db52fbcb63f
+  volumes/=PRESERVED  offline/volumes/=ABSENT  .env=ABSENT
+  BUILD-INFO 仍为旧值: GIT_HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b RECORD_COMPLETE=no 
+  extractor 镜像=
+ABSENT
+
+==================================================================
+ DIAGNOSTICS_DONE（未改 Dockerfile / apt 源 / 代理配置 / 任何代码）
+ LOG=docs/perf/runs/eng-stage-a-diagnostics-20261109133954.log
+==================================================================

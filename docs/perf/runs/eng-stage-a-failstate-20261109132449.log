@@ -1,0 +1,83 @@
+==================================================================
+ 阶段 A · 步骤3 失败后现场状态（未做 --record / --check / 起栈）
+ 时间 UTC=2026-11-09T05:24:49Z  HEAD=6af978c
+==================================================================
+
+----- [1] build 退出码与失败根因（原始日志尾部）-----
+1125:#45 181.2   502  Bad Gateway [IP: 146.75.46.132 80]
+1140:#45 197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/r/rust-rav1e/librav1e0_0.5.1-6_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1141:#45 197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/c/cairo/libcairo-gobject2_1.16.0-7_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1142:#45 197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/s/shared-mime-info/shared-mime-info_2.2-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1143:#45 197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/libi/libice/libice6_1.0.10-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1144:#45 197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/m/mhash/libmhash2_0.9.9.9-9_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1145:#45 197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/libn/libnumbertext/libnumbertext-data_1.0.11-1_all.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1146:#45 197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/libr/libreoffice/libreoffice-core_7.4.7-1%2bdeb12u14_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1147:#45 197.9 E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?
+1148:#45 ERROR: process "/bin/sh -c apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*" did not complete successfully: exit code: 100
+1153:197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/r/rust-rav1e/librav1e0_0.5.1-6_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1154:197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/c/cairo/libcairo-gobject2_1.16.0-7_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1155:197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/s/shared-mime-info/shared-mime-info_2.2-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1156:197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/libi/libice/libice6_1.0.10-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1157:197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/m/mhash/libmhash2_0.9.9.9-9_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1158:197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/libn/libnumbertext/libnumbertext-data_1.0.11-1_all.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1159:197.9 E: Failed to fetch http://deb.debian.org/debian/pool/main/libr/libreoffice/libreoffice-core_7.4.7-1%2bdeb12u14_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+1160:197.9 E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?
+1186:target extractor: failed to solve: process "/bin/sh -c apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*" did not complete successfully: exit code: 100
+1190:BUILD_EXIT=1
+
+----- [2] 失败包清单（去重）-----
+libcairo-gobject2_1.16.0-7_amd64.deb
+libice6_1.0.10-1_amd64.deb
+libmhash2_0.9.9.9-9_amd64.deb
+libnumbertext-data_1.0.11-1_all.deb
+librav1e0_0.5.1-6_amd64.deb
+libreoffice-core_7.4.7-1%2bdeb12u14_amd64.deb
+shared-mime-info_2.2-1_amd64.deb
+
+----- [3] 5 个镜像当前 ID（对比 stop 前基线）-----
+ 基线(stop前): api=4859718… web=cd07b10… extractor=ABSENT backup=ABSENT es=8db52fb…
+tianji-archive-api:1.0.0                   sha256:6fdf3b8a93a844d74762cdf353ec5c2a062af911b56fd1979ed2e59b64f2f097  created=2026-11-09T05:21:18.399051274Z
+tianji-archive-web:1.0.0                   sha256:7fbedd2c8b5513f5c9a0ab50999ba1fac118da45e624ffda82234d8fe9e3aea6  created=2026-11-09T05:21:37.408165001Z
+tianji-archive-extractor:1.0.0             
+ABSENT  created=
+-
+tianji-archive-backup:1.0.0                sha256:02aa6bd8d97dc2142ca45ea8232b90a161075c3991949e2e304f803de7943e9d  created=2026-11-09T05:20:55.707483681Z
+tianji-elasticsearch-ik:8.13.4             sha256:d658724cf0f55601007ce669eba920b055125d32cd1a7ac68aff4010245e9e3f  created=2026-11-07T06:55:35.953980396Z
+
+----- [4] build arg GIT_COMMIT 是否进镜像（预检披露核对）-----
+tianji-archive-api:1.0.0 : {"com.docker.compose.project":"tianji-archive","com.docker.compose.service":"api","com.docker.compose.version":"5.6.1"}
+
+tianji-archive-web:1.0.0 : {"com.docker.compose.project":"tianji-archive","com.docker.compose.service":"web","com.docker.compose.version":"5.6.1","maintainer":"NGINX Docker Maintainers <docker-maint@nginx.com>"}
+
+tianji-archive-backup:1.0.0 : {"com.docker.compose.project":"tianji-archive","com.docker.compose.service":"backup","com.docker.compose.version":"5.6.1"}
+
+
+----- [5] 容器状态：仍 stop，未被 recreate（回滚基线保全）-----
+tianji-api | Exited (0) 5 minutes ago | 48597185433b
+tianji-web | Exited (0) 5 minutes ago | cd07b100dcc2
+tianji-postgres | Exited (0) 5 minutes ago | postgres:16-alpine
+tianji-redis | Exited (0) 5 minutes ago | redis:7-alpine
+tianji-elasticsearch | Exited (143) 5 minutes ago | 8db52fbcb63f
+运行容器数=0
+
+----- [6] 卷与 .env 未被触碰 -----
+volumes/=PRESERVED  offline/volumes/=ABSENT  .env=ABSENT
+
+----- [7] BUILD-INFO.txt 仍为旧值（未 --record 覆盖）-----
+GIT_HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b
+GIT_WORKTREE_DIRTY=yes
+IMAGE_ID[tianji-archive-api:1.0.0]=sha256:48597185433b5911c557007654eef1dabcd1ee604df332a87cfbd5692ddf981f
+IMAGE_ID[tianji-archive-web:1.0.0]=sha256:cd07b100dcc27f8cc8b6e5a233f44236b3380cbaca423c2bda3e5ab6cb62a139
+IMAGE_ID[tianji-archive-extractor:1.0.0]=MISSING
+IMAGE_ID[tianji-archive-backup:1.0.0]=MISSING
+RECORD_COMPLETE=no
+
+----- [8] git 工作区（仅新增证据日志，代码零改动）-----
+?? docs/perf/runs/eng-prestack-snapshot-20261109131810.log
+?? docs/perf/runs/eng-stage-a-build-20261109132030.log
+?? docs/perf/runs/eng-stage-a-failstate-20261109132449.log
+?? docs/perf/runs/eng-stage-a-stop-20261109131957.log
+
+==================================================================
+ FAILSTATE_DONE  LOG=docs/perf/runs/eng-stage-a-failstate-20261109132449.log
+==================================================================

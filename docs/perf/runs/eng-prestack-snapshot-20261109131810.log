@@ -1,0 +1,79 @@
+==================================================================
+ 阶段 A · 回滚基线快照 (pre-stack snapshot)
+ 时间: 2026-11-09T05:18:10Z  HOST=DESKTOP-HK5Q0T
+ HEAD=6af978c55a0e17a329eb508686b0a4426b4f8134  BRANCH=main
+ 本快照在 docker compose stop 之前采集，用于阶段失败时回滚对照
+==================================================================
+
+----- [1] 运行容器全量 (docker ps) -----
+tianji-api | tianji-archive-api:1.0.0 | Up 44 hours (healthy) | 0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp
+tianji-web | tianji-archive-web:1.0.0 | Up 45 hours (healthy) | 0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
+tianji-postgres | postgres:16-alpine | Up 45 hours (healthy) | 0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+tianji-redis | redis:7-alpine | Up 45 hours (healthy) | 0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+tianji-elasticsearch | tianji-elasticsearch-ik:8.13.4 | Up 45 hours (healthy) | 0.0.0.0:9200->9200/tcp, [::]:9200->9200/tcp
+
+----- [2] 全部容器含 stopped (docker ps -a) -----
+tianji-api | tianji-archive-api:1.0.0 | Up 44 hours (healthy)
+tianji-web | tianji-archive-web:1.0.0 | Up 45 hours (healthy)
+tianji-postgres | postgres:16-alpine | Up 45 hours (healthy)
+tianji-redis | redis:7-alpine | Up 45 hours (healthy)
+tianji-elasticsearch | tianji-elasticsearch-ik:8.13.4 | Up 45 hours (healthy)
+
+----- [3] 本地镜像 ID 全量（与离线清单相关）-----
+tianji-archive-api:1.0.0                   sha256:48597185433b5911c557007654eef1dabcd1ee604df332a87cfbd5692ddf981f
+tianji-archive-web:1.0.0                   sha256:cd07b100dcc27f8cc8b6e5a233f44236b3380cbaca423c2bda3e5ab6cb62a139
+tianji-archive-extractor:1.0.0             
+ABSENT
+tianji-archive-backup:1.0.0                
+ABSENT
+tianji-elasticsearch-ik:8.13.4             sha256:8db52fbcb63f87c7a7fe3149533fb2e1d7291c266ab5f9d930dc5c8cbf34b304
+chrislusf/seaweedfs:3.79                   sha256:21425305e04b355904ef350ff75a4e81b8afc5124f63e0485b946164b58562d3
+postgres:16-alpine                         sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+redis:7-alpine                             sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
+
+----- [4] 数据卷路径（禁止删除）-----
+REPO=/e/TianjiArchive
+volumes/ 存在? YES
+offline/volumes/ 存在? NO
+volumes/ 顶层:
+  backup
+  esdata
+  minio
+  postgres
+  redis
+  wal_archive
+offline/volumes/ 顶层:
+
+----- [5] 现场 .env 状态 -----
+.env ABSENT（S3_PUBLIC_* 全靠 compose 默认值兜底）
+
+----- [6] 当前 BUILD-INFO.txt（旧值，待 --record 覆盖）-----
+# TianjiArchive 离线镜像构建锚定清单（由 save-images.sh --record 生成）
+# 用途：save 时逐一校验当前本地镜像 ID 与本记录一致，防止旧镜像/未重建镜像混入离线包。
+# 本文件含机器相关 Image ID，属构建机产物，不入库（见 .gitignore）。
+FORMAT_VERSION=1
+GENERATED_AT_UTC=2026-11-09T04:34:23Z
+GIT_HEAD=88c74613936b9d5d7ebf995551e649c9f9be0e2b
+GIT_HEAD_SHORT=88c7461
+GIT_BRANCH=main
+GIT_WORKTREE_DIRTY=yes
+SELF_BUILT_IMAGE_COUNT=4
+IMAGE_ID[tianji-archive-api:1.0.0]=sha256:48597185433b5911c557007654eef1dabcd1ee604df332a87cfbd5692ddf981f
+REPO_DIGEST[tianji-archive-api:1.0.0]=tianji-archive-api@sha256:48597185433b5911c557007654eef1dabcd1ee604df332a87cfbd5692ddf981f
+IMAGE_ID[tianji-archive-web:1.0.0]=sha256:cd07b100dcc27f8cc8b6e5a233f44236b3380cbaca423c2bda3e5ab6cb62a139
+REPO_DIGEST[tianji-archive-web:1.0.0]=tianji-archive-web@sha256:cd07b100dcc27f8cc8b6e5a233f44236b3380cbaca423c2bda3e5ab6cb62a139
+IMAGE_ID[tianji-archive-extractor:1.0.0]=MISSING
+REPO_DIGEST[tianji-archive-extractor:1.0.0]=MISSING
+IMAGE_ID[tianji-archive-backup:1.0.0]=MISSING
+REPO_DIGEST[tianji-archive-backup:1.0.0]=MISSING
+RECORD_COMPLETE=no
+
+----- [7] git 工作区 -----
+PORCELAIN_LINES=1
+  ?? docs/perf/runs/eng-prestack-snapshot-20261109131810.log
+DIFF_QUIET=no_changes
+CACHED_QUIET=no_changes
+
+==================================================================
+ SNAPSHOT_DONE  LOG=docs/perf/runs/eng-prestack-snapshot-20261109131810.log
+==================================================================

@@ -1,0 +1,605 @@
+=== 阶段 A · 步骤3 重试 2/2（最后一次授权）：仅 build extractor（原样，不改 Dockerfile/apt 源/不注入 build arg）===
+COMMAND: docker compose -f docker-compose.yml build extractor
+START_UTC=2026-11-09T05:34:23Z  HEAD=6af978c55a0e17a329eb508686b0a4426b4f8134
+=== 重试前 extractor 镜像状态 ===
+
+ABSENT（预期）
+=================================================================
+ Image tianji-archive-extractor:1.0.0 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.64kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.41kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:22-bookworm-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 1.48kB done
+#4 DONE 0.0s
+
+#5 [deps 1/7] FROM docker.io/library/node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
+#5 resolve docker.io/library/node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d 0.0s done
+#5 CACHED
+
+#6 [internal] load build context
+#6 transferring context: 1.78kB done
+#6 DONE 0.0s
+
+#7 [deps 2/7] WORKDIR /repo
+#7 CACHED
+
+#8 [deps 4/7] COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+#8 CACHED
+
+#9 [deps 6/7] COPY apps/extractor/package.json apps/extractor/
+#9 CACHED
+
+#10 [deps 3/7] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+#10 CACHED
+
+#11 [deps 7/7] RUN pnpm install --filter @tianji/extractor... --frozen-lockfile=false
+#11 CACHED
+
+#12 [build 2/3] COPY apps/extractor apps/extractor
+#12 CACHED
+
+#13 [deps 5/7] COPY packages/shared/package.json packages/shared/
+#13 CACHED
+
+#14 [build 1/3] COPY packages/shared packages/shared
+#14 CACHED
+
+#15 [build 3/3] RUN pnpm --filter @tianji/shared build  && pnpm --filter @tianji/extractor build
+#15 CACHED
+
+#16 [runtime 2/9] RUN apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*
+#16 4.377 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#16 4.557 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#16 4.703 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#16 6.038 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+#16 6.698 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#16 6.978 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [363 kB]
+#16 7.234 Fetched 9402 kB in 6s (1570 kB/s)
+#16 7.234 Reading package lists...
+#16 7.594 Reading package lists...
+#16 7.949 Building dependency tree...
+#16 8.028 Reading state information...
+#16 8.121 tzdata is already the newest version (2026f-0+deb12u1).
+#16 8.121 tzdata set to manually installed.
+#16 8.121 The following additional packages will be installed:
+#16 8.121   coinor-libcbc3 coinor-libcgl1 coinor-libclp1 coinor-libcoinmp1v5
+#16 8.121   coinor-libcoinutils3v5 coinor-libosi1v5 dirmngr fontconfig-config
+#16 8.121   fonts-dejavu-core fonts-opensymbol gnupg gnupg-l10n gnupg-utils gpg
+#16 8.121   gpg-agent gpg-wks-client gpg-wks-server gpgconf gpgsm iso-codes
+#16 8.121   libabsl20220623 libabw-0.1-1 libaom3 libasound2 libasound2-data libass9
+#16 8.121   libassuan0 libasyncns0 libavahi-client3 libavahi-common-data
+#16 8.121   libavahi-common3 libavc1394-0 libavcodec59 libavdevice59 libavfilter8
+#16 8.121   libavformat59 libavutil57 libblas3 libbluray2 libboost-filesystem1.74.0
+#16 8.121   libboost-iostreams1.74.0 libboost-locale1.74.0 libboost-thread1.74.0
+#16 8.121   libbox2d2 libbrotli1 libbs2b0 libbsd0 libcaca0 libcairo-gobject2 libcairo2
+#16 8.121   libcap2-bin libcdio-cdda2 libcdio-paranoia2 libcdio19 libcdr-0.1-1
+#16 8.121   libchromaprint1 libcjson1 libclucene-contribs1v5 libclucene-core1v5
+#16 8.121   libcodec2-1.0 libcolamd2 libcups2 libcurl3-gnutls libcurl4 libdatrie1
+#16 8.121   libdav1d6 libdbus-1-3 libdc1394-25 libdconf1 libdecor-0-0 libdeflate0
+#16 8.121   libdrm-amdgpu1 libdrm-common libdrm-intel1 libdrm-nouveau2 libdrm-radeon1
+#16 8.121   libdrm2 libdw1 libe-book-0.1-1 libedit2 libelf1 libeot0 libepoxy0
+#16 8.121   libepubgen-0.1-1 libetonyek-0.1-1 libexpat1 libexttextcat-2.0-0
+#16 8.121   libexttextcat-data libflac12 libflite1 libfontconfig1 libfreehand-0.1-1
+#16 8.121   libfreetype6 libfribidi0 libgbm1 libgdk-pixbuf-2.0-0 libgdk-pixbuf2.0-common
+#16 8.121   libgfortran5 libgl1 libgl1-mesa-dri libglapi-mesa libglib2.0-0 libglvnd0
+#16 8.121   libglx-mesa0 libglx0 libgme0 libgomp1 libgpgme11 libgpgmepp6 libgraphite2-3
+#16 8.121   libgsm1 libgssapi-krb5-2 libgstreamer-plugins-base1.0-0 libgstreamer1.0-0
+#16 8.121   libharfbuzz-icu0 libharfbuzz0b libhunspell-1.7-0 libhwy1 libhyphen0 libice6
+#16 8.121   libicu72 libiec61883-0 libjack-jackd2-0 libjbig0 libjpeg62-turbo libjxl0.7
+#16 8.122   libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libksba8
+#16 8.122   liblangtag-common liblangtag1 liblapack3 liblcms2-2 libldap-2.5-0 liblerc4
+#16 8.122   liblilv-0-0 libllvm15 libltdl7 libmbedcrypto7 libmfx1 libmhash2 libmp3lame0
+#16 8.122   libmpg123-0 libmspub-0.1-1 libmwaw-0.3-3 libmysofa1 libmythes-1.2-0
+#16 8.122   libncursesw6 libnghttp2-14 libnorm1 libnpth0 libnspr4 libnss3 libnuma1
+#16 8.122   libnumbertext-1.0-0 libnumbertext-data libodfgen-0.1-1 libogg0
+#16 8.122   libopenal-data libopenal1 libopenjp2-7 libopenmpt0 libopus0 liborc-0.4-0
+#16 8.122   liborcus-0.17-0 liborcus-parser-0.17-0 libpagemaker-0.0-0 libpango-1.0-0
+#16 8.122   libpangocairo-1.0-0 libpangoft2-1.0-0 libpciaccess0 libpgm-5.3-0
+#16 8.122   libpixman-1-0 libplacebo208 libpng16-16 libpocketsphinx3 libpoppler126
+#16 8.122   libpostproc56 libpsl5 libpulse0 libquadmath0 libqxp-0.0-0 librabbitmq4
+#16 8.122   libraptor2-0 librasqal3 librav1e0 libraw1394-11 librdf0 libreadline8
+#16 8.122   libreoffice-base-core libreoffice-common libreoffice-core libreoffice-draw
+#16 8.122   libreoffice-style-colibre librevenge-0.0-0 librist4 librsvg2-2 librtmp1
+#16 8.122   librubberband2 libsamplerate0 libsasl2-2 libsasl2-modules-db libsdl2-2.0-0
+#16 8.122   libsensors-config libsensors5 libserd-0-0 libshine3 libslang2 libsm6
+#16 8.122   libsnappy1v5 libsndfile1 libsndio7.0 libsodium23 libsord-0-0 libsoxr0
+#16 8.122   libspeex1 libsphinxbase3 libsqlite3-0 libsratom-0-0 libsrt1.5-gnutls
+#16 8.122   libssh-gcrypt-4 libssh2-1 libssl3 libstaroffice-0.0-0 libsuitesparseconfig5
+#16 8.122   libsvtav1enc1 libswresample4 libswscale6 libthai-data libthai0 libtheora0
+#16 8.122   libtiff6 libtwolame0 libudfread0 libuno-cppu3 libuno-cppuhelpergcc3-3
+#16 8.122   libuno-purpenvhelpergcc3-3 libuno-sal3 libuno-salhelpergcc3-3 libunwind8
+#16 8.122   libusb-1.0-0 libva-drm2 libva-x11-2 libva2 libvdpau1 libvidstab1.1
+#16 8.122   libvisio-0.1-1 libvorbis0a libvorbisenc2 libvorbisfile3 libvpx7 libvulkan1
+#16 8.122   libwayland-client0 libwayland-cursor0 libwayland-egl1 libwayland-server0
+#16 8.123   libwebp7 libwebpmux3 libwpd-0.10-10 libwpg-0.3-3 libwps-0.4-4 libx11-6
+#16 8.123   libx11-data libx11-xcb1 libx264-164 libx265-199 libxau6 libxcb-dri2-0
+#16 8.123   libxcb-dri3-0 libxcb-glx0 libxcb-present0 libxcb-randr0 libxcb-render0
+#16 8.123   libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb1 libxcursor1
+#16 8.123   libxdmcp6 libxext6 libxfixes3 libxi6 libxinerama1 libxkbcommon0 libxml2
+#16 8.123   libxmlsec1 libxmlsec1-nss libxrandr2 libxrender1 libxshmfence1 libxslt1.1
+#16 8.123   libxss1 libxv1 libxvidcore4 libxxf86vm1 libyajl2 libz3-4 libzimg2
+#16 8.123   libzmf-0.0-0 libzmq5 libzvbi-common libzvbi0 libzxing2 lp-solve
+#16 8.123   ocl-icd-libopencl1 openssl pinentry-curses readline-common sensible-utils
+#16 8.124   shared-mime-info ucf uno-libs-private ure x11-common xkb-data
+#16 8.125 Suggested packages:
+#16 8.125   dbus-user-session libpam-systemd pinentry-gnome3 tor ffmpeg-doc
+#16 8.125   fonts-noto-cjk-extra parcimonie xloadimage scdaemon isoquery
+#16 8.125   libasound2-plugins alsa-utils libcuda1 libnvcuvid1 libnvidia-encode1
+#16 8.125   libbluray-bdj cups-common low-memory-monitor krb5-doc krb5-user
+#16 8.125   libvisual-0.4-plugins gstreamer1.0-tools jackd2 liblcms2-utils libportaudio2
+#16 8.125   opus-tools pciutils pulseaudio raptor2-utils rasqal-utils libraw1394-doc
+#16 8.125   librdf-storage-mysql librdf-storage-postgresql librdf-storage-sqlite
+#16 8.125   librdf-storage-virtuoso redland-utils libreoffice-base bluez
+#16 8.125   fonts-crosextra-caladea fonts-crosextra-carlito libreoffice-java-common
+#16 8.125   default-jre | java-runtime | java8-runtime | jre librsvg2-bin xdg-utils
+#16 8.125   lm-sensors serdi sndiod sordi speex opencl-icd pinentry-doc readline-doc
+#16 8.125 Recommended packages:
+#16 8.125   alsa-ucm-conf alsa-topology-conf libaacs0 libpam-cap dbus
+#16 8.125   libdecor-0-plugin-1-cairo | libdecor-0-plugin-1 libgdk-pixbuf2.0-bin
+#16 8.125   libglib2.0-data xdg-user-dirs gstreamer1.0-plugins-base hunspell-en-us
+#16 8.125   | hunspell-dictionary | myspell-dictionary krb5-locales libldap-common
+#16 8.125   libgpm2 pocketsphinx-en-us poppler-data publicsuffix fonts-liberation2
+#16 8.125   | ttf-mscorefonts-installer apparmor xdg-utils python3-uno libpaper-utils
+#16 8.125   gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-plugins-bad
+#16 8.125   gstreamer1.0-libav libreoffice-math librsvg2-common libsasl2-modules
+#16 8.125   va-driver-all | va-driver vdpau-driver-all | vdpau-driver
+#16 8.125   mesa-vulkan-drivers | vulkan-icd
+#16 9.034 The following NEW packages will be installed:
+#16 9.034   ca-certificates coinor-libcbc3 coinor-libcgl1 coinor-libclp1
+#16 9.034   coinor-libcoinmp1v5 coinor-libcoinutils3v5 coinor-libosi1v5 curl dirmngr
+#16 9.034   ffmpeg fontconfig fontconfig-config fonts-dejavu-core fonts-noto-cjk
+#16 9.034   fonts-opensymbol gnupg gnupg-l10n gnupg-utils gpg gpg-agent gpg-wks-client
+#16 9.034   gpg-wks-server gpgconf gpgsm iso-codes libabsl20220623 libabw-0.1-1 libaom3
+#16 9.034   libasound2 libasound2-data libass9 libassuan0 libasyncns0 libavahi-client3
+#16 9.034   libavahi-common-data libavahi-common3 libavc1394-0 libavcodec59
+#16 9.034   libavdevice59 libavfilter8 libavformat59 libavutil57 libblas3 libbluray2
+#16 9.034   libboost-filesystem1.74.0 libboost-iostreams1.74.0 libboost-locale1.74.0
+#16 9.034   libboost-thread1.74.0 libbox2d2 libbrotli1 libbs2b0 libbsd0 libcaca0
+#16 9.034   libcairo-gobject2 libcairo2 libcap2-bin libcdio-cdda2 libcdio-paranoia2
+#16 9.034   libcdio19 libcdr-0.1-1 libchromaprint1 libcjson1 libclucene-contribs1v5
+#16 9.034   libclucene-core1v5 libcodec2-1.0 libcolamd2 libcups2 libcurl3-gnutls
+#16 9.034   libcurl4 libdatrie1 libdav1d6 libdbus-1-3 libdc1394-25 libdconf1
+#16 9.034   libdecor-0-0 libdeflate0 libdrm-amdgpu1 libdrm-common libdrm-intel1
+#16 9.034   libdrm-nouveau2 libdrm-radeon1 libdrm2 libdw1 libe-book-0.1-1 libedit2
+#16 9.034   libelf1 libeot0 libepoxy0 libepubgen-0.1-1 libetonyek-0.1-1 libexpat1
+#16 9.035   libexttextcat-2.0-0 libexttextcat-data libflac12 libflite1 libfontconfig1
+#16 9.035   libfreehand-0.1-1 libfreetype6 libfribidi0 libgbm1 libgdk-pixbuf-2.0-0
+#16 9.035   libgdk-pixbuf2.0-common libgfortran5 libgl1 libgl1-mesa-dri libglapi-mesa
+#16 9.035   libglib2.0-0 libglvnd0 libglx-mesa0 libglx0 libgme0 libgomp1 libgpgme11
+#16 9.035   libgpgmepp6 libgraphite2-3 libgsm1 libgssapi-krb5-2
+#16 9.035   libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 libharfbuzz-icu0
+#16 9.035   libharfbuzz0b libhunspell-1.7-0 libhwy1 libhyphen0 libice6 libicu72
+#16 9.035   libiec61883-0 libjack-jackd2-0 libjbig0 libjpeg62-turbo libjxl0.7
+#16 9.035   libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libksba8
+#16 9.035   liblangtag-common liblangtag1 liblapack3 liblcms2-2 libldap-2.5-0 liblerc4
+#16 9.035   liblilv-0-0 libllvm15 libltdl7 libmbedcrypto7 libmfx1 libmhash2 libmp3lame0
+#16 9.035   libmpg123-0 libmspub-0.1-1 libmwaw-0.3-3 libmysofa1 libmythes-1.2-0
+#16 9.035   libncursesw6 libnghttp2-14 libnorm1 libnpth0 libnspr4 libnss3 libnuma1
+#16 9.035   libnumbertext-1.0-0 libnumbertext-data libodfgen-0.1-1 libogg0
+#16 9.035   libopenal-data libopenal1 libopenjp2-7 libopenmpt0 libopus0 liborc-0.4-0
+#16 9.035   liborcus-0.17-0 liborcus-parser-0.17-0 libpagemaker-0.0-0 libpango-1.0-0
+#16 9.035   libpangocairo-1.0-0 libpangoft2-1.0-0 libpciaccess0 libpgm-5.3-0
+#16 9.035   libpixman-1-0 libplacebo208 libpng16-16 libpocketsphinx3 libpoppler126
+#16 9.035   libpostproc56 libpsl5 libpulse0 libquadmath0 libqxp-0.0-0 librabbitmq4
+#16 9.035   libraptor2-0 librasqal3 librav1e0 libraw1394-11 librdf0 libreadline8
+#16 9.035   libreoffice-base-core libreoffice-calc libreoffice-common libreoffice-core
+#16 9.035   libreoffice-draw libreoffice-impress libreoffice-style-colibre
+#16 9.035   libreoffice-writer librevenge-0.0-0 librist4 librsvg2-2 librtmp1
+#16 9.035   librubberband2 libsamplerate0 libsasl2-2 libsasl2-modules-db libsdl2-2.0-0
+#16 9.035   libsensors-config libsensors5 libserd-0-0 libshine3 libslang2 libsm6
+#16 9.035   libsnappy1v5 libsndfile1 libsndio7.0 libsodium23 libsord-0-0 libsoxr0
+#16 9.035   libspeex1 libsphinxbase3 libsqlite3-0 libsratom-0-0 libsrt1.5-gnutls
+#16 9.035   libssh-gcrypt-4 libssh2-1 libssl3 libstaroffice-0.0-0 libsuitesparseconfig5
+#16 9.035   libsvtav1enc1 libswresample4 libswscale6 libthai-data libthai0 libtheora0
+#16 9.035   libtiff6 libtwolame0 libudfread0 libuno-cppu3 libuno-cppuhelpergcc3-3
+#16 9.035   libuno-purpenvhelpergcc3-3 libuno-sal3 libuno-salhelpergcc3-3 libunwind8
+#16 9.035   libusb-1.0-0 libva-drm2 libva-x11-2 libva2 libvdpau1 libvidstab1.1
+#16 9.035   libvisio-0.1-1 libvorbis0a libvorbisenc2 libvorbisfile3 libvpx7 libvulkan1
+#16 9.035   libwayland-client0 libwayland-cursor0 libwayland-egl1 libwayland-server0
+#16 9.035   libwebp7 libwebpmux3 libwpd-0.10-10 libwpg-0.3-3 libwps-0.4-4 libx11-6
+#16 9.035   libx11-data libx11-xcb1 libx264-164 libx265-199 libxau6 libxcb-dri2-0
+#16 9.035   libxcb-dri3-0 libxcb-glx0 libxcb-present0 libxcb-randr0 libxcb-render0
+#16 9.035   libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb1 libxcursor1
+#16 9.035   libxdmcp6 libxext6 libxfixes3 libxi6 libxinerama1 libxkbcommon0 libxml2
+#16 9.035   libxmlsec1 libxmlsec1-nss libxrandr2 libxrender1 libxshmfence1 libxslt1.1
+#16 9.035   libxss1 libxv1 libxvidcore4 libxxf86vm1 libyajl2 libz3-4 libzimg2
+#16 9.035   libzmf-0.0-0 libzmq5 libzvbi-common libzvbi0 libzxing2 lp-solve
+#16 9.036   ocl-icd-libopencl1 openssl pinentry-curses poppler-utils readline-common
+#16 9.036   sensible-utils shared-mime-info ucf uno-libs-private ure x11-common xkb-data
+#16 9.193 0 upgraded, 327 newly installed, 0 to remove and 0 not upgraded.
+#16 9.193 Need to get 319 MB of archives.
+#16 9.193 After this operation, 999 MB of additional disk space will be used.
+#16 9.193 Get:1 http://deb.debian.org/debian bookworm/main amd64 readline-common all 8.2-1.3 [69.0 kB]
+#16 9.307 Get:2 http://deb.debian.org/debian bookworm/main amd64 sensible-utils all 0.0.17+nmu1 [19.0 kB]
+#16 9.568 Get:3 http://deb.debian.org/debian-security bookworm-security/main amd64 libssl3 amd64 3.0.22-1~deb12u2 [2040 kB]
+#16 10.04 Get:4 http://deb.debian.org/debian-security bookworm-security/main amd64 openssl amd64 3.0.22-1~deb12u2 [1442 kB]
+#16 10.30 Get:5 http://deb.debian.org/debian-security bookworm-security/main amd64 ca-certificates all 20250419~deb12u2 [161 kB]
+#16 10.47 Get:6 http://deb.debian.org/debian bookworm/main amd64 ucf all 3.0043+nmu1+deb12u1 [55.3 kB]
+#16 10.66 Get:7 http://deb.debian.org/debian bookworm/main amd64 libblas3 amd64 3.11.0-2 [149 kB]
+#16 10.89 Get:8 http://deb.debian.org/debian bookworm/main amd64 libquadmath0 amd64 12.2.0-14+deb12u1 [145 kB]
+#16 12.16 Get:9 http://deb.debian.org/debian bookworm/main amd64 libgfortran5 amd64 12.2.0-14+deb12u1 [793 kB]
+#16 12.46 Get:10 http://deb.debian.org/debian bookworm/main amd64 liblapack3 amd64 3.11.0-2 [2323 kB]
+#16 12.92 Get:11 http://deb.debian.org/debian bookworm/main amd64 coinor-libcoinutils3v5 amd64 2.11.4+repack1-2 [440 kB]
+#16 13.11 Get:12 http://deb.debian.org/debian bookworm/main amd64 coinor-libosi1v5 amd64 0.108.6+repack1-2 [276 kB]
+#16 13.40 Get:13 http://deb.debian.org/debian bookworm/main amd64 coinor-libclp1 amd64 1.17.6-3 [843 kB]
+#16 13.67 Get:14 http://deb.debian.org/debian bookworm/main amd64 coinor-libcgl1 amd64 0.60.3+repack1-4 [409 kB]
+#16 13.97 Get:15 http://deb.debian.org/debian bookworm/main amd64 coinor-libcbc3 amd64 2.10.8+ds1-1 [715 kB]
+#16 14.12 Get:16 http://deb.debian.org/debian bookworm/main amd64 coinor-libcoinmp1v5 amd64 1.8.3-3 [31.6 kB]
+#16 14.36 Get:17 http://deb.debian.org/debian-security bookworm-security/main amd64 libbrotli1 amd64 1.0.9-2+deb12u1 [275 kB]
+#16 14.48 Get:18 http://deb.debian.org/debian bookworm/main amd64 libkrb5support0 amd64 1.20.1-2+deb12u5 [33.2 kB]
+#16 14.65 Get:19 http://deb.debian.org/debian bookworm/main amd64 libk5crypto3 amd64 1.20.1-2+deb12u5 [79.7 kB]
+#16 14.72 Get:20 http://deb.debian.org/debian bookworm/main amd64 libkeyutils1 amd64 1.6.3-2 [8808 B]
+#16 15.01 Get:21 http://deb.debian.org/debian bookworm/main amd64 libkrb5-3 amd64 1.20.1-2+deb12u5 [332 kB]
+#16 15.20 Get:22 http://deb.debian.org/debian bookworm/main amd64 libgssapi-krb5-2 amd64 1.20.1-2+deb12u5 [135 kB]
+#16 15.32 Get:23 http://deb.debian.org/debian-security bookworm-security/main amd64 libsasl2-modules-db amd64 2.1.28+dfsg-10+deb12u1 [20.5 kB]
+#16 15.49 Get:24 http://deb.debian.org/debian-security bookworm-security/main amd64 libsasl2-2 amd64 2.1.28+dfsg-10+deb12u1 [59.9 kB]
+#16 15.69 Get:25 http://deb.debian.org/debian bookworm/main amd64 libldap-2.5-0 amd64 2.5.13+dfsg-5 [183 kB]
+#16 15.87 Get:26 http://deb.debian.org/debian bookworm/main amd64 libnghttp2-14 amd64 1.52.0-1+deb12u3 [72.4 kB]
+#16 16.00 Get:27 http://deb.debian.org/debian bookworm/main amd64 libpsl5 amd64 0.21.2-1 [58.7 kB]
+#16 16.18 Get:28 http://deb.debian.org/debian bookworm/main amd64 librtmp1 amd64 2.4+20151223.gitfa8646d.1-2+b2 [60.8 kB]
+#16 16.35 Get:29 http://deb.debian.org/debian-security bookworm-security/main amd64 libssh2-1 amd64 1.10.0-3+deb12u1 [176 kB]
+#16 16.64 Get:30 http://deb.debian.org/debian bookworm/main amd64 libcurl4 amd64 7.88.1-10+deb12u15 [392 kB]
+#16 16.96 Get:31 http://deb.debian.org/debian bookworm/main amd64 curl amd64 7.88.1-10+deb12u15 [316 kB]
+#16 17.09 Get:32 http://deb.debian.org/debian bookworm/main amd64 libassuan0 amd64 2.5.5-5 [48.5 kB]
+#16 17.26 Get:33 http://deb.debian.org/debian bookworm/main amd64 libreadline8 amd64 8.2-1.3 [166 kB]
+#16 17.56 Get:34 http://deb.debian.org/debian bookworm/main amd64 gpgconf amd64 2.2.40-1.1+deb12u2 [565 kB]
+#16 17.78 Get:35 http://deb.debian.org/debian bookworm/main amd64 libksba8 amd64 1.6.3-2 [128 kB]
+#16 17.90 Get:36 http://deb.debian.org/debian bookworm/main amd64 libnpth0 amd64 1.6-3 [19.0 kB]
+#16 18.19 Get:37 http://deb.debian.org/debian bookworm/main amd64 dirmngr amd64 2.2.40-1.1+deb12u2 [793 kB]
+#16 18.57 Get:38 http://deb.debian.org/debian-security bookworm-security/main amd64 libaom3 amd64 3.6.0-1+deb12u3 [1851 kB]
+#16 18.73 Get:39 http://deb.debian.org/debian bookworm/main amd64 libdrm-common all 2.4.114-1 [7112 B]
+#16 18.86 Get:40 http://deb.debian.org/debian bookworm/main amd64 libdrm2 amd64 2.4.114-1+b1 [37.5 kB]
+#16 19.03 Get:41 http://deb.debian.org/debian bookworm/main amd64 libva2 amd64 2.17.0-1 [69.2 kB]
+#16 19.40 Get:42 http://deb.debian.org/debian bookworm/main amd64 libmfx1 amd64 22.5.4-1 [3219 kB]
+#16 19.75 Get:43 http://deb.debian.org/debian bookworm/main amd64 libva-drm2 amd64 2.17.0-1 [16.4 kB]
+#16 19.87 Get:44 http://deb.debian.org/debian bookworm/main amd64 libxau6 amd64 1:1.0.9-1 [19.7 kB]
+#16 20.07 Get:45 http://deb.debian.org/debian bookworm/main amd64 libbsd0 amd64 0.11.7-2 [117 kB]
+#16 20.21 Get:46 http://deb.debian.org/debian bookworm/main amd64 libxdmcp6 amd64 1:1.1.2-3 [26.3 kB]
+#16 20.41 Get:47 http://deb.debian.org/debian bookworm/main amd64 libxcb1 amd64 1.15-1 [144 kB]
+#16 20.68 Get:48 http://deb.debian.org/debian bookworm/main amd64 libx11-data all 2:1.8.4-2+deb12u2 [292 kB]
+#16 21.01 Get:49 http://deb.debian.org/debian bookworm/main amd64 libx11-6 amd64 2:1.8.4-2+deb12u2 [760 kB]
+#16 21.26 Get:50 http://deb.debian.org/debian bookworm/main amd64 libx11-xcb1 amd64 2:1.8.4-2+deb12u2 [192 kB]
+#16 21.45 Get:51 http://deb.debian.org/debian bookworm/main amd64 libxcb-dri3-0 amd64 1.15-1 [107 kB]
+#16 21.60 Get:52 http://deb.debian.org/debian bookworm/main amd64 libxext6 amd64 2:1.3.4-1+b1 [52.9 kB]
+#16 21.73 Get:53 http://deb.debian.org/debian bookworm/main amd64 libxfixes3 amd64 1:6.0.0-2 [22.7 kB]
+#16 21.86 Get:54 http://deb.debian.org/debian bookworm/main amd64 libva-x11-2 amd64 2.17.0-1 [21.0 kB]
+#16 21.97 Get:55 http://deb.debian.org/debian bookworm/main amd64 libvdpau1 amd64 1.5-2 [26.1 kB]
+#16 22.10 Get:56 http://deb.debian.org/debian bookworm/main amd64 ocl-icd-libopencl1 amd64 2.3.1-1 [43.0 kB]
+#16 22.38 Get:57 http://deb.debian.org/debian bookworm/main amd64 libavutil57 amd64 7:5.1.9-0+deb12u1 [373 kB]
+#16 22.59 Get:58 http://deb.debian.org/debian-security bookworm-security/main amd64 libexpat1 amd64 2.5.0-1+deb12u5 [108 kB]
+#16 22.84 Get:59 http://deb.debian.org/debian-security bookworm-security/main amd64 libpng16-16 amd64 1.6.39-2+deb12u6 [277 kB]
+#16 23.11 Get:60 http://deb.debian.org/debian bookworm/main amd64 libfreetype6 amd64 2.12.1+dfsg-5+deb12u4 [398 kB]
+#16 23.43 Get:61 http://deb.debian.org/debian bookworm/main amd64 fonts-dejavu-core all 2.37-6 [1068 kB]
+#16 23.75 Get:62 http://deb.debian.org/debian bookworm/main amd64 fontconfig-config amd64 2.14.1-4 [315 kB]
+#16 23.98 Get:63 http://deb.debian.org/debian bookworm/main amd64 libfontconfig1 amd64 2.14.1-4 [386 kB]
+#16 24.29 Get:64 http://deb.debian.org/debian bookworm/main amd64 libpixman-1-0 amd64 0.42.2-1 [546 kB]
+#16 24.51 Get:65 http://deb.debian.org/debian bookworm/main amd64 libxcb-render0 amd64 1.15-1 [115 kB]
+#16 24.67 Get:66 http://deb.debian.org/debian bookworm/main amd64 libxcb-shm0 amd64 1.15-1 [105 kB]
+#16 24.84 Get:67 http://deb.debian.org/debian bookworm/main amd64 libxrender1 amd64 1:0.9.10-1.1 [33.2 kB]
+#16 25.10 Get:68 http://deb.debian.org/debian bookworm/main amd64 libcairo2 amd64 1.16.0-7 [575 kB]
+#16 25.58 Get:69 http://deb.debian.org/debian bookworm/main amd64 libcodec2-1.0 amd64 1.0.5-1 [8171 kB]
+#16 26.38 Get:70 http://deb.debian.org/debian bookworm/main amd64 libdav1d6 amd64 1.0.0-2+deb12u1 [513 kB]
+#16 26.77 Get:71 http://deb.debian.org/debian bookworm/main amd64 libglib2.0-0 amd64 2.74.6-2+deb12u9 [1403 kB]
+#16 27.07 Get:72 http://deb.debian.org/debian bookworm/main amd64 libgsm1 amd64 1.0.22-1 [30.9 kB]
+#16 27.32 Get:73 http://deb.debian.org/debian bookworm/main amd64 libhwy1 amd64 1.0.3-3+deb12u1 [348 kB]
+#16 27.51 Get:74 http://deb.debian.org/debian bookworm/main amd64 liblcms2-2 amd64 2.14-2+deb12u1 [154 kB]
+#16 27.78 Get:75 http://deb.debian.org/debian bookworm/main amd64 libjxl0.7 amd64 0.7.0-10+deb12u1 [1046 kB]
+#16 28.13 Get:76 http://deb.debian.org/debian bookworm/main amd64 libmp3lame0 amd64 3.100-6 [365 kB]
+#16 31.33 Get:77 http://deb.debian.org/debian bookworm/main amd64 libopenjp2-7 amd64 2.5.0-2+deb12u3 [189 kB]
+#16 32.51 Get:78 http://deb.debian.org/debian bookworm/main amd64 libopus0 amd64 1.3.1-3 [195 kB]
+#16 34.79 Get:79 http://deb.debian.org/debian bookworm/main amd64 librav1e0 amd64 0.5.1-6 [763 kB]
+#16 35.21 Get:80 http://deb.debian.org/debian bookworm/main amd64 libcairo-gobject2 amd64 1.16.0-7 [112 kB]
+#16 35.68 Get:81 http://deb.debian.org/debian bookworm/main amd64 libgdk-pixbuf2.0-common all 2.42.10+dfsg-1+deb12u4 [307 kB]
+#16 36.54 Get:82 http://deb.debian.org/debian bookworm/main amd64 libicu72 amd64 72.1-3+deb12u1 [9376 kB]
+#16 37.74 Get:83 http://deb.debian.org/debian bookworm/main amd64 libxml2 amd64 2.9.14+dfsg-1.3~deb12u6 [689 kB]
+#16 38.38 Get:84 http://deb.debian.org/debian bookworm/main amd64 shared-mime-info amd64 2.2-1 [729 kB]
+#16 38.82 Get:85 http://deb.debian.org/debian bookworm/main amd64 libjpeg62-turbo amd64 1:2.1.5-2 [166 kB]
+#16 39.12 Get:86 http://deb.debian.org/debian bookworm/main amd64 libdeflate0 amd64 1.14-1 [61.4 kB]
+#16 39.35 Get:87 http://deb.debian.org/debian bookworm/main amd64 libjbig0 amd64 2.1-6.1 [31.7 kB]
+#16 39.75 Get:88 http://deb.debian.org/debian bookworm/main amd64 liblerc4 amd64 4.0.0+ds-2 [170 kB]
+#16 40.25 Get:89 http://deb.debian.org/debian bookworm/main amd64 libwebp7 amd64 1.2.4-0.2+deb12u1 [286 kB]
+#16 40.74 Get:90 http://deb.debian.org/debian bookworm/main amd64 libtiff6 amd64 4.5.0-6+deb12u4 [316 kB]
+#16 41.13 Get:91 http://deb.debian.org/debian bookworm/main amd64 libgdk-pixbuf-2.0-0 amd64 2.42.10+dfsg-1+deb12u4 [139 kB]
+#16 41.67 Get:92 http://deb.debian.org/debian bookworm/main amd64 fontconfig amd64 2.14.1-4 [449 kB]
+#16 42.01 Get:93 http://deb.debian.org/debian bookworm/main amd64 libfribidi0 amd64 1.0.8-2.1 [65.0 kB]
+#16 42.34 Get:94 http://deb.debian.org/debian bookworm/main amd64 libgraphite2-3 amd64 1.3.14-1+deb12u1 [74.6 kB]
+#16 43.03 Get:95 http://deb.debian.org/debian bookworm/main amd64 libharfbuzz0b amd64 6.0.0+dfsg-3 [1945 kB]
+#16 43.58 Get:96 http://deb.debian.org/debian bookworm/main amd64 libthai-data all 0.1.29-1 [176 kB]
+#16 43.86 Get:97 http://deb.debian.org/debian bookworm/main amd64 libdatrie1 amd64 0.2.13-2+b1 [43.3 kB]
+#16 44.16 Get:98 http://deb.debian.org/debian bookworm/main amd64 libthai0 amd64 0.1.29-1 [57.5 kB]
+#16 44.58 Get:99 http://deb.debian.org/debian bookworm/main amd64 libpango-1.0-0 amd64 1.50.12+ds-1 [212 kB]
+#16 44.86 Get:100 http://deb.debian.org/debian bookworm/main amd64 libpangoft2-1.0-0 amd64 1.50.12+ds-1 [47.4 kB]
+#16 45.10 Get:101 http://deb.debian.org/debian bookworm/main amd64 libpangocairo-1.0-0 amd64 1.50.12+ds-1 [34.2 kB]
+#16 45.82 Get:102 http://deb.debian.org/debian bookworm/main amd64 librsvg2-2 amd64 2.54.7+dfsg-1~deb12u1 [2620 kB]
+#16 46.19 Get:103 http://deb.debian.org/debian bookworm/main amd64 libshine3 amd64 3.1.1-2 [23.6 kB]
+#16 46.44 Get:104 http://deb.debian.org/debian bookworm/main amd64 libsnappy1v5 amd64 1.1.9-3 [26.0 kB]
+#16 46.72 Get:105 http://deb.debian.org/debian bookworm/main amd64 libspeex1 amd64 1.2.1-2 [54.6 kB]
+#16 47.34 Get:106 http://deb.debian.org/debian bookworm/main amd64 libsvtav1enc1 amd64 1.4.1+dfsg-1 [2121 kB]
+#16 47.79 Get:107 http://deb.debian.org/debian bookworm/main amd64 libgomp1 amd64 12.2.0-14+deb12u1 [116 kB]
+#16 48.12 Get:108 http://deb.debian.org/debian bookworm/main amd64 libsoxr0 amd64 0.1.3-4 [77.8 kB]
+#16 48.48 Get:109 http://deb.debian.org/debian bookworm/main amd64 libswresample4 amd64 7:5.1.9-0+deb12u1 [107 kB]
+#16 48.72 Get:110 http://deb.debian.org/debian bookworm/main amd64 libogg0 amd64 1.3.5-3 [23.4 kB]
+#16 49.10 Get:111 http://deb.debian.org/debian bookworm/main amd64 libtheora0 amd64 1.1.1+dfsg.1-16.1+deb12u1 [154 kB]
+#16 49.36 Get:112 http://deb.debian.org/debian bookworm/main amd64 libtwolame0 amd64 0.4.0-2 [51.1 kB]
+#16 49.70 Get:113 http://deb.debian.org/debian bookworm/main amd64 libvorbis0a amd64 1.3.7-1 [93.0 kB]
+#16 50.04 Get:114 http://deb.debian.org/debian bookworm/main amd64 libvorbisenc2 amd64 1.3.7-1 [80.6 kB]
+#16 50.69 Get:115 http://deb.debian.org/debian bookworm/main amd64 libvpx7 amd64 1.12.0-1+deb12u5 [1003 kB]
+#16 51.10 Get:116 http://deb.debian.org/debian bookworm/main amd64 libwebpmux3 amd64 1.2.4-0.2+deb12u1 [109 kB]
+#16 51.67 Get:117 http://deb.debian.org/debian bookworm/main amd64 libx264-164 amd64 2:0.164.3095+gitbaee400-3 [547 kB]
+#16 51.90 Get:118 http://deb.debian.org/debian bookworm/main amd64 libnuma1 amd64 2.0.16-1 [21.0 kB]
+#16 52.54 Get:119 http://deb.debian.org/debian bookworm/main amd64 libx265-199 amd64 3.5-2+b1 [1150 kB]
+#16 53.01 Get:120 http://deb.debian.org/debian bookworm/main amd64 libxvidcore4 amd64 2:1.3.7-1 [242 kB]
+#16 53.33 Get:121 http://deb.debian.org/debian bookworm/main amd64 libzvbi-common all 0.2.41-1+deb12u1 [69.9 kB]
+#16 53.90 Get:122 http://deb.debian.org/debian bookworm/main amd64 libzvbi0 amd64 0.2.41-1+deb12u1 [275 kB]
+#16 54.65 Get:123 http://deb.debian.org/debian bookworm/main amd64 libavcodec59 amd64 7:5.1.9-0+deb12u1 [5229 kB]
+#16 55.19 Get:124 http://deb.debian.org/debian bookworm/main amd64 libasound2-data all 1.2.8-1 [20.5 kB]
+#16 55.70 Get:125 http://deb.debian.org/debian bookworm/main amd64 libasound2 amd64 1.2.8-1+b1 [362 kB]
+#16 55.99 Get:126 http://deb.debian.org/debian bookworm/main amd64 libraw1394-11 amd64 2.1.2-2 [41.1 kB]
+#16 56.20 Get:127 http://deb.debian.org/debian bookworm/main amd64 libavc1394-0 amd64 0.5.4-5 [19.9 kB]
+#16 56.58 Get:128 http://deb.debian.org/debian-security bookworm-security/main amd64 libass9 amd64 1:0.17.1-1+deb12u1 [107 kB]
+#16 56.78 Get:129 http://deb.debian.org/debian bookworm/main amd64 libudfread0 amd64 1.1.2-1 [16.5 kB]
+#16 57.20 Get:130 http://deb.debian.org/debian bookworm/main amd64 libbluray2 amd64 1:1.3.4-1 [138 kB]
+#16 57.47 Get:131 http://deb.debian.org/debian bookworm/main amd64 libchromaprint1 amd64 1.5.1-2+b1 [41.0 kB]
+#16 57.83 Get:132 http://deb.debian.org/debian bookworm/main amd64 libgme0 amd64 0.6.3-6 [130 kB]
+#16 58.22 Get:133 http://deb.debian.org/debian bookworm/main amd64 libmpg123-0 amd64 1.31.2-1+deb12u1 [147 kB]
+#16 58.45 Get:134 http://deb.debian.org/debian bookworm/main amd64 libvorbisfile3 amd64 1.3.7-1 [26.1 kB]
+#16 59.02 Get:135 http://deb.debian.org/debian bookworm/main amd64 libopenmpt0 amd64 0.6.9-1 [693 kB]
+#16 59.30 Get:136 http://deb.debian.org/debian-security bookworm-security/main amd64 librabbitmq4 amd64 0.11.0-1+deb12u3 [41.8 kB]
+#16 59.51 Get:137 http://deb.debian.org/debian bookworm/main amd64 libcjson1 amd64 1.7.15-1+deb12u4 [23.2 kB]
+#16 59.96 Get:138 http://deb.debian.org/debian bookworm/main amd64 libmbedcrypto7 amd64 2.28.3-1 [277 kB]
+#16 60.31 Get:139 http://deb.debian.org/debian bookworm/main amd64 librist4 amd64 0.2.7+dfsg-1 [73.9 kB]
+#16 60.77 Get:140 http://deb.debian.org/debian bookworm/main amd64 libsrt1.5-gnutls amd64 1.5.1-1+deb12u1 [313 kB]
+#16 61.41 Get:141 http://deb.debian.org/debian-security bookworm-security/main amd64 libssh-gcrypt-4 amd64 0.10.6-0+deb12u3 [222 kB]
+#16 61.85 Get:142 http://deb.debian.org/debian bookworm/main amd64 libnorm1 amd64 1.5.9+dfsg-2 [221 kB]
+#16 62.27 Get:143 http://deb.debian.org/debian bookworm/main amd64 libpgm-5.3-0 amd64 5.3.128~dfsg-2 [161 kB]
+#16 62.73 Get:144 http://deb.debian.org/debian bookworm/main amd64 libsodium23 amd64 1.0.18-1+deb12u1 [162 kB]
+#16 63.47 Get:145 http://deb.debian.org/debian bookworm/main amd64 libzmq5 amd64 4.3.4-6 [273 kB]
+#16 64.46 Get:146 http://deb.debian.org/debian bookworm/main amd64 libavformat59 amd64 7:5.1.9-0+deb12u1 [1114 kB]
+#16 65.57 Get:147 http://deb.debian.org/debian bookworm/main amd64 libbs2b0 amd64 3.1.0+dfsg-7 [11.5 kB]
+#16 66.38 Get:148 http://deb.debian.org/debian bookworm/main amd64 libflite1 amd64 2.2-5 [12.8 MB]
+#16 67.53 Get:149 http://deb.debian.org/debian bookworm/main amd64 libserd-0-0 amd64 0.30.16-1 [47.5 kB]
+#16 67.74 Get:150 http://deb.debian.org/debian bookworm/main amd64 libsord-0-0 amd64 0.16.14+git221008-1 [20.8 kB]
+#16 67.95 Get:151 http://deb.debian.org/debian bookworm/main amd64 libsratom-0-0 amd64 0.6.14-1 [17.7 kB]
+#16 68.21 Get:152 http://deb.debian.org/debian bookworm/main amd64 liblilv-0-0 amd64 0.24.14-1 [49.4 kB]
+#16 68.81 Get:153 http://deb.debian.org/debian bookworm/main amd64 libmysofa1 amd64 1.3.1~dfsg0-1 [1158 kB]
+#16 69.32 Get:154 http://deb.debian.org/debian bookworm/main amd64 libepoxy0 amd64 1.5.10-1 [189 kB]
+#16 69.98 Get:155 http://deb.debian.org/debian bookworm/main amd64 libvulkan1 amd64 1.3.239.0-1 [116 kB]
+#16 70.85 Get:156 http://deb.debian.org/debian bookworm/main amd64 libplacebo208 amd64 4.208.0-3 [2239 kB]
+#16 71.10 Get:157 http://deb.debian.org/debian bookworm/main amd64 libasyncns0 amd64 0.8-6+b3 [12.9 kB]
+#16 71.54 Get:158 http://deb.debian.org/debian bookworm/main amd64 libdbus-1-3 amd64 1.14.10-1~deb12u1 [201 kB]
+#16 71.96 Get:159 http://deb.debian.org/debian bookworm/main amd64 libflac12 amd64 1.4.2+ds-2 [198 kB]
+#16 72.41 Get:160 http://deb.debian.org/debian bookworm/main amd64 libsndfile1 amd64 1.2.0-1+deb12u1 [197 kB]
+#16 72.93 Get:161 http://deb.debian.org/debian bookworm/main amd64 libpulse0 amd64 16.1+dfsg1-2+b1 [274 kB]
+#16 73.28 Get:162 http://deb.debian.org/debian bookworm/main amd64 libsphinxbase3 amd64 0.8+5prealpha+1-16 [118 kB]
+#16 73.63 Get:163 http://deb.debian.org/debian bookworm/main amd64 libpocketsphinx3 amd64 0.8+5prealpha+1-15 [125 kB]
+#16 73.98 Get:164 http://deb.debian.org/debian bookworm/main amd64 libpostproc56 amd64 7:5.1.9-0+deb12u1 [103 kB]
+#16 74.38 Get:165 http://deb.debian.org/debian bookworm/main amd64 librubberband2 amd64 3.1.2+dfsg0-1 [137 kB]
+#16 74.82 Get:166 http://deb.debian.org/debian bookworm/main amd64 libswscale6 amd64 7:5.1.9-0+deb12u1 [225 kB]
+#16 75.08 Get:167 http://deb.debian.org/debian bookworm/main amd64 libvidstab1.1 amd64 1.1.0-2+b1 [37.8 kB]
+#16 75.51 Get:168 http://deb.debian.org/debian bookworm/main amd64 libzimg2 amd64 3.0.4+ds1-1 [227 kB]
+#16 76.26 Get:169 http://deb.debian.org/debian bookworm/main amd64 libavfilter8 amd64 7:5.1.9-0+deb12u1 [3713 kB]
+#16 76.90 Get:170 http://deb.debian.org/debian bookworm/main amd64 libncursesw6 amd64 6.4-4 [134 kB]
+#16 77.44 Get:171 http://deb.debian.org/debian bookworm/main amd64 libslang2 amd64 2.3.3-3 [554 kB]
+#16 77.85 Get:172 http://deb.debian.org/debian bookworm/main amd64 libcaca0 amd64 0.99.beta20-3+deb12u1 [201 kB]
+#16 78.31 Get:173 http://deb.debian.org/debian bookworm/main amd64 libcdio19 amd64 2.1.0-4 [203 kB]
+#16 78.53 Get:174 http://deb.debian.org/debian bookworm/main amd64 libcdio-cdda2 amd64 10.2+2.0.1-1 [20.9 kB]
+#16 78.76 Get:175 http://deb.debian.org/debian bookworm/main amd64 libcdio-paranoia2 amd64 10.2+2.0.1-1 [20.4 kB]
+#16 79.07 Get:176 http://deb.debian.org/debian bookworm/main amd64 libusb-1.0-0 amd64 2:1.0.26-1 [62.6 kB]
+#16 79.46 Get:177 http://deb.debian.org/debian bookworm/main amd64 libdc1394-25 amd64 2.2.6-4 [109 kB]
+#16 79.76 Get:178 http://deb.debian.org/debian bookworm/main amd64 libglvnd0 amd64 1.6.0-1 [51.8 kB]
+#16 80.00 Get:179 http://deb.debian.org/debian bookworm/main amd64 libglapi-mesa amd64 22.3.6-1+deb12u2 [35.9 kB]
+#16 80.33 Get:180 http://deb.debian.org/debian bookworm/main amd64 libxcb-dri2-0 amd64 1.15-1 [107 kB]
+#16 80.69 Get:181 http://deb.debian.org/debian bookworm/main amd64 libxcb-glx0 amd64 1.15-1 [122 kB]
+#16 81.03 Get:182 http://deb.debian.org/debian bookworm/main amd64 libxcb-present0 amd64 1.15-1 [105 kB]
+#16 81.43 Get:183 http://deb.debian.org/debian bookworm/main amd64 libxcb-randr0 amd64 1.15-1 [117 kB]
+#16 81.82 Get:184 http://deb.debian.org/debian bookworm/main amd64 libxcb-sync1 amd64 1.15-1 [109 kB]
+#16 82.18 Get:185 http://deb.debian.org/debian bookworm/main amd64 libxcb-xfixes0 amd64 1.15-1 [109 kB]
+#16 82.33 Get:186 http://deb.debian.org/debian bookworm/main amd64 libxshmfence1 amd64 1.3-1 [8820 B]
+#16 82.55 Get:187 http://deb.debian.org/debian bookworm/main amd64 libxxf86vm1 amd64 1:1.1.4-1+b2 [20.8 kB]
+#16 82.76 Get:188 http://deb.debian.org/debian bookworm/main amd64 libdrm-amdgpu1 amd64 2.4.114-1+b1 [20.9 kB]
+#16 83.08 Get:189 http://deb.debian.org/debian bookworm/main amd64 libpciaccess0 amd64 0.17-2 [51.4 kB]
+#16 83.40 Get:190 http://deb.debian.org/debian bookworm/main amd64 libdrm-intel1 amd64 2.4.114-1+b1 [64.0 kB]
+#16 83.61 Get:191 http://deb.debian.org/debian bookworm/main amd64 libdrm-nouveau2 amd64 2.4.114-1+b1 [19.1 kB]
+#16 83.85 Get:192 http://deb.debian.org/debian bookworm/main amd64 libdrm-radeon1 amd64 2.4.114-1+b1 [21.8 kB]
+#16 84.23 Get:193 http://deb.debian.org/debian bookworm/main amd64 libelf1 amd64 0.188-2.1 [174 kB]
+#16 84.60 Get:194 http://deb.debian.org/debian bookworm/main amd64 libedit2 amd64 3.1-20221030-2 [93.0 kB]
+#16 85.37 Get:195 http://deb.debian.org/debian bookworm/main amd64 libz3-4 amd64 4.8.12-3.1 [7216 kB]
+#16 86.96 Get:196 http://deb.debian.org/debian bookworm/main amd64 libllvm15 amd64 1:15.0.6-4+b1 [23.1 MB]
+#16 88.75 Get:197 http://deb.debian.org/debian bookworm/main amd64 libsensors-config all 1:3.6.0-7.1 [14.3 kB]
+#16 88.99 Get:198 http://deb.debian.org/debian bookworm/main amd64 libsensors5 amd64 1:3.6.0-7.1 [34.2 kB]
+#16 89.79 Get:199 http://deb.debian.org/debian bookworm/main amd64 libgl1-mesa-dri amd64 22.3.6-1+deb12u2 [7240 kB]
+#16 90.65 Get:200 http://deb.debian.org/debian bookworm/main amd64 libglx-mesa0 amd64 22.3.6-1+deb12u2 [148 kB]
+#16 90.89 Get:201 http://deb.debian.org/debian bookworm/main amd64 libglx0 amd64 1.6.0-1 [34.4 kB]
+#16 91.25 Get:202 http://deb.debian.org/debian bookworm/main amd64 libgl1 amd64 1.6.0-1 [88.4 kB]
+#16 91.48 Get:203 http://deb.debian.org/debian bookworm/main amd64 libiec61883-0 amd64 1.2.0-6+b1 [30.5 kB]
+#16 92.10 Get:204 http://deb.debian.org/debian bookworm/main amd64 libsamplerate0 amd64 0.2.2-3 [952 kB]
+#16 92.58 Get:205 http://deb.debian.org/debian bookworm/main amd64 libjack-jackd2-0 amd64 1.9.21~dfsg-3 [281 kB]
+#16 93.01 Get:206 http://deb.debian.org/debian bookworm/main amd64 libopenal-data all 1:1.19.1-2 [170 kB]
+#16 93.15 Get:207 http://deb.debian.org/debian bookworm/main amd64 libsndio7.0 amd64 1.9.0-0.3+b2 [27.3 kB]
+#16 93.43 Get:208 http://deb.debian.org/debian bookworm/main amd64 libopenal1 amd64 1:1.19.1-2 [501 kB]
+#16 93.55 Get:209 http://deb.debian.org/debian bookworm/main amd64 libwayland-client0 amd64 1.21.0-1 [28.3 kB]
+#16 93.67 Get:210 http://deb.debian.org/debian bookworm/main amd64 libdecor-0-0 amd64 0.1.1-2 [14.6 kB]
+#16 93.78 Get:211 http://deb.debian.org/debian bookworm/main amd64 libwayland-server0 amd64 1.21.0-1 [35.9 kB]
+#16 93.91 Get:212 http://deb.debian.org/debian bookworm/main amd64 libgbm1 amd64 22.3.6-1+deb12u2 [38.1 kB]
+#16 93.99 Get:213 http://deb.debian.org/debian bookworm/main amd64 libwayland-cursor0 amd64 1.21.0-1 [14.4 kB]
+#16 94.06 Get:214 http://deb.debian.org/debian bookworm/main amd64 libwayland-egl1 amd64 1.21.0-1 [8640 B]
+#16 94.19 Get:215 http://deb.debian.org/debian bookworm/main amd64 libxcursor1 amd64 1:1.2.1-1 [40.9 kB]
+#16 94.39 Get:216 http://deb.debian.org/debian bookworm/main amd64 libxi6 amd64 2:1.8-1+b1 [84.2 kB]
+#16 94.72 Get:217 http://deb.debian.org/debian bookworm/main amd64 xkb-data all 2.35.1-1 [764 kB]
+#16 94.95 Get:218 http://deb.debian.org/debian bookworm/main amd64 libxkbcommon0 amd64 1.5.0-1 [106 kB]
+#16 95.48 Get:219 http://deb.debian.org/debian bookworm/main amd64 libxrandr2 amd64 2:1.5.2-2+b1 [39.2 kB]
+#16 96.41 Get:220 http://deb.debian.org/debian bookworm/main amd64 x11-common all 1:7.7+23 [252 kB]
+#16 96.53 Get:221 http://deb.debian.org/debian bookworm/main amd64 libxss1 amd64 1:1.2.3-1 [17.8 kB]
+#16 96.81 Get:222 http://deb.debian.org/debian bookworm/main amd64 libsdl2-2.0-0 amd64 2.26.5+dfsg-1 [629 kB]
+#16 97.07 Get:223 http://deb.debian.org/debian bookworm/main amd64 libxcb-shape0 amd64 1.15-1 [106 kB]
+#16 97.19 Get:224 http://deb.debian.org/debian bookworm/main amd64 libxv1 amd64 2:1.0.11-1.1 [24.8 kB]
+#16 97.40 Get:225 http://deb.debian.org/debian bookworm/main amd64 libavdevice59 amd64 7:5.1.9-0+deb12u1 [123 kB]
+#16 97.75 Get:226 http://deb.debian.org/debian bookworm/main amd64 ffmpeg amd64 7:5.1.9-0+deb12u1 [1822 kB]
+#16 102.4 Get:227 http://deb.debian.org/debian bookworm/main amd64 fonts-noto-cjk all 1:20220127+repack1-1 [56.5 MB]
+#16 106.5 Get:228 http://deb.debian.org/debian bookworm/main amd64 fonts-opensymbol all 4:102.12+LibO7.4.7-1+deb12u14 [115 kB]
+#16 106.8 Get:229 http://deb.debian.org/debian bookworm/main amd64 gnupg-l10n all 2.2.40-1.1+deb12u2 [1093 kB]
+#16 107.2 Get:230 http://deb.debian.org/debian bookworm/main amd64 gnupg-utils amd64 2.2.40-1.1+deb12u2 [927 kB]
+#16 107.6 Get:231 http://deb.debian.org/debian bookworm/main amd64 libsqlite3-0 amd64 3.40.1-2+deb12u2 [839 kB]
+#16 107.9 Get:232 http://deb.debian.org/debian bookworm/main amd64 gpg amd64 2.2.40-1.1+deb12u2 [950 kB]
+#16 108.1 Get:233 http://deb.debian.org/debian bookworm/main amd64 pinentry-curses amd64 1.2.1-1 [77.4 kB]
+#16 108.4 Get:234 http://deb.debian.org/debian bookworm/main amd64 gpg-agent amd64 2.2.40-1.1+deb12u2 [695 kB]
+#16 108.7 Get:235 http://deb.debian.org/debian bookworm/main amd64 gpg-wks-client amd64 2.2.40-1.1+deb12u2 [541 kB]
+#16 109.1 Get:236 http://deb.debian.org/debian bookworm/main amd64 gpg-wks-server amd64 2.2.40-1.1+deb12u2 [531 kB]
+#16 109.3 Get:237 http://deb.debian.org/debian bookworm/main amd64 gpgsm amd64 2.2.40-1.1+deb12u2 [671 kB]
+#16 109.6 Get:238 http://deb.debian.org/debian bookworm/main amd64 gnupg all 2.2.40-1.1+deb12u2 [846 kB]
+#16 110.0 Get:239 http://deb.debian.org/debian bookworm/main amd64 iso-codes all 4.15.0-1 [2906 kB]
+#16 110.4 Get:240 http://deb.debian.org/debian bookworm/main amd64 libabsl20220623 amd64 20220623.1-1+deb12u2 [391 kB]
+#16 110.7 Get:241 http://deb.debian.org/debian bookworm/main amd64 librevenge-0.0-0 amd64 0.0.5-3 [287 kB]
+#16 110.9 Get:242 http://deb.debian.org/debian bookworm/main amd64 libabw-0.1-1 amd64 0.1.3-1 [128 kB]
+#16 111.1 Get:243 http://deb.debian.org/debian bookworm/main amd64 libavahi-common-data amd64 0.8-10+deb12u1 [107 kB]
+#16 111.2 Get:244 http://deb.debian.org/debian bookworm/main amd64 libavahi-common3 amd64 0.8-10+deb12u1 [42.1 kB]
+#16 111.4 Get:245 http://deb.debian.org/debian bookworm/main amd64 libavahi-client3 amd64 0.8-10+deb12u1 [45.8 kB]
+#16 111.6 Get:246 http://deb.debian.org/debian bookworm/main amd64 libboost-filesystem1.74.0 amd64 1.74.0+ds1-21 [258 kB]
+#16 111.9 Get:247 http://deb.debian.org/debian bookworm/main amd64 libboost-iostreams1.74.0 amd64 1.74.0+ds1-21 [240 kB]
+#16 112.2 Get:248 http://deb.debian.org/debian bookworm/main amd64 libboost-thread1.74.0 amd64 1.74.0+ds1-21 [257 kB]
+#16 112.4 Get:249 http://deb.debian.org/debian bookworm/main amd64 libboost-locale1.74.0 amd64 1.74.0+ds1-21 [449 kB]
+#16 112.6 Get:250 http://deb.debian.org/debian bookworm/main amd64 libbox2d2 amd64 2.4.1-3 [97.1 kB]
+#16 112.8 Get:251 http://deb.debian.org/debian bookworm/main amd64 libcap2-bin amd64 1:2.66-4+deb12u3+b1 [35.2 kB]
+#16 113.1 Get:252 http://deb.debian.org/debian bookworm/main amd64 libcdr-0.1-1 amd64 0.1.6-2+b2 [392 kB]
+#16 113.3 Get:253 http://deb.debian.org/debian bookworm/main amd64 libclucene-core1v5 amd64 2.3.3.4+dfsg-1.1 [489 kB]
+#16 113.5 Get:254 http://deb.debian.org/debian bookworm/main amd64 libclucene-contribs1v5 amd64 2.3.3.4+dfsg-1.1 [85.7 kB]
+#16 113.7 Get:255 http://deb.debian.org/debian bookworm/main amd64 libsuitesparseconfig5 amd64 1:5.12.0+dfsg-2 [23.9 kB]
+#16 113.8 Get:256 http://deb.debian.org/debian bookworm/main amd64 libcolamd2 amd64 1:5.12.0+dfsg-2 [32.9 kB]
+#16 114.0 Get:257 http://deb.debian.org/debian bookworm/main amd64 libcups2 amd64 2.4.2-3+deb12u9 [245 kB]
+#16 114.3 Get:258 http://deb.debian.org/debian bookworm/main amd64 libcurl3-gnutls amd64 7.88.1-10+deb12u15 [386 kB]
+#16 114.4 Get:259 http://deb.debian.org/debian bookworm/main amd64 libdconf1 amd64 0.40.0-4 [40.9 kB]
+#16 114.7 Get:260 http://deb.debian.org/debian bookworm/main amd64 libdw1 amd64 0.188-2.1 [235 kB]
+#16 114.9 Get:261 http://deb.debian.org/debian bookworm/main amd64 liblangtag-common all 0.6.4-2 [191 kB]
+#16 115.1 Get:262 http://deb.debian.org/debian bookworm/main amd64 liblangtag1 amd64 0.6.4-2 [51.5 kB]
+#16 115.3 Get:263 http://deb.debian.org/debian bookworm/main amd64 libe-book-0.1-1 amd64 0.1.3-2+b2 [198 kB]
+#16 115.4 Get:264 http://deb.debian.org/debian bookworm/main amd64 libeot0 amd64 0.01-5+b1 [27.1 kB]
+#16 115.6 Get:265 http://deb.debian.org/debian bookworm/main amd64 libepubgen-0.1-1 amd64 0.1.1-1 [153 kB]
+#16 115.9 Get:266 http://deb.debian.org/debian bookworm/main amd64 libetonyek-0.1-1 amd64 0.1.10-3+b1 [803 kB]
+#16 116.2 Get:267 http://deb.debian.org/debian bookworm/main amd64 libexttextcat-data all 3.4.5-1 [164 kB]
+#16 116.3 Get:268 http://deb.debian.org/debian bookworm/main amd64 libexttextcat-2.0-0 amd64 3.4.5-1 [15.9 kB]
+#16 116.5 Get:269 http://deb.debian.org/debian bookworm/main amd64 libfreehand-0.1-1 amd64 0.1.2-3 [267 kB]
+#16 116.7 Get:270 http://deb.debian.org/debian bookworm/main amd64 libgpgme11 amd64 1.18.0-3+b1 [300 kB]
+#16 117.0 Get:271 http://deb.debian.org/debian bookworm/main amd64 libgpgmepp6 amd64 1.18.0-3+b1 [293 kB]
+#16 117.1 Get:272 http://deb.debian.org/debian bookworm/main amd64 libunwind8 amd64 1.6.2-3 [51.2 kB]
+#16 117.4 Get:273 http://deb.debian.org/debian bookworm/main amd64 libgstreamer1.0-0 amd64 1.22.0-2+deb12u1 [1170 kB]
+#16 117.6 Get:274 http://deb.debian.org/debian bookworm/main amd64 liborc-0.4-0 amd64 1:0.4.33-2 [164 kB]
+#16 117.9 Get:275 http://deb.debian.org/debian-security bookworm-security/main amd64 libgstreamer-plugins-base1.0-0 amd64 1.22.0-3+deb12u7 [934 kB]
+#16 118.2 Get:276 http://deb.debian.org/debian bookworm/main amd64 libharfbuzz-icu0 amd64 6.0.0+dfsg-3 [1557 kB]
+#16 118.6 Get:277 http://deb.debian.org/debian bookworm/main amd64 libhunspell-1.7-0 amd64 1.7.1-1 [193 kB]
+#16 118.7 Get:278 http://deb.debian.org/debian bookworm/main amd64 libhyphen0 amd64 2.8.8-7 [32.5 kB]
+#16 118.9 Get:279 http://deb.debian.org/debian bookworm/main amd64 libice6 amd64 2:1.0.10-1 [58.5 kB]
+#16 119.1 Get:280 http://deb.debian.org/debian bookworm/main amd64 libltdl7 amd64 2.4.7-7~deb12u1 [393 kB]
+#16 119.3 Get:281 http://deb.debian.org/debian bookworm/main amd64 libmhash2 amd64 0.9.9.9-9 [94.2 kB]
+#16 119.5 Get:282 http://deb.debian.org/debian bookworm/main amd64 libmspub-0.1-1 amd64 0.1.4-3+b3 [174 kB]
+#16 119.9 Get:283 http://deb.debian.org/debian bookworm/main amd64 libmwaw-0.3-3 amd64 0.3.21-1 [2606 kB]
+#16 120.1 Get:284 http://deb.debian.org/debian bookworm/main amd64 libmythes-1.2-0 amd64 2:1.2.5-1 [11.1 kB]
+#16 120.3 Get:285 http://deb.debian.org/debian bookworm/main amd64 libnspr4 amd64 2:4.35-1 [113 kB]
+#16 120.6 Get:286 http://deb.debian.org/debian-security bookworm-security/main amd64 libnss3 amd64 2:3.87.1-1+deb12u4 [1331 kB]
+#16 120.9 Get:287 http://deb.debian.org/debian bookworm/main amd64 libnumbertext-data all 1.0.11-1 [70.2 kB]
+#16 121.0 Get:288 http://deb.debian.org/debian bookworm/main amd64 libnumbertext-1.0-0 amd64 1.0.11-1 [106 kB]
+#16 121.3 Get:289 http://deb.debian.org/debian bookworm/main amd64 libodfgen-0.1-1 amd64 0.1.8-2 [293 kB]
+#16 121.5 Get:290 http://deb.debian.org/debian bookworm/main amd64 liborcus-parser-0.17-0 amd64 0.17.2-2+b2 [111 kB]
+#16 121.8 Get:291 http://deb.debian.org/debian bookworm/main amd64 liborcus-0.17-0 amd64 0.17.2-2+b2 [383 kB]
+#16 122.0 Get:292 http://deb.debian.org/debian bookworm/main amd64 libpagemaker-0.0-0 amd64 0.0.4-1 [79.6 kB]
+#16 122.4 Get:293 http://deb.debian.org/debian-security bookworm-security/main amd64 libpoppler126 amd64 22.12.0-2+deb12u3 [1856 kB]
+#16 122.8 Get:294 http://deb.debian.org/debian bookworm/main amd64 libqxp-0.0-0 amd64 0.0.2-1+b3 [125 kB]
+#16 123.0 Get:295 http://deb.debian.org/debian bookworm/main amd64 libxslt1.1 amd64 1.1.35-1+deb12u4 [232 kB]
+#16 123.1 Get:296 http://deb.debian.org/debian bookworm/main amd64 libyajl2 amd64 2.1.0-3+deb12u2 [23.0 kB]
+#16 123.3 Get:297 http://deb.debian.org/debian bookworm/main amd64 libraptor2-0 amd64 2.0.15-4+deb12u1 [160 kB]
+#16 123.6 Get:298 http://deb.debian.org/debian bookworm/main amd64 librasqal3 amd64 0.9.33-2 [191 kB]
+#16 123.8 Get:299 http://deb.debian.org/debian bookworm/main amd64 librdf0 amd64 1.0.17-3 [105 kB]
+#16 124.2 Get:300 http://deb.debian.org/debian bookworm/main amd64 libreoffice-style-colibre all 4:7.4.7-1+deb12u14 [7173 kB]
+#16 124.9 Get:301 http://deb.debian.org/debian bookworm/main amd64 libuno-sal3 amd64 4:7.4.7-1+deb12u14 [196 kB]
+#16 126.0 Get:302 http://deb.debian.org/debian bookworm/main amd64 libuno-salhelpergcc3-3 amd64 4:7.4.7-1+deb12u14 [38.7 kB]
+#16 126.7 Get:303 http://deb.debian.org/debian bookworm/main amd64 libuno-cppu3 amd64 4:7.4.7-1+deb12u14 [102 kB]
+#16 130.5 Get:304 http://deb.debian.org/debian bookworm/main amd64 uno-libs-private amd64 4:7.4.7-1+deb12u14 [228 kB]
+#16 130.8 Get:305 http://deb.debian.org/debian bookworm/main amd64 libuno-cppuhelpergcc3-3 amd64 4:7.4.7-1+deb12u14 [298 kB]
+#16 130.9 Get:306 http://deb.debian.org/debian bookworm/main amd64 libuno-purpenvhelpergcc3-3 amd64 4:7.4.7-1+deb12u14 [37.8 kB]
+#16 134.2 Get:307 http://deb.debian.org/debian bookworm/main amd64 ure amd64 4:7.4.7-1+deb12u14 [1227 kB]
+#16 135.9 Get:308 http://deb.debian.org/debian bookworm/main amd64 libreoffice-common all 4:7.4.7-1+deb12u14 [24.5 MB]
+#16 142.5 Err:309 http://deb.debian.org/debian bookworm/main amd64 libsm6 amd64 2:1.2.3-1
+#16 142.5   502  Bad Gateway [IP: 146.75.46.132 80]
+#16 142.6 Get:310 http://deb.debian.org/debian bookworm/main amd64 libxinerama1 amd64 2:1.1.4-3 [17.8 kB]
+#16 142.8 Get:311 http://deb.debian.org/debian bookworm/main amd64 libxmlsec1 amd64 1.2.37-2 [153 kB]
+#16 142.9 Get:312 http://deb.debian.org/debian bookworm/main amd64 libxmlsec1-nss amd64 1.2.37-2 [64.8 kB]
+#16 143.2 Get:313 http://deb.debian.org/debian bookworm/main amd64 libzxing2 amd64 1.4.0-3+b1 [601 kB]
+#16 144.2 Get:314 http://deb.debian.org/debian bookworm/main amd64 libreoffice-core amd64 4:7.4.7-1+deb12u14 [32.6 MB]
+#16 146.8 Get:315 http://deb.debian.org/debian bookworm/main amd64 libreoffice-base-core amd64 4:7.4.7-1+deb12u14 [801 kB]
+#16 147.0 Get:316 http://deb.debian.org/debian bookworm/main amd64 lp-solve amd64 5.5.2.5-2 [293 kB]
+#16 148.4 Get:317 http://deb.debian.org/debian bookworm/main amd64 libstaroffice-0.0-0 amd64 0.0.7-1 [728 kB]
+#16 148.6 Get:318 http://deb.debian.org/debian bookworm/main amd64 libwps-0.4-4 amd64 0.4.13-1 [886 kB]
+#16 149.1 Get:319 http://deb.debian.org/debian bookworm/main amd64 libreoffice-calc amd64 4:7.4.7-1+deb12u14 [7414 kB]
+#16 149.8 Get:320 http://deb.debian.org/debian bookworm/main amd64 libvisio-0.1-1 amd64 0.1.7-1+b3 [304 kB]
+#16 150.1 Get:321 http://deb.debian.org/debian bookworm/main amd64 libwpd-0.10-10 amd64 0.10.3-2+b1 [261 kB]
+#16 150.3 Get:322 http://deb.debian.org/debian bookworm/main amd64 libwpg-0.3-3 amd64 0.3.3-1 [76.3 kB]
+#16 150.5 Get:323 http://deb.debian.org/debian bookworm/main amd64 libzmf-0.0-0 amd64 0.0.2-1+b5 [84.2 kB]
+#16 150.9 Get:324 http://deb.debian.org/debian bookworm/main amd64 libreoffice-draw amd64 4:7.4.7-1+deb12u14 [2704 kB]
+#16 151.4 Get:325 http://deb.debian.org/debian bookworm/main amd64 libreoffice-impress amd64 4:7.4.7-1+deb12u14 [1118 kB]
+#16 151.8 Get:326 http://deb.debian.org/debian bookworm/main amd64 libreoffice-writer amd64 4:7.4.7-1+deb12u14 [9264 kB]
+#16 152.6 Get:327 http://deb.debian.org/debian-security bookworm-security/main amd64 poppler-utils amd64 22.12.0-2+deb12u3 [192 kB]
+#16 152.6 Fetched 319 MB in 2min 19s (2290 kB/s)
+#16 152.6 E: Failed to fetch http://deb.debian.org/debian/pool/main/libs/libsm/libsm6_1.2.3-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+#16 152.6 E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?
+#16 ERROR: process "/bin/sh -c apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*" did not complete successfully: exit code: 100
+------
+ > [runtime 2/9] RUN apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*:
+150.1 Get:321 http://deb.debian.org/debian bookworm/main amd64 libwpd-0.10-10 amd64 0.10.3-2+b1 [261 kB]
+150.3 Get:322 http://deb.debian.org/debian bookworm/main amd64 libwpg-0.3-3 amd64 0.3.3-1 [76.3 kB]
+150.5 Get:323 http://deb.debian.org/debian bookworm/main amd64 libzmf-0.0-0 amd64 0.0.2-1+b5 [84.2 kB]
+150.9 Get:324 http://deb.debian.org/debian bookworm/main amd64 libreoffice-draw amd64 4:7.4.7-1+deb12u14 [2704 kB]
+151.4 Get:325 http://deb.debian.org/debian bookworm/main amd64 libreoffice-impress amd64 4:7.4.7-1+deb12u14 [1118 kB]
+151.8 Get:326 http://deb.debian.org/debian bookworm/main amd64 libreoffice-writer amd64 4:7.4.7-1+deb12u14 [9264 kB]
+152.6 Get:327 http://deb.debian.org/debian-security bookworm-security/main amd64 poppler-utils amd64 22.12.0-2+deb12u3 [192 kB]
+152.6 Fetched 319 MB in 2min 19s (2290 kB/s)
+152.6 E: Failed to fetch http://deb.debian.org/debian/pool/main/libs/libsm/libsm6_1.2.3-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+152.6 E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?
+------
+Dockerfile:18
+
+--------------------
+
+  17 |     ENV NODE_ENV=production TZ=Asia/Shanghai
+
+  18 | >>> RUN apt-get update \
+
+  19 | >>>  && apt-get install -y --no-install-recommends \
+
+  20 | >>>       curl ca-certificates tzdata \
+
+  21 | >>>       libreoffice-writer libreoffice-calc libreoffice-impress \
+
+  22 | >>>       fonts-noto-cjk fontconfig ffmpeg poppler-utils \
+
+  23 | >>>  && fc-cache -f \
+
+  24 | >>>  && rm -rf /var/lib/apt/lists/*
+
+  25 |     WORKDIR /app
+
+--------------------
+
+failed to solve: process "/bin/sh -c apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*" did not complete successfully: exit code: 100
+
+=================================================================
+END_UTC=2026-11-09T05:37:03Z
+RETRY2_EXIT=1
+=== 本轮 502 明细（IP / 包名 / 退出码）===
+530:#16 142.5   502  Bad Gateway [IP: 146.75.46.132 80]
+550:#16 152.6 E: Failed to fetch http://deb.debian.org/debian/pool/main/libs/libsm/libsm6_1.2.3-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+551:#16 152.6 E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?
+552:#16 ERROR: process "/bin/sh -c apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*" did not complete successfully: exit code: 100
+563:152.6 E: Failed to fetch http://deb.debian.org/debian/pool/main/libs/libsm/libsm6_1.2.3-1_amd64.deb  502  Bad Gateway [IP: 146.75.46.132 80]
+564:152.6 E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?
+590:failed to solve: process "/bin/sh -c apt-get update  && apt-get install -y --no-install-recommends       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*" did not complete successfully: exit code: 100
+=== 重试后 extractor 镜像 ID ===
+EXTRACTOR_IMAGE_ID=
+ABSENT

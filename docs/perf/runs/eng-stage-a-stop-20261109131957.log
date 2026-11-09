@@ -1,0 +1,30 @@
+=== 阶段 A · 步骤2：docker compose stop（只 stop，禁止 down -v / rm -f / 删 volumes）===
+BEFORE:
+tianji-api | Up 44 hours (healthy)
+tianji-web | Up 45 hours (healthy)
+tianji-postgres | Up 45 hours (healthy)
+tianji-redis | Up 45 hours (healthy)
+tianji-elasticsearch | Up 45 hours (healthy)
+
+ Container tianji-web Stopping 
+ Container tianji-web Stopped 
+ Container tianji-api Stopping 
+ Container tianji-api Stopped 
+ Container tianji-redis Stopping 
+ Container tianji-elasticsearch Stopping 
+ Container tianji-postgres Stopping 
+ Container tianji-redis Stopped 
+ Container tianji-postgres Stopped 
+ Container tianji-elasticsearch Stopped 
+
+=== stop 退出码=0 ===
+AFTER (docker ps -a):
+tianji-api | Exited (0) 4 seconds ago
+tianji-web | Exited (0) 4 seconds ago
+tianji-postgres | Exited (0) 3 seconds ago
+tianji-redis | Exited (0) 4 seconds ago
+tianji-elasticsearch | Exited (143) 1 second ago
+运行容器数=0
+volumes/ 仍存在? YES
+offline/volumes/ 仍不存在? YES
+=== STOP_DONE  LOG=docs/perf/runs/eng-stage-a-stop-20261109131957.log ===
