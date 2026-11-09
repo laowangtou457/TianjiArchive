@@ -180,13 +180,13 @@ curl -fsS -X POST 'http://localhost:9200/_analyze' -H 'Content-Type: application
 | seaweedfs S3 | 8333 | 8333（**唯一发布到宿主的 seaweedfs 端口**） | `SEAWEEDFS_S3_EXPOSED_PORT` | `./volumes/seaweedfs` |
 | seaweedfs master | 9333 | 不发布（仅 compose 内网） | — | 同上 |
 | seaweedfs filer | 8888 | 不发布（仅 compose 内网） | — | 同上 |
-| seaweedfs volume | 8080 或 8081（依 `entrypoint.sh` 的 `-volume.port`） | 不发布（仅 compose 内网） | — | 同上 |
+| seaweedfs volume | 8081（`-volume.port=8081`，避开 web 宿主 8080） | 不发布（仅 compose 内网） | — | 同上 |
 | redis | 6379 | 6379 | `REDIS_EXPOSED_PORT` | `./volumes/redis` |
 | backup | — | — | — | `./volumes/backup` |
 
 封闭环境可只暴露 `WEB_PORT`（8080）；其余端口靠 compose 内部网络 `tianji-net` 互通，
 把 `*_EXPOSED_PORT` 行删掉或改成 `127.0.0.1:端口:端口` 即可进一步收紧。
-R-2 裁定：**seaweedfs 只发布 8333**，master / filer / volume 均不占宿主端口，因此 volume 的容器内端口与 web 的宿主 8080 不冲突；浏览器直连预签名 URL 走宿主 8333，不经 nginx 反代。
+R-2 裁定：**seaweedfs 只发布 8333**，master / filer / volume 均不占宿主端口，因此 volume 的容器内端口 8081 与 web 的宿主 8080 不冲突；浏览器直连预签名 URL 走宿主 8333，不经 nginx 反代。交付前请核对**主 compose 与 offline compose 的 `seaweedfs.ports` 均只有 `8333:8333` 一条**；任何 `9333:9333` 之类的额外映射都是应摘除项。
 
 **卷说明**：`./volumes/seaweedfs:/data` 只存对象数据；S3 鉴权配置由
 `seaweedfs/entrypoint.sh` 在容器启动时把 `s3.json.tpl` 用
