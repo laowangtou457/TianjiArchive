@@ -1,0 +1,13 @@
+# 离线部署镜像清单（顺序即 docker save 顺序；全部为已构建/已拉取的本地镜像）
+# 公共基础镜像
+postgres:16-alpine
+redis:7-alpine
+# 自建 IK 分词 ES 镜像（构建机先 docker compose build elasticsearch）
+tianji-elasticsearch-ik:8.13.4
+# SeaweedFS S3 Gateway（已实拉 chrislusf/seaweedfs:3.79）
+chrislusf/seaweedfs:3.79
+# 四个自建应用镜像（构建机先 docker compose build api web extractor backup）
+tianji-archive-api:1.0.0
+tianji-archive-web:1.0.0
+tianji-archive-extractor:1.0.0
+tianji-archive-backup:1.0.0

@@ -98,6 +98,7 @@ declare -a CMP_PAIRS=(
   "scripts/load-images.sh|${REPO_ROOT}/offline/load-images.sh"
   "scripts/smoke.sh|${REPO_ROOT}/offline/smoke.sh"
   "scripts/save-images.sh|${REPO_ROOT}/offline/save-images.sh"
+  "scripts/images.txt|${REPO_ROOT}/offline/images.txt"
   "seaweedfs/entrypoint.sh|${REPO_ROOT}/infra/seaweedfs/entrypoint.sh"
   "seaweedfs/s3.json.tpl|${REPO_ROOT}/infra/seaweedfs/s3.json.tpl"
 )
@@ -319,8 +320,8 @@ chmod 0755 "${RUN_PATH}"
 # =============================================================================
 # G3 自解压可用性自检（不需要 root）
 # =============================================================================
-log 'G3 自解压自检：sh <run> --verify-only'
-if ! sh "${RUN_PATH}" --verify-only; then
+log 'G3 自解压自检：sh <run> --verify-only（构建机只做壳层 sha256，不写 /opt）'
+if ! TIANJI_VERIFY_SHELL_ONLY=1 sh "${RUN_PATH}" --verify-only; then
   rm -f "${RUN_PATH}"
   die '自解压自检失败，已删除不完整产物'
 fi

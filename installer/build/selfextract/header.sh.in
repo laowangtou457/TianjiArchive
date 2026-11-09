@@ -91,8 +91,19 @@ if [ "$ACTUAL_SHA" != "$PAYLOAD_SHA256" ]; then
 fi
 
 if [ "$NEED_ROOT" = 'no' ]; then
-  say 'PASS：安装包完整（--verify-only 模式，未做任何安装动作）'
-  exit 0
+  # --verify-only 分两层（设计 §4.4）：
+  #   L-a 传输完整性：本脚本刚做的 payload sha256 —— 非 root 也能做；
+  #   逐文件深度校验：解包后由安装器按 manifest.json 复核每个载荷文件 + 镜像 tar。
+  # 因此：非 root 到 L-a 就结束（不写系统目录）；root 则继续解包，把深度校验也做完。
+  if [ "${TIANJI_VERIFY_SHELL_ONLY:-0}" = '1' ]; then
+    say 'PASS：安装包完整（仅壳层 sha256，构建机 G3 闸门用）'
+    exit 0
+  fi
+  if [ "$(id -u)" != '0' ]; then
+    say 'PASS：安装包完整（非 root：仅校验载荷 sha256；用 sudo 可继续做逐文件深度校验）'
+    exit 0
+  fi
+  say '载荷 sha256 通过；当前为 root，继续解包做逐文件深度校验'
 fi
 
 # ---- 2. 释放到 /opt/tianji-installer

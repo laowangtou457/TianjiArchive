@@ -100,6 +100,19 @@ else
   log 'WARN: 未指定 --images-tar，manifest.images_tar.sha256 将为空'
 fi
 
+# image_count 从载荷自带的 images.txt 数出来（忽略注释与空行），
+# 供安装器做「清单条数 vs manifest」交叉核对——两边不一致说明包被人换过。
+IMG_LIST="${STAGE_DIR}/common/scripts/images.txt"
+if [ -f "${IMG_LIST}" ]; then
+  IMAGES_COUNT="$(grep -vcE '^[[:space:]]*(#|$)' "${IMG_LIST}" || true)"
+  [ -n "${IMAGES_COUNT}" ] || IMAGES_COUNT='0'
+else
+  log 'WARN: 载荷缺少 common/scripts/images.txt，image_count 记为 0'
+  IMAGES_COUNT='0'
+fi
+log "镜像清单条数：${IMAGES_COUNT}"
+[ "${IMAGES_COUNT}" -gt 0 ] || die 'payload/common/scripts/images.txt 为空或缺失（安装器会因此拒绝安装）'
+
 # ---------------------------------------------------------------- 文件清单
 SUMS_FILE="${STAGE_DIR}/SHA256SUMS.txt"
 : > "${SUMS_FILE}"
@@ -107,7 +120,8 @@ FILE_COUNT=0
 # 用相对路径、按字典序，保证同样输入产出同样清单（可复现）
 while IFS= read -r rel; do
   [ -n "${rel}" ] || continue
-  ( cd "${STAGE_DIR}" && sha256sum "${rel}" ) >> "${SUMS_FILE}"
+  ( cd "${STAGE_DIR}" && sha256sum "${rel}" ) \
+    | sed -e 's/^\\//' -e 's/^\([0-9a-f]\{64\}\) [ *]/\1  /' >> "${SUMS_FILE}"
   FILE_COUNT=$((FILE_COUNT + 1))
 done < <( cd "${STAGE_DIR}" && find . -type f \
             ! -name 'SHA256SUMS.txt' ! -name 'SHA256SUMS.sig' ! -name 'manifest.json' \
@@ -140,8 +154,13 @@ JSON="${STAGE_DIR}/manifest.json"
   else
     printf '  "docker": { "channel": "static", "version": "from STATIC-MANIFEST.txt" },\n'
   fi
-  printf '  "images_tar": { "filename": "%s", "sha256": "%s" },\n' "${IMAGES_NAME}" "${IMAGES_SHA}"
+  printf '  "images_tar": { "filename": "%s", "sha256": "%s", "image_count": %d },\n' \
+    "${IMAGES_NAME}" "${IMAGES_SHA}" "${IMAGES_COUNT}"
   printf '  "file_count": %d,\n' "${FILE_COUNT}"
+  # files[] 是安装器逐文件深度校验（设计 §4.4 L-a）的唯一依据，必须逐个列出。
+  printf '  "files": [\n'
+  awk -v total="${FILE_COUNT}" '{ printf "    { \"path\": \"%s\", \"sha256\": \"%s\" }%s\n", $2, $1, (NR==total ? "" : ",") }' "${SUMS_FILE}"
+  printf '  ],\n'
   printf '  "build": { "git_head": "%s", "built_at_utc": "%s", "builder": "%s" }\n' \
     "${GIT_HEAD}" "${BUILT_AT}" "${BUILDER}"
   printf '}\n'
