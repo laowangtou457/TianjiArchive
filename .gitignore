@@ -14,8 +14,18 @@ packages/shared/.build/
 .env.*.local
 !.env.example
 
+# ---------------------------------------------------------------- 离线部署包产物
+# 镜像 tar 可达数 GB，绝不入库；SHA256SUMS 由 save-images.sh 现场生成。
+/offline/tianji-offline-images.tar
+/offline/SHA256SUMS
+# 构建锚定清单：由 save-images.sh --record 在构建机现场生成，含机器相关 Image ID
+# 与构建时 git HEAD，随离线包一同交付；与 SHA256SUMS 同属生成物，禁止入库防陈旧。
+/offline/BUILD-INFO.txt
+/offline/volumes/
+/offline/*.log
+
 # ---------------------------------------------------------------- 运行时数据卷
-# docker compose 的宿主机挂载目录（PG/ES/MinIO/Redis 数据 + WAL 归档）
+# docker compose 的宿主机挂载目录（PG/ES/SeaweedFS/Redis 数据 + WAL 归档）
 # 注意：以下目录模式必须锚定根路径（前导 /），否则无锚点的 backup/
 # 会匹配任意深度同名目录——曾致 apps/api/src/modules/backup 整个模块
 # 从未入库（2026-11-07 联调发现）。
@@ -36,6 +46,9 @@ packages/shared/.build/
 apps/cli-migrator/*.sqlite
 apps/cli-migrator/*.db
 .tianji-migrate.db
+# SeaweedFS 实测临时目录（曾 bind-mount 到 tj-sw-* 遗留容器）；必须锚定根路径，
+# 无锚点的同名模式会误伤任意深度目录（见上方 backup/ 事故教训）。
+/.tmp-sw-*/
 
 # ---------------------------------------------------------------- 日志与系统文件
 *.log
