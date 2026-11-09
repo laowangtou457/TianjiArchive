@@ -20,7 +20,7 @@
 | 3 | overlay2（xfs ftype） | **ftype=1**，dockerd 实选 overlay2 | **ftype=1**，dockerd 实选 overlay2 | 不需要换 ext4 |
 | 4 | cgroup v1 上 dockerd 27.5.1 | **正常启动** | **正常启动**（首次） | 27.5.1 版本锁定成立 |
 | 5 | 安装向导端到端 | 不在本任务范围（#41） | 同 | — |
-| 6 | firewalld 重启后端口是否仍通 | `--reload` 不清 DOCKER 链；**`restart` 与 docker 组合时管理面失联（环境因素，见 §2.6）** | `--reload` 结果未取到（guest 失联）；**dockerd 二次启动直接失败：`ZONE_CONFLICT`** | 安装时应直接禁用 firewalld |
+| 6 | firewalld 重启后端口是否仍通 | `--reload` 不清 DOCKER 链；~~`restart` 与 docker 组合时管理面失联~~ → **二分实验证伪为 slirp 环境假象（guest 出现网桥接口后 hostfwd 失效，见 §2.6）**，不作为 OS 结论 | `--reload` 结果未取到（guest 失联）；**dockerd 二次启动直接失败：`ZONE_CONFLICT`** | 安装时应直接禁用 firewalld |
 
 ---
 
