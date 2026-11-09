@@ -49,6 +49,10 @@ installer/
 │   │   ├── selfclean/              # 端口释放 + 临时目录清理（defer 与信号双路）
 │   │   └── audit/                  # append-only 日志 + 凭据打码
 │   └── web/                        # embed.FS 前端（原生 HTML/JS/CSS，无 CDN）
+├── e2e/                            # 特权 systemd 容器内十步端到端（降级验证途径，非真机）
+│   ├── Dockerfile                  # ubuntu:22.04 + systemd（官方镜像没有 /lib/systemd/systemd）
+│   ├── poll.sh                     # POSIX sh 读 /api/status 打印十步进度
+│   └── README.md                   # 跑法、容器适配项、磁盘陷阱（vfs 会吃盘）与边界声明
 └── client-lite/                    # 用户端一键配置器与自检（已完成，e4d4adb）
 ```
 
