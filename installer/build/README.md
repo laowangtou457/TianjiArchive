@@ -16,6 +16,8 @@
 | `fetch-docker-static.sh` | 变体 B 载荷：抓 `docker-27.5.1.tgz` + compose v2 单二进制（摘要内置、双源比对） | **入库** |
 | `build-server-package.sh` | 主打包脚本：组装 staging → G1/G2 闸门 → 打 payload → 拼自解压头 → G3 闸门 | **入库** |
 | `make-manifest.sh` | 生成 `manifest.json` + `SHA256SUMS.txt`（+ `--sign` 时 `SHA256SUMS.asc`） | **入库** |
+| `audit-debs.py` | **闭包自洽性审计**：自己算一遍依赖（不依赖 dpkg/网络/Docker），把缺包与版本冲突前移到构建机 | **入库** |
+| `audit_debs_test.py` | 上面那个工具的回归用例（`python3 installer/build/audit_debs_test.py`，12 条） | **入库** |
 | `selfextract/header.sh.in` | `.run` 的 POSIX sh 自解压头模板（构建期替换定长占位符） | **入库** |
 | `payload/common/` | 与 `offline/`、`infra/` 同源的载荷模板（compose、脚本、sysctl、seaweedfs） | **入库** |
 | `payload/ubuntu-debian/<codename>/debs/` | 变体 A 真实 `.deb` 闭包（约 147MB / 85 个包） | **不入库**（体积大、平台相关） |
@@ -75,6 +77,47 @@ GNUPGHOME=~/.gnupg bash installer/build/build-server-package.sh \
 | 6 | `python3-minimal` 缺 `json` 模块 | 报「manifest.json 不是合法 JSON」，实际是 `ModuleNotFoundError` | `make-manifest.sh` 三分支：能 import 才解析，缺模块就 WARN，别把工具缺失伪装成数据损坏 |
 | 7 | `tar -tzf … \| grep -qx` | 包是好的却报「缺少 docker/dockerd」（grep 命中即退出 → tar 收 SIGPIPE → 141） | 先把清单落成变量，再 `grep <<<"$LIST"` |
 | 8 | `download.docker.com` 在 `.tgz.sha256` 上 404 | 靠「同名 .sha256 文件」校验的假设不成立 | 摘要**内置**在脚本里（双源比对后固化），未知版本 fail-closed，可用 `--docker-sha256` 显式传入 |
+
+## 闭包自洽性审计（`audit-debs.py`）
+
+`fetch-docker-debs.sh` 抓回来的是「apt 认为该下的一堆包」，**它不证明这批包凑起来能装得上**。
+真机上已经因此炸过两次，而且现象都出现在很远的地方：
+
+| 事件 | 现象 | 真实原因 |
+|---|---|---|
+| `libseccomp2` 缺席 | docker-ce 装上了，dockerd 起不来 | 构建机已装过该包 → apt 认为依赖满足 → 不下载 |
+| `python3-minimal` Pre-Depends | 整步 `S3_DOCKER` FAIL | `python3.10-minimal` 就在同一批参数里，但字典序排后面，被 dpkg 判「未安装」 |
+
+这两类问题的共同点是「闭包不自洽，但报错点离根因很远」。`audit-debs.py` 把它们前移到构建机：
+
+```bash
+# 只读核对，不需要 dpkg、不需要联网、不需要 Docker
+python3 installer/build/audit-debs.py --dir installer/build/payload/ubuntu-debian/jammy/debs
+
+# 顺带产出机器可读报告（供 CI / 出包脚本消费）
+python3 installer/build/audit-debs.py --dir <debs> --json /tmp/closure.json
+python3 installer/build/audit_debs_test.py     # 12 条回归用例，改判定口径后必跑
+```
+
+它自己解析 `.deb`（ar 归档 → `control.tar.*` → `./control`），等价于 `dpkg-deb -I`，判定分三档：
+
+- **ERROR**（必须修，退出码 1）：闭包**内部**矛盾——依赖在闭包里点名了但版本不满足、
+  同名包出现两次、`DEBS-MANIFEST.txt` 多登记/少登记/哈希不符。这些到真机必然炸。
+- **EXTERNAL**（正常，只登记）：依赖不在闭包里，只能由目标系统（`ubuntu:22.04` 基础系统）
+  提供。闭包本来就只补「基础系统没有的那部分」，这一档是**清单**，不是失败——
+  它的用途是让人一眼看出「我们在依赖目标系统的什么」，出了事有据可查。
+- **OK**：闭包内满足，版本也满足（含 `Provides` 虚拟包与 `a | b` 或关系）。
+
+实测（85 个包 / 147,491,640 字节 .deb）：`IS_PASS: YES`，闭包外依赖 53 项，全部是
+`libc6`/`libssl3`/`dpkg`/`debconf` 这类基础系统的核心件。
+
+> 一个容易被误读的数字：目录 `du -sb` 是 147,505,075，而 `.deb` 之和是 147,491,640，
+> 差 13,435 字节 = `DEBS-MANIFEST.txt` 本身。两个数都对，别当成「载荷少了一截」。
+
+> **zstd 依赖**：Ubuntu 21.10 起 `.deb` 的 `control.tar` 与 `data.tar` 默认用 zstd 压缩，
+> 而 Python 3.13 的 `tarfile` 还不认 zstd（`r:*` 只覆盖 gz/bz2/xz）。工具会按魔数分派，
+> 缺能力时提示 `pip install zstandard`（或装 `zstd` 命令），并明确写「这是环境缺能力，
+> 不是闭包坏」——否则很容易被误判成「.deb 损坏」而去重新抓包。
 
 ## 签名与现场核验
 
