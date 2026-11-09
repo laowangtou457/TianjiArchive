@@ -156,9 +156,12 @@ services:
     image: redis:7-alpine
     container_name: tianji-redis
     restart: unless-stopped
+    # 驱逐策略裁定（2026-11-11）：noeviction，不用 allkeys-lru。
+    # 天玑是档案系统，redis 若承担队列/状态类职责，LRU 静默驱逐键 = 无声丢数据；
+    # noeviction 让内存压力以显式报错暴露（写入方收到 OOM error），fail-closed。
     command: >
       redis-server --appendonly yes
-      --maxmemory 512mb --maxmemory-policy allkeys-lru
+      --maxmemory 512mb --maxmemory-policy noeviction
     volumes:
       - ./volumes/redis:/data
     ports:
