@@ -35,7 +35,7 @@ import { PermGate } from '../../components/PermGate';
 const SCOPE_OPTIONS: Array<{ value: 'full' | 'db' | 'minio' | 'meta'; label: string; hint: string }> = [
   { value: 'full', label: '全量备份', hint: '数据库 + 对象存储' },
   { value: 'db', label: '仅数据库', hint: 'pg_dump 逻辑备份' },
-  { value: 'minio', label: '仅对象存储', hint: 'MinIO 桶镜像同步' },
+  { value: 'minio', label: '仅对象存储', hint: 'S3 兼容对象存储桶同步（SeaweedFS）' },
   { value: 'meta', label: '仅元数据', hint: '统计快照（无容器时的兜底）' },
 ];
 

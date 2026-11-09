@@ -8,8 +8,11 @@ import type { HealthStatus } from '@tianji/shared';
 
 /**
  * 健康检查（T01 验收要点：/api/health 返回 200）。
- * 汇总 PG / ES / MinIO / Redis 依赖状态，任一不健康则 status=degraded（HTTP 仍 200，
+ * 汇总 PG / ES / 对象存储 / Redis 依赖状态，任一不健康则 status=degraded（HTTP 仍 200，
  * 由编排层根据 body 判定，避免 ES 抖动导致容器被反复重启）。
+ *
+ * deps 的键名用中性的 `objectStorage`：后端实现已从 MinIO 换为
+ * SeaweedFS S3 Gateway（方案 A），键名若写死 minio 会让前端/报告产生误读。
  */
 @Injectable()
 export class HealthService {
@@ -39,9 +42,9 @@ export class HealthService {
     const esOk = await this.es.ping();
     deps.push({ name: 'elasticsearch', ok: esOk, latencyMs: Date.now() - esStart });
 
-    const minioStart = Date.now();
-    const minioOk = await this.minio.ping();
-    deps.push({ name: 'minio', ok: minioOk, latencyMs: Date.now() - minioStart });
+    const storageStart = Date.now();
+    const storageOk = await this.minio.ping();
+    deps.push({ name: 'objectStorage', ok: storageOk, latencyMs: Date.now() - storageStart });
 
     const redisStart = Date.now();
     const redisOk = await this.redis.ping();

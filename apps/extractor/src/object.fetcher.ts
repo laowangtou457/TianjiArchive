@@ -12,12 +12,14 @@ export class ObjectFetcher {
   private readonly bucketOriginal: string;
 
   public constructor() {
+    // MINIO_* 为 S3 兼容配置名，后端实现为 SeaweedFS S3 Gateway（方案 A）；
+    // minio SDK 的 pathStyle 默认为 true，region 可自动探测，实测与该网关兼容。
     this.client = new MinioClient({
-      endPoint: process.env.MINIO_ENDPOINT ?? '127.0.0.1',
-      port: Number(process.env.MINIO_PORT ?? 9000),
+      endPoint: process.env.MINIO_ENDPOINT ?? 'seaweedfs',
+      port: Number(process.env.MINIO_PORT ?? 8333),
       useSSL: (process.env.MINIO_USE_SSL ?? 'false').toLowerCase() === 'true',
       accessKey: process.env.MINIO_ACCESS_KEY ?? 'tianji_minio',
-      secretKey: process.env.MINIO_SECRET_KEY ?? 'tianji_minio_secret',
+      secretKey: process.env.MINIO_SECRET_KEY ?? 'tianji_minio_change_me',
     });
     this.bucketOriginal = process.env.MINIO_BUCKET_ORIGINAL ?? BUCKET.ORIGINAL;
   }

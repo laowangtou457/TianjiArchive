@@ -126,12 +126,13 @@ program
         database: process.env.POSTGRES_DB ?? 'tianji_archive',
         max: Math.max(2, Number(opts.concurrency) || 4),
       });
+      // MINIO_* 为 S3 兼容配置名，后端实现为 SeaweedFS S3 Gateway（方案 A）
       const minio = new MinioClient({
-        endPoint: process.env.MINIO_ENDPOINT ?? '127.0.0.1',
-        port: Number(process.env.MINIO_PORT ?? 9000),
+        endPoint: process.env.MINIO_ENDPOINT ?? 'seaweedfs',
+        port: Number(process.env.MINIO_PORT ?? 8333),
         useSSL: (process.env.MINIO_USE_SSL ?? 'false').toLowerCase() === 'true',
         accessKey: process.env.MINIO_ACCESS_KEY ?? 'tianji_minio',
-        secretKey: process.env.MINIO_SECRET_KEY ?? 'tianji_minio_secret',
+        secretKey: process.env.MINIO_SECRET_KEY ?? 'tianji_minio_change_me',
       });
 
       if (!opts.dryRun) {

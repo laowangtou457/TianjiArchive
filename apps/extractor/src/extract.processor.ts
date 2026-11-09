@@ -76,7 +76,7 @@ export class ExtractProcessor {
       // 3) 正文入库
       const text = output.text ?? '';
       if (text.length > 0) {
-        await this.saveDocumentText(fileId, text, output.meta ?? {});
+        await this.saveDocumentText(itemId, fileId, text);
       }
 
       // 4) ES 正文更新
@@ -85,15 +85,16 @@ export class ExtractProcessor {
       }
 
       // 5) 文件状态与派生键
+      // 列名以 InitSchema 为准：electronic_file 无 extract_meta 列，
+      // document_text 无 char_count/meta/updated_at 列（详见 saveDocumentText 注释）。
       await this.dataSource.query(
         `UPDATE electronic_file
             SET extract_status = $2,
                 extract_error = NULL,
                 preview_key = COALESCE($3, preview_key),
-                thumb_key = COALESCE($4, thumb_key),
-                extract_meta = $5::jsonb
+                thumb_key = COALESCE($4, thumb_key)
           WHERE id = $1`,
-        [fileId, ExtractStatus.OK, previewKey, thumbKey, JSON.stringify(output.meta ?? {})],
+        [fileId, ExtractStatus.OK, previewKey, thumbKey],
       );
 
       return {
@@ -143,22 +144,24 @@ export class ExtractProcessor {
     return { text: '', pdfBuffer: null, thumbBuffer: null, supported: false, meta: { mime } };
   }
 
-  /** 写入/更新 document_text（按 file_id + version=1 幂等） */
+  /** 写入/更新 document_text（按 file_id + version=1 幂等）。
+   *
+   * 修复（2026-11-09 离线 demo 自验发现）：旧 SQL 写入 `char_count` / `meta` /
+   * `updated_at` 三列并漏掉 NOT NULL 的 `item_id`，与 InitSchema 实际 DDL
+   * （id/item_id/file_id/content/version/created_at）不符，真实 PG 上必然报错，
+   * 抽取链路全挂。此处按 DDL 对齐；`meta` 不再入库（无列），调用方仅日志使用。 */
   private async saveDocumentText(
+    itemId: string,
     fileId: string,
     content: string,
-    meta: Record<string, unknown>,
   ): Promise<void> {
-    const charCount = content.length;
     await this.dataSource.query(
-      `INSERT INTO document_text (file_id, version, content, char_count, meta)
-       VALUES ($1, 1, $2, $3, $4::jsonb)
+      `INSERT INTO document_text (item_id, file_id, version, content)
+       VALUES ($1, $2, 1, $3)
        ON CONFLICT (file_id, version)
        DO UPDATE SET content = EXCLUDED.content,
-                     char_count = EXCLUDED.char_count,
-                     meta = EXCLUDED.meta,
-                     updated_at = now()`,
-      [fileId, content.slice(0, 5 * 1024 * 1024), charCount, JSON.stringify(meta)],
+                     item_id = EXCLUDED.item_id`,
+      [itemId, fileId, content.slice(0, 5 * 1024 * 1024)],
     );
   }
 

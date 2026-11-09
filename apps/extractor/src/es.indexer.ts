@@ -37,7 +37,10 @@ export class EsIndexer {
       await this.client.update({
         index: this.index,
         id: itemId,
-        doc: { fulltext, hasFulltext: fulltext.length > 0 },
+        // 索引 mapping 为 dynamic:'strict' 且未定义 hasFulltext 字段，
+        // 旧版额外写该字段会被 ES 拒绝（strict_dynamic_mapping_exception），
+        // 导致全文抽取结果永远同步不进索引（离线 demo 自验发现）。
+        doc: { fulltext },
         doc_as_upsert: false,
         retry_on_conflict: 2,
       });
