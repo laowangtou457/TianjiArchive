@@ -58,6 +58,10 @@ export function loadConfiguration(): {
     secretKey: string;
     buckets: { original: string; preview: string; thumb: string; backup: string };
     presignExpires: number;
+    /** R-1 双端点：浏览器可达的预签名端点（仅用于签发预签名 URL） */
+    publicEndPoint: string;
+    publicPort: number;
+    publicUseSSL: boolean;
   };
   redis: { host: string; port: number; password: string; db: number };
   jwt: {
@@ -104,9 +108,13 @@ export function loadConfiguration(): {
       password: str(process.env.ES_PASSWORD, ''),
       index: str(process.env.ES_INDEX, 'archive_items'),
     },
+    // MINIO_* 为 S3 兼容配置名（后端已换 SeaweedFS S3 Gateway，方案 A）：
+    // 内部端点指向 compose 服务 seaweedfs:8333，供桶/PUT/GET/HEAD/multipart 等服务端操作使用。
+    // R-1 双端点：预签名 URL 的 SigV4 签名含 Host，浏览器无法解析容器 DNS，
+    // 故独立 S3_PUBLIC_* 端点仅用于「签发」预签名 URL（浏览器直连宿主 8333）。
     minio: {
-      endPoint: str(process.env.MINIO_ENDPOINT, '127.0.0.1'),
-      port: int(process.env.MINIO_PORT, 9000),
+      endPoint: str(process.env.MINIO_ENDPOINT, 'seaweedfs'),
+      port: int(process.env.MINIO_PORT, 8333),
       useSSL: bool(process.env.MINIO_USE_SSL, false),
       accessKey: str(process.env.MINIO_ACCESS_KEY, 'tianji_minio'),
       secretKey: str(process.env.MINIO_SECRET_KEY, 'tianji_minio_change_me'),
@@ -117,6 +125,11 @@ export function loadConfiguration(): {
         backup: str(process.env.MINIO_BUCKET_BACKUP, 'archive-backup'),
       },
       presignExpires: int(process.env.MINIO_PRESIGN_EXPIRES, 3600),
+      // demo 默认浏览器与 Docker 同机 → 127.0.0.1:8333；
+      // 封闭环境多机访问时由 .env 覆盖为宿主机局域网 IP（.env.example 只放占位符）。
+      publicEndPoint: str(process.env.S3_PUBLIC_ENDPOINT, '127.0.0.1'),
+      publicPort: int(process.env.S3_PUBLIC_PORT, 8333),
+      publicUseSSL: bool(process.env.S3_PUBLIC_USE_SSL, false),
     },
     redis: {
       host: str(process.env.REDIS_HOST, '127.0.0.1'),
@@ -170,6 +183,14 @@ export function validateProductionConfig(config: AppConfig): string[] {
   check('JWT_REFRESH_SECRET', config.jwt.refreshSecret);
   check('POSTGRES_PASSWORD', config.db.password);
   check('MINIO_SECRET_KEY', config.minio.secretKey);
+  // R-1：预签名端点若仍是回环地址，只有「浏览器与 Docker 同机」时可用。
+  // 封闭环境多机访问必须改成宿主机局域网 IP，否则浏览器无法解析预签名 URL 的 host。
+  if (config.minio.publicEndPoint === '127.0.0.1' || config.minio.publicEndPoint === 'localhost') {
+    warnings.push(
+      'S3_PUBLIC_ENDPOINT 仍为 127.0.0.1：仅浏览器与服务端同机时可用；' +
+        '封闭环境多机访问须改为宿主机局域网 IP（浏览器直连 S3 8333）',
+    );
+  }
   if (!config.features.downloadEnabled) {
     warnings.push('DOWNLOAD_ENABLED=false：下载功能已关闭，仅允许在线预览（符合默认策略）');
   }

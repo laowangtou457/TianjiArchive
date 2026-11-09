@@ -16,6 +16,9 @@
     "seed": "ts-node src/scripts/seed.ts",
     "perf:danghao": "ts-node src/scripts/danghao-concurrency-bench.ts",
     "perf:search": "ts-node src/scripts/search-bench.ts",
+    "s3:probe": "ts-node src/scripts/seaweedfs-s3-probe.ts",
+    "presign:host": "ts-node src/scripts/presign-host-probe.ts",
+    "demo:books": "ts-node src/scripts/demo-books-seed.ts",
     "verify:params": "ts-node src/scripts/verify-params.ts"
   },
   "dependencies": {
