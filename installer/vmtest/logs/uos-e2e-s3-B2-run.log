@@ -1,0 +1,77 @@
+== B3-uos 2026-11-09T18:34:42Z 正常引导（无 mask）==
+inactive
+inactive
+== [1] 启动安装器 --web（B2 包已在 /root/server-setup.run）==
+18080 就绪（2s）
+== [2] S3_DOCKER（enable --now 真启动）==
+{"ok": true, "data": {"product": "tianji-archive", "version": "1.0.0", "variant": "kylin-uos", "arch": "amd64", "rootDir": "/opt/tianji-installer", "deployRoot": "/opt/tianji", "logDir": "/var/log/tianji-install/20261109T183444Z", "stateFile": "/var/lib/tianji-install/state.json", "imagesTar": "/opt/tianji-installer/tianji-offline-images.tar", "os": {"id": "uos", "versionId": "20", "codename": "fuyu", "prettyName": "UnionTech OS Server 20"}, "osMatch": {"level": "exact", "requireConfirm": false, "reason": "uos 20 已登记"}, "confirmed": false, "nextStep": "S4_IMAGES", "steps": [{"id": "S1_PREFLIGH
+== [3] 真启动取证 ==
+--- systemctl is-active docker: active
+--- systemctl is-enabled docker: enabled
+--- ip addr show docker0:
+docker0          DOWN           172.17.0.1/16 
+--- journalctl -u docker（尾部）:
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250375189+08:00" level=info msg="loading plugin \"io.containerd.service.v1.images-service\"..." type=io.containerd.service.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250380965+08:00" level=info msg="loading plugin \"io.containerd.service.v1.introspection-service\"..." type=io.containerd.service.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250385714+08:00" level=info msg="loading plugin \"io.containerd.service.v1.namespaces-service\"..." type=io.containerd.service.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250390566+08:00" level=info msg="loading plugin \"io.containerd.service.v1.snapshots-service\"..." type=io.containerd.service.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250403455+08:00" level=info msg="loading plugin \"io.containerd.service.v1.tasks-service\"..." type=io.containerd.service.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250417592+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.containers\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250430263+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.content\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250435710+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.diff\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250440856+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.events\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250447123+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.images\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250452455+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.introspection\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250457113+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.leases\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250462054+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.namespaces\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250468087+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.sandbox-controllers\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250473965+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.sandboxes\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250479347+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.snapshots\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250483900+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.streaming\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250491657+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.tasks\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250500697+08:00" level=info msg="loading plugin \"io.containerd.transfer.v1.local\"..." type=io.containerd.transfer.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250515921+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.transfer\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250526027+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.version\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250530752+08:00" level=info msg="loading plugin \"io.containerd.internal.v1.restart\"..." type=io.containerd.internal.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250572033+08:00" level=info msg="loading plugin \"io.containerd.tracing.processor.v1.otlp\"..." type=io.containerd.tracing.processor.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250604677+08:00" level=info msg="skip loading plugin \"io.containerd.tracing.processor.v1.otlp\"..." error="skip plugin: tracing endpoint not configured" type=io.containerd.tracing.processor.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250609572+08:00" level=info msg="loading plugin \"io.containerd.internal.v1.tracing\"..." type=io.containerd.internal.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250614953+08:00" level=info msg="skip loading plugin \"io.containerd.internal.v1.tracing\"..." error="skip plugin: tracing endpoint not configured" type=io.containerd.internal.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250619630+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.healthcheck\"..." type=io.containerd.grpc.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250679297+08:00" level=info msg="loading plugin \"io.containerd.nri.v1.nri\"..." type=io.containerd.nri.v1
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250691424+08:00" level=info msg="NRI interface is disabled by configuration."
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250772300+08:00" level=info msg=serving... address=/var/run/docker/containerd/containerd-debug.sock
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250793533+08:00" level=info msg=serving... address=/var/run/docker/containerd/containerd.sock.ttrpc
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250807823+08:00" level=info msg=serving... address=/var/run/docker/containerd/containerd.sock
+Nov 10 02:34:46 tianji-uos dockerd[1562]: time="2026-11-10T02:34:46.250815065+08:00" level=info msg="containerd successfully booted in 0.019877s"
+Nov 10 02:34:47 tianji-uos dockerd[1554]: time="2026-11-10T02:34:47.238325780+08:00" level=info msg="OTEL tracing is not configured, using no-op tracer provider"
+Nov 10 02:34:50 tianji-uos dockerd[1554]: time="2026-11-10T02:34:50.753363461+08:00" level=info msg="Loading containers: start."
+Nov 10 02:34:50 tianji-uos dockerd[1554]: time="2026-11-10T02:34:50.999695180+08:00" level=info msg="Loading containers: done."
+Nov 10 02:34:51 tianji-uos dockerd[1554]: time="2026-11-10T02:34:51.004611127+08:00" level=info msg="Docker daemon" commit=4c9b3b0 containerd-snapshotter=false storage-driver=overlay2 version=27.5.1
+Nov 10 02:34:51 tianji-uos dockerd[1554]: time="2026-11-10T02:34:51.004696249+08:00" level=info msg="Daemon has completed initialization"
+Nov 10 02:34:51 tianji-uos dockerd[1554]: time="2026-11-10T02:34:51.024947052+08:00" level=info msg="API listen on /var/run/docker.sock"
+Nov 10 02:34:51 tianji-uos systemd[1]: Started Docker Application Container Engine (tianji static install).
+--- docker info（真 socket）:
+ Server Version: 27.5.1
+ Storage Driver: overlay2
+ Cgroup Driver: cgroupfs
+ Cgroup Version: 1
+ Kernel Version: 4.19.90-2106.3.0.0095.up2.uel20.x86_64
+== [4] 干净关机 ==
+== B3-uos 2026-11-09T18:35:36Z 正常引导（无 mask）==
+inactive
+inactive
+== [1] 启动安装器 --web（B2 包已在 /root/server-setup.run）==
+18080 就绪（2s）
+== [2] S3_DOCKER（enable --now 真启动）==
+{"ok": true, "data": {"product": "tianji-archive", "version": "1.0.0", "variant": "kylin-uos", "arch": "amd64", "rootDir": "/opt/tianji-installer", "deployRoot": "/opt/tianji", "logDir": "/var/log/tianji-install/20261109T183538Z", "stateFile": "/var/lib/tianji-install/state.json", "imagesTar": "/opt/tianji-installer/tianji-offline-images.tar", "os": {"id": "uos", "versionId": "20", "codename": "fuyu", "prettyName": "UnionTech OS Server 20"}, "osMatch": {"level": "exact", "requireConfirm": false, "reason": "uos 20 已登记"}, "confirmed": false, "nextStep": "S4_IMAGES", "steps": [{"id": "S1_PREFLIGH
+== [3] 真启动取证 ==
+--- systemctl is-active docker: inactive
+--- systemctl is-enabled docker: masked-runtime
+--- ip addr show docker0:
+Device "docker0" does not exist.
+--- journalctl -u docker（尾部）:
+-- Logs begin at Tue 2026-11-10 02:35:33 CST, end at Tue 2026-11-10 02:35:41 CST. --
+-- No entries --
+--- docker info（真 socket）:
+== [4] 干净关机 ==
