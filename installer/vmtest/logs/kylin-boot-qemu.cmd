@@ -1,0 +1,1 @@
+qemu-system-x86_64 -machine q35\,accel=kvm -cpu host -m 4096 -smp 4 -display none -drive file=/vm/kylin.qcow2\,if=virtio\,format=qcow2\,cache=unsafe -cdrom /iso/Kylin-Server-V10-SP3-2403-Release-20240426-X86_64.iso -boot order=c -netdev user\,id=n0\,hostfwd=tcp::2222-:22 -device virtio-net-pci\,netdev=n0 -monitor none -no-reboot -name tianji-kylin 

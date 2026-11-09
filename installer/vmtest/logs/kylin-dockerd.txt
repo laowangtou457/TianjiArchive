@@ -1,0 +1,189 @@
+# ============================================================================
+# 麒麟 V10 SP3 (4.19.90-89.11.v2401.ky10) 上 docker 27.5.1 静态载荷实测
+# 采集: 2026-11-09 22:36-22:53 (+08:00)，guest 内直跑，原文取自
+#   guest:/root/tianji-diag.txt  guest:/root/exp3.log  guest:/root/exp4.log
+# 复现: installer/vmtest/docker-bringup.sh --os kylin
+# ============================================================================
+
+########## 第一部分：dockerd 启动 + driver/cgroup（/root/tianji-diag.txt 原文）
+===== [2] 起 dockerd（默认参数，含 --iptables=true） =====
+$ pkill -f dockerd || true
+[rc=0]
+$ sleep 1
+[rc=0]
+--- 下面这步之后 SSH 可能失联，现场已落盘 /root/tianji-diag.txt ---
+$ nohup /usr/local/lib/tianji/docker-static/docker/dockerd --data-root /var/lib/docker \
+        --exec-root /var/run/docker --pidfile /var/run/docker.pid \
+        --host unix:///var/run/docker.sock --storage-driver overlay2 > /root/dockerd.log 2>&1 &
+[rc=0]
+$ for i in $(seq 1 40); do sleep 1; docker info >/dev/null 2>&1 && break; done; echo waited
+waited
+[rc=0]
+$ docker info 2>&1 | grep -iE "Server Version|Storage Driver|Cgroup Version|Cgroup Driver|Kernel Version|Security Options|Docker Root Dir"
+ Server Version: 27.5.1
+ Storage Driver: overlay2
+ Cgroup Driver: cgroupfs
+ Cgroup Version: 1
+ Security Options:
+ Kernel Version: 4.19.90-89.11.v2401.ky10.x86_64
+ Docker Root Dir: /var/lib/docker
+[rc=0]
+$ tail -20 /root/dockerd.log
+time="2026-11-09T22:36:28.710922953+08:00" level=info msg="loading plugin \"io.containerd.internal.v1.tracing\"..." type=io.containerd.internal.v1
+time="2026-11-09T22:36:28.710938657+08:00" level=info msg="skip loading plugin \"io.containerd.internal.v1.tracing\"..." error="skip plugin: tracing endpoint not configured" type=io.containerd.internal.v1
+time="2026-11-09T22:36:28.710943780+08:00" level=info msg="loading plugin \"io.containerd.grpc.v1.healthcheck\"..." type=io.containerd.grpc.v1
+time="2026-11-09T22:36:28.710952369+08:00" level=info msg="loading plugin \"io.containerd.nri.v1.nri\"..." type=io.containerd.nri.v1
+time="2026-11-09T22:36:28.710957384+08:00" level=info msg="NRI interface is disabled by configuration."
+time="2026-11-09T22:36:28.711162543+08:00" level=info msg=serving... address=/var/run/docker/containerd/containerd-debug.sock
+time="2026-11-09T22:36:28.711185219+08:00" level=info msg=serving... address=/var/run/docker/containerd/containerd.sock.ttrpc
+time="2026-11-09T22:36:28.711197227+08:00" level=info msg=serving... address=/var/run/docker/containerd/containerd.sock
+time="2026-11-09T22:36:28.711206600+08:00" level=info msg="containerd successfully booted in 0.052302s"
+time="2026-11-09T22:36:29.535305047+08:00" level=info msg="OTEL tracing is not configured, using no-op tracer provider"
+time="2026-11-09T22:36:29.613975876+08:00" level=info msg="[graphdriver] trying configured driver: overlay2"
+time="2026-11-09T22:36:29.641032964+08:00" level=info msg="Loading containers: start."
+time="2026-11-09T22:36:29.660112614+08:00" level=info msg="Firewalld: docker zone already exists, returning"
+time="2026-11-09T22:36:30.409463848+08:00" level=info msg="Firewalld: interface docker0 already part of docker zone, returning"
+time="2026-11-09T22:36:30.823660204+08:00" level=info msg="Default bridge (docker0) is assigned with an IP address 172.17.0.0/16. Daemon option --bip can be used to set a preferred IP address"
+time="2026-11-09T22:36:31.005822235+08:00" level=info msg="Firewalld: interface docker0 already part of docker zone, returning"
+time="2026-11-09T22:36:31.441106820+08:00" level=info msg="Loading containers: done."
+time="2026-11-09T22:36:31.473893422+08:00" level=info msg="Docker daemon" commit=4c9b3b0 containerd-snapshotter=false storage-driver=overlay2 version=27.5.1
+time="2026-11-09T22:36:31.474445540+08:00" level=info msg="Daemon has completed initialization"
+time="2026-11-09T22:36:31.543209445+08:00" level=info msg="API listen on /var/run/docker.sock"
+[rc=0]
+
+===== [3] storage driver 实选结果 =====
+$ docker info 2>&1 | grep -i "Storage Driver"
+ Storage Driver: overlay2
+[rc=0]
+$ ls -d /var/lib/docker/overlay2 2>&1; mount | grep -c overlay
+/var/lib/docker/overlay2
+0
+[rc=1]
+
+===== [4] iptables 链（docker 是否写下） =====
+$ iptables -t nat -S 2>&1 | grep -E "DOCKER|MASQUERADE" | head -10
+-N DOCKER
+-A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER
+-A OUTPUT ! -d 127.0.0.0/8 -m addrtype --dst-type LOCAL -j DOCKER
+-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
+-A DOCKER -i docker0 -j RETURN
+[rc=0]
+$ iptables -S FORWARD 2>&1 | head -8
+-P FORWARD DROP
+-A FORWARD -j DOCKER-USER
+-A FORWARD -j DOCKER-ISOLATION-STAGE-1
+-A FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A FORWARD -o docker0 -j DOCKER
+-A FORWARD -i docker0 ! -o docker0 -j ACCEPT
+-A FORWARD -i docker0 -o docker0 -j ACCEPT
+-A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+[rc=0]
+$ iptables -t nat -S 2>&1 | grep -c DOCKER
+4
+[rc=0]
+
+===== [5] SSH 是否还活着（dockerd 起来以后） =====
+
+########## 第二部分：firewalld 重启实验（/root/exp3.log 原文）
+########## START 2026-11-09T22:49:41+08:00 boot=200.95s ##########
+== [0] 实验前
+sshd=active listening22=2
+zones=public   interfaces: enp0s2 
+== [A] 起 dockerd
+A1  Server Version: 27.5.1  Storage Driver: overlay2  Cgroup Version: 1 
+A2 natDOCKER=4 listening22=2
+A3 FORWARD=-P FORWARD DROP
+== [B] firewall-cmd --reload（docker 在跑）
+success
+B1 natDOCKER=4 listening22=2
+B2 zones=docker   interfaces: docker0 public   interfaces: enp0s2 
+== [C] systemctl restart firewalld（docker 在跑）
+C1 firewalld=active
+C2 natDOCKER=4
+C3 listening22=2 sshd=active
+C4 loopback22=OPEN
+C5 zones=docker   interfaces: docker0 public   interfaces: enp0s2 
+C6 INPUT:
+  -P INPUT ACCEPT
+  -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  -A INPUT -i lo -j ACCEPT
+  -A INPUT -j INPUT_direct
+  -A INPUT -j INPUT_ZONES
+  -A INPUT -m conntrack --ctstate INVALID -j DROP
+  -A INPUT -j REJECT --reject-with icmp-host-prohibited
+C7 INPUT_ZONES:
+  -N INPUT_ZONES
+  -A INPUT_ZONES -i docker0 -g IN_docker
+  -A INPUT_ZONES -i enp0s2 -g IN_public
+  -A INPUT_ZONES -g IN_public
+C8 IN_public_allow:
+  -N IN_public_allow
+  -A IN_public_allow -p tcp -m tcp --dport 22 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+  -A IN_public_allow -d 224.0.0.251/32 -p udp -m udp --dport 5353 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+  -A IN_public_allow -p tcp -m tcp --dport 9090 -m conntrack --ctstate NEW,UNTRACKED -j ACCEPT
+C9 ip=lo               UNKNOWN        127.0.0.1/8 ::1/128 |enp0s2           UP             10.0.2.15/24 fec0::ac9f:a2b0:e16:9588/64 fe80::2a46:a38a:21c0:cc63/64 |docker0          DOWN           172.17.0.1/16 |
+== [D] 再 reload 一次，看能否自愈
+D1 listening22=2 loopback22=OPEN
+== [E] 内核最近消息
+  Nov 09 22:46:26 tianji-kylin systemd[1]: Created slice system-getty.slice.
+  Nov 09 22:46:26 tianji-kylin kernel: lpc_ich 0000:00:1f.0: I/O space for GPIO uninitialized
+  Nov 09 22:46:26 tianji-kylin kernel: i801_smbus 0000:00:1f.3: SMBus using PCI interrupt
+  Nov 09 22:46:26 tianji-kylin kernel: input: PC Speaker as /devices/platform/pcspkr/input/input3
+  Nov 09 22:46:26 tianji-kylin kernel: parport_pc 00:02: reported by Plug and Play ACPI
+  Nov 09 22:46:26 tianji-kylin kernel: parport0: PC-style at 0x378, irq 7 [PCSPP,TRISTATE]
+  Nov 09 22:46:26 tianji-kylin kernel: input: VirtualPS/2 VMware VMMouse as /devices/platform/i8042/serio1/input/input5
+  Nov 09 22:46:26 tianji-kylin kernel: input: VirtualPS/2 VMware VMMouse as /devices/platform/i8042/serio1/input/input4
+  Nov 09 22:46:26 tianji-kylin kernel: sr 2:0:0:0: Attached scsi generic sg0 type 5
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_vendor_support: vendor-support=0
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_wdt: Intel TCO WatchDog Timer Driver v1.11
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_wdt: Found a ICH9 TCO device (Version=2, TCOBASE=0x0660)
+  Nov 09 22:46:26 tianji-kylin kernel: iTCO_wdt: initialized. heartbeat=30 sec (nowayout=0)
+  Nov 09 22:46:26 tianji-kylin kernel: ppdev: user-space parallel port driver
+  Nov 09 22:46:26 tianji-kylin kernel: XFS (vda1): Mounting V5 Filesystem
+  Nov 09 22:46:26 tianji-kylin kernel: XFS (vda1): Starting recovery (logdev: internal)
+  Nov 09 22:46:26 tianji-kylin kernel: XFS (vda1): Ending recovery (logdev: internal)
+  Nov 09 22:49:40 tianji-kylin systemd-rc-local-generator[1622]: /etc/rc.d/rc.local is not marked executable, skipping.
+  Nov 09 22:49:42 tianji-kylin kernel: aufs 4.19-20200518
+  Nov 09 22:49:44 tianji-kylin kernel: bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+########## END 2026-11-09T22:50:03+08:00 ##########
+
+########## 第三部分：断网窗口 iptables 命中计数（/root/exp4.log 原文）
+########## START 2026-11-09T22:52:34+08:00 ##########
+A dockerd ready=yes listening22=2
+A counters before: INPUT=Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+B restart firewalld at 22:52:37
+B done at 22:52:38, 现在开始 30s 观察窗（宿主会在这段时间反复 ssh 进来）
+C 窗口结束 22:53:08
+C1 counters INPUT:
+   Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+   pkts bytes target     prot opt in     out     source               destination
+   2   152 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED
+   0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0
+   0     0 INPUT_direct  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 INPUT_ZONES  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 DROP       all  --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate INVALID
+   0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited
+C2 counters INPUT_ZONES:
+   Chain INPUT_ZONES (1 references)
+   pkts bytes target     prot opt in     out     source               destination
+   0     0 IN_docker  all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           [goto]
+   0     0 IN_public  all  --  enp0s2 *       0.0.0.0/0            0.0.0.0/0           [goto]
+   0     0 IN_public  all  --  +      *       0.0.0.0/0            0.0.0.0/0           [goto]
+C3 counters IN_public_allow:
+   Chain IN_public_allow (1 references)
+   pkts bytes target     prot opt in     out     source               destination
+   0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:22 ctstate NEW,UNTRACKED
+   0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            224.0.0.251          udp dpt:5353 ctstate NEW,UNTRACKED
+   0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:9090 ctstate NEW,UNTRACKED
+C4 counters IN_public:
+   Chain IN_public (2 references)
+   pkts bytes target     prot opt in     out     source               destination
+   0     0 IN_public_log  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 IN_public_deny  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 IN_public_allow  all  --  *      *       0.0.0.0/0            0.0.0.0/0
+   0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0
+C5 ss -s: Total: 104|TCP:   2 (estab 0, closed 0, orphaned 0, timewait 0)||Transport Total     IP        IPv6|RAW	  1         0         1        |UDP	  3         2         1        |TCP	  2         1         1        |INET	  6         3         3        |FRAG	  0         0         0        ||
+C6 link enp0s2: 2: enp0s2: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 1000|    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff|    RX: bytes  packets  errors  dropped overrun mcast   |    19367      138      0       0       0       0       |    TX: bytes  packets  errors  dropped carrier collsns |    20737      124      0       0       0       0       |
+C7 sshd=active listening22=2
+C8 zones=docker   interfaces: docker0 public   interfaces: enp0s2 
+########## END 2026-11-09T22:53:08+08:00 ##########

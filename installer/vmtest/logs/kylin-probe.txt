@@ -1,0 +1,267 @@
+##############################################################################
+# 天玑档案 变体 B —— OS 基线探测原文
+# 目标系统: kylin
+# 采集时间(宿主): 2026-11-09T14:29:57Z
+# 采集方式: bash installer/vmtest/probe.sh --os kylin  (ssh root@127.0.0.1:2222)
+##############################################################################
+
+===== [0] 系统标识 =====
+$ cat /etc/os-release
+NAME="Kylin Linux Advanced Server"
+VERSION="V10 (Halberd)"
+ID="kylin"
+VERSION_ID="V10"
+PRETTY_NAME="Kylin Linux Advanced Server V10 (Halberd)"
+ANSI_COLOR="0;31"
+
+[rc=0]
+$ uname -a
+Linux tianji-kylin 4.19.90-89.11.v2401.ky10.x86_64 #1 SMP Tue May 7 18:33:01 CST 2024 x86_64 x86_64 x86_64 GNU/Linux
+[rc=0]
+$ hostnamectl 2>/dev/null | head -8
+   Static hostname: tianji-kylin
+         Icon name: computer-vm
+           Chassis: vm
+        Machine ID: cc67756cc0324f7f9c7f01b17a8f4a24
+           Boot ID: fd3a80c1a7ca4b40b310e9a0f29a0a2e
+    Virtualization: kvm
+  Operating System: Kylin Linux Advanced Server V10 (Halberd)
+            Kernel: Linux 4.19.90-89.11.v2401.ky10.x86_64
+[rc=0]
+
+===== [1] SELinux 默认状态 =====
+$ command -v getenforce || echo "(无 getenforce，说明未装 selinux 用户态工具)"
+/usr/sbin/getenforce
+[rc=0]
+$ getenforce 2>&1 || true
+Disabled
+[rc=0]
+$ cat /sys/fs/selinux/enforce 2>&1 || echo "(无 /sys/fs/selinux/enforce → 内核侧未启用 SELinux)"
+cat: /sys/fs/selinux/enforce: No such file or directory
+(无 /sys/fs/selinux/enforce → 内核侧未启用 SELinux)
+[rc=0]
+$ grep -E "^SELINUX=" /etc/selinux/config 2>&1 || echo "(无 /etc/selinux/config)"
+SELINUX=enforcing
+[rc=0]
+$ sestatus 2>&1 | head -8 || echo "(无 sestatus)"
+SELinux status:                 disabled
+[rc=0]
+$ ls /sys/fs/selinux 2>&1 | head -5
+ls: cannot access '/sys/fs/selinux': No such file or directory
+[rc=0]
+$ rpm -q selinux-policy-targeted container-selinux 2>&1
+selinux-policy-targeted-3.14.2-81.se.29.08.ky10.noarch
+package container-selinux is not installed
+[rc=1]
+
+===== [2] 麒麟 kysec（统信应为全无，这本身就是结论） =====
+$ command -v getstatus || echo "(无 getstatus)"
+(无 getstatus)
+[rc=0]
+$ command -v kysec_get; command -v setstatus
+[rc=1]
+$ getstatus 2>&1 || true
+main: line 3: getstatus: command not found
+[rc=0]
+$ getstatus -m kysec 2>&1 || true
+main: line 3: getstatus: command not found
+[rc=0]
+$ getstatus -m exectl 2>&1 || true
+main: line 3: getstatus: command not found
+[rc=0]
+$ systemctl is-active kysec-daemon 2>&1; systemctl is-enabled kysec-daemon 2>&1
+inactive
+Failed to get unit file state for kysec-daemon.service: No such file or directory
+[rc=1]
+$ ps -ef | grep -i kysec | grep -v grep || echo "(无 kysec 进程)"
+(无 kysec 进程)
+[rc=0]
+$ ls -la /etc/kysec/db/ 2>&1 | head -10
+ls: cannot access '/etc/kysec/db/': No such file or directory
+[rc=0]
+$ rpm -qa | grep -i kysec || echo "(未安装任何 kysec 包)"
+libkysec-adv-1.1.1-01.se.09.ky10.x86_64
+libkysec-core-1.1.1-01.se.09.ky10.x86_64
+libkysec-3.4.1-01.se.26.ky10.x86_64
+[rc=0]
+
+===== [3] cgroup 版本 =====
+$ stat -fc %T /sys/fs/cgroup
+tmpfs
+[rc=0]
+$ cat /proc/self/cgroup
+12:rdma:/
+11:perf_event:/
+10:hugetlb:/
+9:cpuset:/
+8:memory:/user.slice/user-0.slice/session-4.scope
+7:devices:/user.slice
+6:blkio:/
+5:freezer:/
+4:cpu,cpuacct:/
+3:net_cls,net_prio:/
+2:pids:/user.slice/user-0.slice/session-4.scope
+1:name=systemd:/user.slice/user-0.slice/session-4.scope
+[rc=0]
+$ mount | grep cgroup | head -5
+tmpfs on /sys/fs/cgroup type tmpfs (ro,nosuid,nodev,noexec,mode=755)
+cgroup on /sys/fs/cgroup/systemd type cgroup (rw,nosuid,nodev,noexec,relatime,xattr,release_agent=/usr/lib/systemd/systemd-cgroups-agent,name=systemd)
+cgroup on /sys/fs/cgroup/pids type cgroup (rw,nosuid,nodev,noexec,relatime,pids)
+cgroup on /sys/fs/cgroup/net_cls,net_prio type cgroup (rw,nosuid,nodev,noexec,relatime,net_cls,net_prio)
+cgroup on /sys/fs/cgroup/cpu,cpuacct type cgroup (rw,nosuid,nodev,noexec,relatime,cpu,cpuacct)
+[rc=0]
+
+===== [4] iptables 后端 =====
+$ iptables --version
+iptables v1.8.5 (legacy)
+[rc=0]
+$ command -v iptables-nft iptables-legacy 2>&1
+/usr/sbin/iptables-legacy
+[rc=0]
+$ iptables -t nat -L -n 2>&1 | head -3
+Chain PREROUTING (policy ACCEPT)
+target     prot opt source               destination         
+PREROUTING_direct  all  --  0.0.0.0/0            0.0.0.0/0           
+[rc=0]
+$ nft list tables 2>&1 | head -3
+[rc=0]
+
+===== [5] xfs ftype（overlay2 前提） =====
+$ findmnt -no FSTYPE,SOURCE /
+xfs    /dev/vda2
+[rc=0]
+$ xfs_info / 2>&1 | tr "," "\n" | grep -i ftype || echo "(根不是 xfs 或 xfs_info 不可用)"
+ ftype=1
+[rc=0]
+$ xfs_info /boot 2>&1 | tr "," "\n" | grep -i ftype || true
+ ftype=1
+[rc=0]
+
+===== [6] 内核 / glibc / systemd =====
+$ systemctl --version | head -1
+systemd 243 (v243-67.p05.ky10)
+[rc=0]
+$ uname -r
+4.19.90-89.11.v2401.ky10.x86_64
+[rc=0]
+$ rpm -q glibc systemd kernel kernel-core 2>&1
+glibc-2.28-98.p02.ky10.x86_64
+systemd-243-67.p05.ky10.x86_64
+kernel-4.19.90-89.11.v2401.ky10.x86_64
+kernel-core-4.19.90-89.11.v2401.ky10.x86_64
+[rc=0]
+$ rpm -q xfsprogs iptables nftables libseccomp 2>&1
+xfsprogs-5.6.0-7.ky10.x86_64
+iptables-1.8.5-6.ky10.x86_64
+nftables-0.9.6-7.ky10.x86_64
+libseccomp-2.5.0-5.p03.ky10.x86_64
+[rc=0]
+
+===== [7] firewalld =====
+$ systemctl is-active firewalld 2>&1; systemctl is-enabled firewalld 2>&1
+active
+enabled
+[rc=0]
+$ firewall-cmd --state 2>&1 || true
+running
+[rc=0]
+$ firewall-cmd --get-default-zone 2>&1 || true
+public
+[rc=0]
+
+===== [8] 附加：overlay / br_netfilter 能否加载（决定 docker 可行性） =====
+$ ls /usr/lib/modules/$(uname -r)/kernel/fs/overlayfs/ 2>&1 || ls /lib/modules/$(uname -r)/kernel/fs/overlayfs/ 2>&1
+overlay.ko.xz
+[rc=0]
+$ lsmod | grep -E "overlay|br_netfilter" || echo "(均未加载)"
+(均未加载)
+[rc=0]
+$ modprobe overlay 2>&1; modprobe br_netfilter 2>&1; lsmod | grep -E "overlay|br_netfilter" || echo "(加载失败)"
+br_netfilter           24576  0
+bridge                196608  1 br_netfilter
+overlay               139264  0
+[rc=0]
+$ sysctl net.bridge.bridge-nf-call-iptables 2>&1
+net.bridge.bridge-nf-call-iptables = 1
+[rc=0]
+
+===== [9] 附加：docker 相关前置（发行版自带版本、磁盘、内核模块） =====
+$ dpkg -l 2>/dev/null | head -1; rpm -qa | grep -iE "^docker|^podman|container-selinux" || echo "(无容器包)"
+(无容器包)
+[rc=0]
+$ df -hT / | tail -2
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/vda2      xfs    29G  2.4G   27G   9% /
+[rc=0]
+$ free -m | head -2; nproc
+              total        used        free      shared  buff/cache   available
+Mem:           2652         151        2225           8         275        2280
+4
+[rc=0]
+
+===== [done] 探测结束 2026-11-09T14:30:02Z =====
+
+===== [10] SELinux 为何 Disabled（补证） =====
+$ cat /proc/cmdline
+BOOT_IMAGE=/vmlinuz-4.19.90-89.11.v2401.ky10.x86_64 root=UUID=66b387e2-3ed5-444b-81e7-3e72b82f5af6 ro console=ttyS0,115200n8 crashkernel=1024M,high audit=0
+$ cat /sys/kernel/security/lsm
+capability$ grep -E "selinux|GRUB_CMDLINE" /etc/default/grub
+GRUB_CMDLINE_LINUX="console=ttyS0,115200n8 crashkernel=1024M,high audit=0"
+$ grep -o "selinux[^ ]*" /boot/grub2/grub.cfg | head -3
+$ ls /boot | head
+config-4.19.90-89.11.v2401.ky10.x86_64
+dracut
+efi
+grub2
+initramfs-0-rescue-cc67756cc0324f7f9c7f01b17a8f4a24.img
+initramfs-4.19.90-89.11.v2401.ky10.x86_64.img
+$ rpm -qa | grep -iE "kysec|selinux"
+selinux-policy-targeted-3.14.2-81.se.29.08.ky10.noarch
+libkysec-adv-1.1.1-01.se.09.ky10.x86_64
+libselinux-3.1-7.se.03.ky10.x86_64
+python3-libselinux-3.1-7.se.03.ky10.x86_64
+selinux-policy-3.14.2-81.se.29.08.ky10.noarch
+libkysec-core-1.1.1-01.se.09.ky10.x86_64
+libkysec-3.4.1-01.se.26.ky10.x86_64
+$ systemctl list-unit-files | grep -iE "kysec|selinux" || echo "(无相关 unit)"
+selinux-autorelabel-mark.service           disabled       
+selinux-autorelabel.service                static         
+selinux-autorelabel.target                 static         
+$ getstatus 所在包是否可从 ISO 装: rpm -q kysec-utils
+package kysec-utils is not installed
+$ grep -E "CONFIG_SECURITY_SELINUX=|CONFIG_SECURITY_SELINUX_BOOTPARAM=|CONFIG_SECURITY=|CONFIG_LSM=" /boot/config-$(uname -r)
+CONFIG_AUDIT=y
+CONFIG_SECURITY=y
+CONFIG_SECURITY_SELINUX=y
+CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+$ grep -iE "kysec|kyselinux" /boot/config-$(uname -r) | head -5
+CONFIG_SECURITY_KYSEC=y
+CONFIG_SECURITY_KYSEC_STATUS_BOOTPARAM=y
+CONFIG_SECURITY_KYSEC_STATUS_DEFAULT=4
+CONFIG_SECURITY_KYSEC_TPM_STATUS_DEFAULT=0
+CONFIG_SECURITY_KYSEC_AUTHENTICATION=y
+$ grep -E "CONFIG_DEFAULT_SECURITY|CONFIG_LSM=|CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE|CONFIG_SECURITY_KYSEC_STATUS_DEFAULT" /boot/config-$(uname -r)
+CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE=1
+CONFIG_SECURITY_KYSEC_STATUS_DEFAULT=4
+CONFIG_DEFAULT_SECURITY_DAC=y
+# CONFIG_DEFAULT_SECURITY_STACKING is not set
+CONFIG_DEFAULT_SECURITY=""
+$ ls /sys/kernel/security/
+box
+evm
+ima
+integrity
+kic
+kysec
+lsm
+lsm-version
+stacked
+$ ls -d /sys/fs/kysec /sys/kernel/security/kysec 2>&1
+ls: cannot access '/sys/fs/kysec': No such file or directory
+/sys/kernel/security/kysec
+$ dmesg | grep -iE "selinux|kysec" | head -5
+[    3.607292] KYSEC: Disabled.
+[    7.052688] KYSEC: Init kysecfs SUCCESS!
+[   14.105619] evm: security.selinux
+[   15.194573] systemd[1]: systemd v243-67.p05.ky10 running in system mode. (+PAM +AUDIT +SELINUX +IMA -APPARMOR +SMACK +SYSVINIT +UTMP +LIBCRYPTSETUP +GCRYPT +GNUTLS +ACL +XZ +LZ4 +SECCOMP +BLKID +ELFUTILS +KMOD +IDN2 -IDN +PCRE2 default-hierarchy=legacy)
+[   21.286269] systemd[1]: systemd v243-67.p05.ky10 running in system mode. (+PAM +AUDIT +SELINUX +IMA -APPARMOR +SMACK +SYSVINIT +UTMP +LIBCRYPTSETUP +GCRYPT +GNUTLS +ACL +XZ +LZ4 +SECCOMP +BLKID +ELFUTILS +KMOD +IDN2 -IDN +PCRE2 default-hierarchy=legacy)
