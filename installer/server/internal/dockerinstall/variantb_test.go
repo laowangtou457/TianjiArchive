@@ -208,6 +208,142 @@ func TestStaticUnitUsesAbsolutePathsAndWaitsReady(t *testing.T) {
 	}
 }
 
+// TestStaticUnitCarriesRuntimeEnvironment：unit 模板四缺陷修复的回归（真麒麟 S3 实测，
+// journal 双层实证 + `701f1e6` 证据）。
+//
+//  1. dockerd 27.5.1 经 PATH 找 docker-proxy 与托管 containerd：unit 必须自带
+//     Environment=PATH 且静态目录在最前——fixture 把静态目录指到临时路径，
+//     若实现硬编码 /usr/local/lib/tianji/docker-static 第二份，这里必失败；
+//  2. ExecStart 必须带 --userland-proxy-path 绝对路径；
+//  3. Restart=on-failure + StartLimit 上限：Restart=always 遇 ExecStart 秒败是
+//     每 2s 一次的无限循环（真机 restart counter 31+，failed 态永不可见）。
+func TestStaticUnitCarriesRuntimeEnvironment(t *testing.T) {
+	fx := newVBFixture(t)
+	opts := fx.opts(t)
+	if err := installStatic(context.Background(), &opts, &Result{}); err != nil {
+		t.Fatalf("installStatic 失败: %v", err)
+	}
+	raw, err := os.ReadFile(fx.layout.DockerUnitPath())
+	if err != nil {
+		t.Fatalf("unit 未写入: %v", err)
+	}
+	unit := string(raw)
+
+	// ① Environment=PATH：静态目录派生自 Layout（fixture 已指到 temp），放最前、系统目录兜底。
+	wantEnv := "Environment=PATH=" + fx.layout.StaticDockerBinDir() + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	if !strings.Contains(unit, wantEnv) {
+		t.Fatalf("unit 必须自带 Environment=PATH（静态目录在最前、系统目录兜底）：\n期望含 %s\n实际：\n%s", wantEnv, unit)
+	}
+	// 硬编码第二份静态路径必被 fixture 抓住：Environment 行若不来自 Layout 就不含 temp 路径。
+	envLine := ""
+	for _, line := range strings.Split(unit, "\n") {
+		if strings.HasPrefix(line, "Environment=PATH=") {
+			envLine = line
+		}
+	}
+	if !strings.HasPrefix(strings.TrimPrefix(envLine, "Environment=PATH="), fx.layout.StaticDockerBinDir()) {
+		t.Fatalf("Environment=PATH 的静态目录必须从 Layout 派生且放最前，实际 %q", envLine)
+	}
+
+	// ② --userland-proxy-path 绝对路径（同样派生自 Layout）。
+	wantProxy := "--userland-proxy-path=" + fx.layout.StaticDockerBin("docker-proxy")
+	if !strings.Contains(unit, wantProxy) {
+		t.Fatalf("ExecStart 必须带 --userland-proxy-path 绝对路径：\n期望含 %s\n实际：\n%s", wantProxy, unit)
+	}
+
+	// ③ 重启策略：给上限，消灭无限 auto-restart。
+	if !strings.Contains(unit, "Restart=on-failure") {
+		t.Fatalf("Restart 必须是 on-failure（always + 秒败 = 无限循环）：\n%s", unit)
+	}
+	if strings.Contains(unit, "Restart=always") {
+		t.Fatalf("unit 不许再出现 Restart=always：\n%s", unit)
+	}
+	if !strings.Contains(unit, "StartLimitIntervalSec=120") || !strings.Contains(unit, "StartLimitBurst=5") {
+		t.Fatalf("必须有 StartLimitIntervalSec=120 与 StartLimitBurst=5（让 systemd 放弃后 failed 可见）：\n%s", unit)
+	}
+
+	// ④ wait-ready.sh 的排障 hint：ExecStart 秒败时 ExecStartPost 不运行是 systemd
+	// 语义，现场要知道去 journalctl 查根因，而不是盯着脚本等。
+	waiter, werr := os.ReadFile(filepath.Join(fx.layout.StaticDockerBinDir(), buildplan.WaitReadyScript))
+	if werr != nil {
+		t.Fatalf("就绪等待脚本未写入: %v", werr)
+	}
+	if !strings.Contains(string(waiter), "journalctl -u docker") {
+		t.Fatalf("wait-ready.sh 必须提示「ExecStart 秒败时本脚本不会执行，查 journalctl -u docker」：\n%s", waiter)
+	}
+}
+
+// TestEnsureDockerGroupCreatesWhenMissing：组不存在 → groupadd --system。
+func TestEnsureDockerGroupCreatesWhenMissing(t *testing.T) {
+	fx := newVBFixture(t)
+	opts := fx.opts(t)
+	// vrunner 对未预置输出的命令返回 nil 错误、空 stdout：等价于「getent 查无此组」。
+	if err := ensureDockerGroup(context.Background(), &opts); err != nil {
+		t.Fatalf("建组不应失败: %v", err)
+	}
+	if !fx.runner.called("groupadd --system docker") {
+		t.Fatalf("组不存在时必须执行 groupadd --system docker，实际调用: %v", fx.runner.calls)
+	}
+	if !fx.runner.called("getent group docker") {
+		t.Fatal("建组前必须先 getent 探测（幂等纪律）")
+	}
+}
+
+// TestEnsureDockerGroupSkipsWhenExists：组已存在 → 不碰 groupadd。
+func TestEnsureDockerGroupSkipsWhenExists(t *testing.T) {
+	fx := newVBFixture(t)
+	fx.runner.out["getent group docker"] = "docker:x:173:\n"
+	opts := fx.opts(t)
+	if err := ensureDockerGroup(context.Background(), &opts); err != nil {
+		t.Fatalf("组已存在不应失败: %v", err)
+	}
+	if fx.runner.called("groupadd") {
+		t.Fatal("组已存在时不得执行 groupadd")
+	}
+	if !strings.Contains(strings.Join(fx.logs, "\n"), "已存在") {
+		t.Fatalf("日志要如实记录「组已存在」: %v", fx.logs)
+	}
+}
+
+// TestEnsureDockerGroupFailureFailsClosed：groupadd 真失败 → 阻断并说明后果。
+func TestEnsureDockerGroupFailureFailsClosed(t *testing.T) {
+	fx := newVBFixture(t)
+	fx.runner.err["groupadd --system docker"] = errors.New("groupadd: failure")
+	opts := fx.opts(t)
+	err := ensureDockerGroup(context.Background(), &opts)
+	if err == nil {
+		t.Fatal("groupadd 失败必须阻断（否则 docker.sock 的 chown 必败）")
+	}
+	if !strings.Contains(err.Error(), "docker.sock") {
+		t.Errorf("错误要说明失败后果（docker.sock chown 会随之失败）: %v", err)
+	}
+}
+
+// TestStaticInstallCreatesGroupBeforeEnable：顺序守卫——建组必须在 enable --now 之前
+// （dockerd 一起来就要 chown socket，晚了没用）。
+func TestStaticInstallCreatesGroupBeforeEnable(t *testing.T) {
+	fx := newVBFixture(t)
+	opts := fx.opts(t)
+	if err := installStatic(context.Background(), &opts, &Result{}); err != nil {
+		t.Fatalf("installStatic 失败: %v", err)
+	}
+	groupIdx, enableIdx := -1, -1
+	for i, c := range fx.runner.calls {
+		if strings.Contains(c, "groupadd --system docker") && groupIdx == -1 {
+			groupIdx = i
+		}
+		if strings.Contains(c, "systemctl enable --now docker") && enableIdx == -1 {
+			enableIdx = i
+		}
+	}
+	if groupIdx == -1 || enableIdx == -1 {
+		t.Fatalf("groupadd 或 enable 调用缺失，calls=%v", fx.runner.calls)
+	}
+	if groupIdx > enableIdx {
+		t.Fatalf("groupadd（#%d）必须在 systemctl enable --now docker（#%d）之前", groupIdx, enableIdx)
+	}
+}
+
 // TestStaticInstallNeverTouchesPackageManager：禁 apt/dpkg/rpm/dnf/brctl/update-ca-certificates。
 func TestStaticInstallNeverTouchesPackageManager(t *testing.T) {
 	fx := newVBFixture(t)

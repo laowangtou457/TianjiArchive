@@ -24,12 +24,21 @@ import (
 
 // staticDockerUnit 是我们的 docker.service 模板。
 //
-// 与 rpm 自带 unit 的差别只有两处，都是为了变体 B：
-//   - ExecStart 指向静态目录（绝对路径），而不是 /usr/bin/dockerd；
-//   - ExecStartPost 调 wait-ready.sh 等 Server 段就绪。**不把循环写进 unit**：
-//     systemd 会对 `$VAR` / `${VAR}` 做自己的展开，把一个 shell 循环塞进
-//     Exec= 要么得用 `$$` 转义（极易写错且看不出来），要么被悄悄展开成空串。
-//     独立脚本可以在任何机器上单独 `sh wait-ready.sh` 复现，可测。
+// 与 rpm 自带 unit 的差别，都是为了变体 B：
+//   - Environment=PATH 把静态目录放最前：dockerd 27.5.1 经 PATH 找 docker-proxy、
+//     托管拉起的 containerd 也走 PATH（真麒麟实测两层失败：先
+//     `invalid userland-proxy-path`，修掉后再撞 `exec: "containerd": executable
+//     file not found in $PATH`）。静态落点不进系统 PATH 是设计硬约束，所以只给
+//     unit 自己的进程环境补——系统 PATH 一字不动，语义不破。
+//   - ExecStart 带 --userland-proxy-path 绝对路径，同样为绕开 PATH 查找。
+//   - ExecStart 指向静态目录（绝对路径），ExecStartPost 调 wait-ready.sh 等
+//     Server 段就绪。**不把循环写进 unit**：systemd 会对 `$VAR` / `${VAR}` 做自己的
+//     展开，把一个 shell 循环塞进 Exec= 要么得用 `$$` 转义（极易写错且看不出来），
+//     要么被悄悄展开成空串。独立脚本可以在任何机器上单独 `sh wait-ready.sh` 复现。
+//   - Restart=on-failure + StartLimit：Restart=always 遇 ExecStart 秒败是每 2s
+//     一次的无限循环（真机实测 restart counter 31+ 永不放弃，现场只见
+//     `activating (auto-restart)` 转圈、根因埋在 journal）。给上限让 systemd
+//     放弃后进 failed 态可见。注意 systemd ≥230 的 StartLimit* 在 [Unit] 段。
 //
 // LimitMEMLOCK / LimitNOFILE 是 Elasticsearch 的要求（compose 里声明了 memlock 与
 // nofile）。写在 unit 上比只写 limits.d 可靠：limits.d 只对登录会话生效，
@@ -39,15 +48,20 @@ Description=Docker Application Container Engine (tianji static install)
 Documentation=https://docs.docker.com
 After=network-online.target firewalld.service
 Wants=network-online.target
+# 上限给足尝试机会（120s 内 5 次），超过则 failed 态可见，而不是无限 auto-restart
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=notify
-ExecStart=%s
+# 静态目录放最前（dockerd 要经 PATH 找 docker-proxy / containerd），系统目录兜底
+Environment=PATH=%s
+ExecStart=%s --userland-proxy-path=%s
 ExecStartPost=%s
 ExecReload=/bin/kill -s HUP $MAINPID
 TimeoutStartSec=0
 RestartSec=2
-Restart=always
+Restart=on-failure
 LimitNOFILE=65535
 LimitMEMLOCK=infinity
 LimitNPROC=infinity
@@ -61,15 +75,32 @@ OOMScoreAdjust=-500
 WantedBy=multi-user.target
 `
 
-// renderDockerUnit 把落点填进模板。
-func renderDockerUnit(execStart, execStartPost string) string {
-	return fmt.Sprintf(staticDockerUnit, execStart, execStartPost)
+// dockerUnitEnvPath 返回 unit 的 Environment=PATH 值。
+//
+// 静态目录必须放最前，系统目录保留兜底：dockerd 运行期还要调 iptables /
+// modprobe 等系统工具。staticDir 由 Layout 派生，绝不在这里手抄第二份路径——
+// 静态落点是协议（buildplan/static_paths.go），抄第二份迟早分叉。
+func dockerUnitEnvPath(staticDir string) string {
+	return staticDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+// renderDockerUnit 把落点填进模板。四个值全部从 Layout 派生。
+func renderDockerUnit(layout buildplan.Layout, waiter string) string {
+	return fmt.Sprintf(staticDockerUnit,
+		dockerUnitEnvPath(layout.StaticDockerBinDir()),
+		layout.StaticDockerBin("dockerd"),
+		layout.StaticDockerBin("docker-proxy"),
+		waiter)
 }
 
 // waitReadyScript 返回就绪等待脚本（由安装器写到静态目录，unit 的 ExecStartPost 调它）。
 //
 // 退出码永远是 0：它只负责「尽量等」，不该因为等不到就把 unit 判成 failed——
 // 真正的判定在安装器的 WaitDaemon（那里有超时、有可读错误）。
+//
+// 结尾的 WARN 是真机排障换来的：ExecStart 秒败时 systemd 根本不会运行
+// ExecStartPost，现场会误以为「脚本等了 60 秒都没等到」。把这句话打出来，
+// 下次排障第一眼就知道该去 journalctl 而不是盯着本脚本。
 func waitReadyScript(dockerBin string) string {
 	return fmt.Sprintf(`#!/bin/sh
 # 由 tianji 安装器写入（变体 B）。等 dockerd 的 Server 段就绪，最多 60 秒。
@@ -81,6 +112,8 @@ while [ "$i" -lt 60 ]; do
   i=$((i+1))
   sleep 1
 done
+echo "WARN: 等待 60 秒后 dockerd 仍未就绪（本脚本只等待，不判定成败）。" >&2
+echo "若 ExecStart 秒败，本脚本根本不会被执行；请查 journalctl -u docker 看真实原因。" >&2
 exit 0
 `, dockerBin)
 }
@@ -162,6 +195,33 @@ func firewalldActive(ctx context.Context, runner execx.Runner) string {
 	return "unknown"
 }
 
+// ensureDockerGroup 幂等建立 docker 系统组。
+//
+// 为什么必须：变体 B 不走包管理器，没有 rpm 在装包时替我们建组；而 dockerd
+// 起来后要把 /var/run/docker.sock chown 成 docker:docker，组不存在直接失败
+// （真麒麟实测：could not change group /var/run/docker.sock to docker: group
+// docker not found）。getent 探测、groupadd 补建，命令与结果都留进 S3 日志。
+func ensureDockerGroup(ctx context.Context, opts *Options) error {
+	if out, err := opts.Runner.Run(ctx, "getent", "group", "docker"); err == nil && strings.TrimSpace(out.Stdout) != "" {
+		opts.logf("docker 组已存在：%s", strings.TrimSpace(out.Stdout))
+		return nil
+	}
+	opts.logf("docker 组不存在（或探测不可用），执行 groupadd --system docker")
+	out, err := opts.Runner.Run(ctx, "groupadd", "--system", "docker")
+	opts.logf("%s", strings.TrimRight(out.Combined(), "\n"))
+	if err != nil {
+		// groupadd 本身幂等：组刚被别处建出来时报「already exists」，不算失败。
+		if strings.Contains(strings.ToLower(out.Combined()), "already exists") {
+			opts.logf("docker 组刚被别处创建（groupadd 报 already exists），继续")
+			return nil
+		}
+		return fmt.Errorf("groupadd --system docker 失败（docker.sock 的 chown 会随之失败）: %w\n%s",
+			err, out.Tail(6))
+	}
+	opts.logf("已创建系统组 docker")
+	return nil
+}
+
 // installStatic 走变体 B：static tgz + compose 插件 + 自写 unit。
 func installStatic(ctx context.Context, opts *Options, res *Result) error {
 	tgzs, err := filepath.Glob(filepath.Join(opts.Layout.StaticDir(), "docker-*.tgz"))
@@ -224,10 +284,7 @@ func installStatic(ctx context.Context, opts *Options, res *Result) error {
 
 	// 自写 unit
 	if opts.hasSystemctl() {
-		unit := renderDockerUnit(
-			opts.Layout.StaticDockerBin("dockerd"),
-			waiter,
-		)
+		unit := renderDockerUnit(opts.Layout, waiter)
 		unitPath := opts.Layout.DockerUnitPath()
 		if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
 			return fmt.Errorf("创建 unit 目录失败: %w", err)
@@ -239,6 +296,12 @@ func installStatic(ctx context.Context, opts *Options, res *Result) error {
 			return err
 		}
 		opts.logf("已写入 %s（ExecStart=%s）", unitPath, opts.Layout.StaticDockerBin("dockerd"))
+	}
+
+	// docker 组必须在 enable --now 之前就位：dockerd 起来后要 chown
+	// /var/run/docker.sock，组不存在是必失败项（幂等，重复安装无事）。
+	if err := ensureDockerGroup(ctx, opts); err != nil {
+		return err
 	}
 
 	if err := enableAndStart(ctx, opts); err != nil {
