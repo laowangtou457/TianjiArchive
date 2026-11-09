@@ -239,6 +239,13 @@ package : tianji-server-setup-ubuntu-debian-amd64-1.0.0.run
 > 现场核验：`gpg --import pubkeys/tianji-build.asc` → `gpg --fingerprint 0A038555B153ACC9`
 > （指纹必须逐字一致，不一致即停：说明公钥本身被换过）→
 > `gpg --verify SHA256SUMS.asc SHA256SUMS.txt` → `sha256sum -c SHA256SUMS.txt`。
+>
+> **这条流程已在空钥匙圈上实测过一次**（模拟现场：`GNUPGHOME` 指向新建空目录，只 import
+> 仓库里的公钥）：从 `.run` 截出 payload（sha256 `e1380de6…` 与构建日志一致）→ 解包
+> 102 个文件 → 验签得到 `Good signature`、指纹 `0AD2 912C … B153 ACC9` →
+> `sha256sum -c` **98/98 全 OK**。gpg 会照例提示
+> `This key is not certified with a trusted signature`——这是裸公钥的正常提示，
+> 正确做法是**比对指纹**而不是忽略它，README 里写的顺序就是这个意思。
 
 ### 3. `ubuntu:22.04` 容器内实测（真实目标环境，非模拟）
 
