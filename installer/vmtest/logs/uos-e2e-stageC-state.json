@@ -1,0 +1,81 @@
+{
+  "formatVersion": 1,
+  "product": "tianji-archive",
+  "version": "1.0.0",
+  "variant": "kylin-uos",
+  "arch": "amd64",
+  "createdAt": "2026-11-09T19:04:16.832822433Z",
+  "updatedAt": "2026-11-09T19:05:52.264455075Z",
+  "steps": {
+    "S10_DONE": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:05:52.264299111Z",
+      "finishedAt": "2026-11-09T19:05:52.264454929Z",
+      "exitCode": 0,
+      "output": "完成 用时 0s"
+    },
+    "S1_PREFLIGHT": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:04:16.90242178Z",
+      "finishedAt": "2026-11-09T19:04:17.113121535Z",
+      "exitCode": 0,
+      "output": "环境体检 用时 211ms"
+    },
+    "S2_VERIFY": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:04:17.126904361Z",
+      "finishedAt": "2026-11-09T19:04:18.0805948Z",
+      "exitCode": 0,
+      "output": "包完整性 用时 954ms"
+    },
+    "S3_DOCKER": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:04:18.08811295Z",
+      "finishedAt": "2026-11-09T19:04:18.300090854Z",
+      "exitCode": 0,
+      "output": "安装 Docker 用时 212ms"
+    },
+    "S4_IMAGES": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:04:18.315305526Z",
+      "finishedAt": "2026-11-09T19:04:51.463494333Z",
+      "exitCode": 0,
+      "output": "导入镜像 用时 33.148s"
+    },
+    "S5_ENV": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:04:51.470277836Z",
+      "finishedAt": "2026-11-09T19:04:51.470775022Z",
+      "exitCode": 0,
+      "output": "渲染配置 用时 0s"
+    },
+    "S6_UP": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:04:51.489524143Z",
+      "finishedAt": "2026-11-09T19:05:39.694736949Z",
+      "exitCode": 0,
+      "output": "启动服务栈 用时 48.205s"
+    },
+    "S7_MIGRATE": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:05:39.710186542Z",
+      "finishedAt": "2026-11-09T19:05:42.827631082Z",
+      "exitCode": 0,
+      "output": "数据库迁移 用时 3.117s"
+    },
+    "S8_SEED": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:05:42.842398134Z",
+      "finishedAt": "2026-11-09T19:05:44.758298667Z",
+      "exitCode": 0,
+      "output": "初始化数据 用时 1.916s"
+    },
+    "S9_SMOKE": {
+      "status": "DONE",
+      "startedAt": "2026-11-09T19:05:44.765728473Z",
+      "finishedAt": "2026-11-09T19:05:52.249273656Z",
+      "exitCode": 0,
+      "output": "四项冒烟 用时 7.483s"
+    }
+  }
+}

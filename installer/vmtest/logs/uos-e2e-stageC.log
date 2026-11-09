@@ -1,0 +1,116 @@
+== 阶段C uos 2026-11-09T19:04:02Z ==
+=== CX uos BOOT ===
+== [0] 前置核对 ==
+/dev/vda2        59G  4.6G   55G   8% /
+5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb  /root/server-setup.run
+期望包: 5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb
+== [1] 重置 state（整链从头）==
+== [2] 只读盘 dd tar 落普通文件 ==
+NAME   MAJ:MIN RM        SIZE RO TYPE MOUNTPOINT
+vda    253:0    0 64424509440  0 disk 
+├─vda1 253:1    0  1073741824  0 part /boot
+└─vda2 253:2    0 63349719040  0 part /
+vdb    253:16   0  1512404992  1 disk 
+394264576 bytes (394 MB, 376 MiB) copied, 1 s, 391 MB/s666894336 bytes (667 MB, 636 MiB) copied, 2 s, 330 MB/s1098907648 bytes (1.1 GB, 1.0 GiB) copied, 3 s, 366 MB/s
+360+1 records in
+360+1 records out
+1512404992 bytes (1.5 GB, 1.4 GiB) copied, 5.19231 s, 291 MB/s
+dd rc=0
+-rw-r--r-- 1 root root 1512404992 Nov 10 03:04 /root/tianji-offline-images.tar
+tar sha256: 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+期望    : 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+== [3] 启动安装器 --web ==
+18080 就绪（1s）
+== [4] 登记 tar + 提交 env ==
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/
+guest IP: 10.0.2.15
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/2026
+== [5] S1（含确认门处理）==
+=== CX uos S1-DONE ===
+== [6] 逐步 S2→S10 ==
+---- S2_VERIFY 开始 2026-11-09T19:04:17Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S2_VERIFY-OK ===
+---- S3_DOCKER 开始 2026-11-09T19:04:18Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S3_DOCKER-OK ===
+---- S4_IMAGES 开始 2026-11-09T19:04:18Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S4_IMAGES-OK ===
+---- S5_ENV 开始 2026-11-09T19:04:51Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S5_ENV-OK ===
+---- S6_UP 开始 2026-11-09T19:04:51Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S6_UP-OK ===
+---- S7_MIGRATE 开始 2026-11-09T19:05:39Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S7_MIGRATE-OK ===
+---- S8_SEED 开始 2026-11-09T19:05:42Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S8_SEED-OK ===
+---- S9_SMOKE 开始 2026-11-09T19:05:44Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S9_SMOKE-OK ===
+---- S10_DONE 开始 2026-11-09T19:05:52Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T190416Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"uos","versionId":"20","codename":"fuyu","prettyName":"UnionTech OS Server 20"},
+=== CX uos S10_DONE-OK ===
+== [7] 终局核对 ==
+--- 进程存活（防 stale）：YES
+--- state.json 时间戳：2026-11-10 03:05:52.263722413 +0800
+{'S10_DONE': 'DONE', 'S1_PREFLIGHT': 'DONE', 'S2_VERIFY': 'DONE', 'S3_DOCKER': 'DONE', 'S4_IMAGES': 'DONE', 'S5_ENV': 'DONE', 'S6_UP': 'DONE', 'S7_MIGRATE': 'DONE', 'S8_SEED': 'DONE', 'S9_SMOKE': 'DONE'}
+--- docker images：8 个
+tianji-archive-api:1.0.0
+tianji-archive-extractor:1.0.0
+tianji-archive-web:1.0.0
+tianji-archive-backup:1.0.0
+tianji-elasticsearch-ik:8.13.4
+redis:7-alpine
+postgres:16-alpine
+chrislusf/seaweedfs:3.79
+--- 容器健康：
+tianji-web Up 33 seconds (healthy)
+tianji-extractor Up 28 seconds
+tianji-backup Up 28 seconds
+tianji-api Up 34 seconds (healthy)
+tianji-seaweedfs Up 55 seconds (healthy)
+tianji-elasticsearch Up 55 seconds (healthy)
+tianji-postgres Up 55 seconds (healthy)
+tianji-redis Up 55 seconds (healthy)
+--- 冒烟结果：
+[
+ {
+  "name": "1/4 健康检查 /api/health",
+  "passed": true,
+  "detail": "status=ok 且 objectStorage.ok=true",
+  "output": "{\"code\":0,\"data\":{\"status\":\"ok\",\"version\":\"1.0.0\",\"uptimeSeconds\":25,\"deps\":[{\"name\":\"postgres\",\"ok\":true,\"latencyMs\":1},{\"name\":\"elasticsearch\",\"ok\":true,\"latencyMs\":8},{\"name\":\"objectStorage\",\"ok\":true,\"latencyMs\":2},{\"name\":\"redis\",\"ok\":true,\"latencyMs\":1}]},\"message\":\"成功\",\"timestamp\":\"2026-11-09T19:05:44.779Z\"}"
+ },
+ {
+  "name": "2/4 S3 兼容性探针",
+  "passed": true,
+  "detail": "输出含 IS_PASS: YES",
+  "output": "\n> @tianji/api@1.0.0 s3:probe /app/apps/api\n> ts-node src/scripts/seaweedfs-s3-probe.ts\n\n════════════ SeaweedFS S3 兼容性探针 ════════════\n端点=seaweedfs:8333 pathStyle=true region=us-east-1 探测桶=tianji-s3-probe-1794251145728\n  bucketExists（新建前，应为 false）= false\n探测桶清理完成：tianji-s3-probe-1794251145728\n\n──────────── 逐项结果 ────────────\nPASS | bucketExists | false\nPASS | makeBucket | created\nPASS | bucketExists(created) | true\nPASS | putObject | size=55 sha256=e4081d0c89a0…\nPASS | statObject | size=55 etag=c8b8bc7ed774128bde6e461518604dc0\nPASS | getObject | bytes=55 内容一致\nPASS | presignedUrl(PUT 直传) | http=200\nPASS | presignedGetObject | http=200 内容一致\nPASS | initiateNewMultipartUpload | 59cf26284fbff4854a5e1557d13d8f013086f150_b800d6a08e1343238567d6801625a326\nPASS | presignedUrl(PUT 分片签名) | http=200 etag=\"0111b902b0a410e023fbbf87fb721e41\"\nPASS | listParts | parts=1 firstPart=1\nPASS | completeMultipartUpload | ok\nPASS | getObject(multipart 合成结果) | bytes=27\n\nOPS_TOTAL=13 OPS_PASSED=13 OPS_FAILED=0\nIS_PASS: YES —— 9 类 S3 操作与 SeaweedFS 3.79 S3 Gateway 全部兼容\n"
+ },
+ {
+  "name": "3/4 样品书籍全链路",
+  "passed": true,
+  "detail": "输出含 IS_PASS: YES",
+  "output": "\n> @tianji/api@1.0.0 demo:books /app/apps/api\n> ts-node src/scripts/demo-books-seed.ts\n\n════════════ 离线样品 demo：模拟书籍档案全链路 ════════════\nS3=seaweedfs:8333（SeaweedFS S3 Gateway） ES=http://elasticsearch:9200 index=archive_items 全宗=DEMO-BOOK 书目=6 本\n▶ 数据库已连接\n  著录：DEMO-BOOK-2026-0001-0001 《档案管理学基础》\n  著录：DEMO-BOOK-2026-0001-0002 《DA/T 22 归档文件整理规则释义》\n  著录：DEMO-BOOK-2026-0001-0003 《电子文件四性检测实践》\n  著录：DEMO-BOOK-2026-0002-0001 《数字档案馆建设导论》\n  著录：DEMO-BOOK-2026-0002-0002 《海量小文件存储优化》\n  著录：DEMO-BOOK-2026-0002-0003 《档案信息检索与知识服务》\n  ES 文档写入：6 条\n  已投抽取任务：12 个（等待 extractor worker 处理）\n  全文抽取完成：12/12 个文件，document_text 9 条\n  综合检索命中：6 条（全文标记 + 全宗/状态过滤）\n\n──────────── demo 链路汇总 ────────────\nDEMO_BOOKS_TOTAL=6\nDEMO_VOLUMES_TOTAL=2\nFILES_UPLOADED=12\nEXTRACTED_OK=12\nDOCUMENT_TEXT_ROWS=9\nSEARCH_HITS=6\nDOWNLOAD_SCOPE=S3_WIRE_LAYER_ONLY（PRESIGNED_DOWNLOADS_OK / PREVIEW_DOWNLOADS_OK 为 S3 wire 层自检，不绕鉴权，不构成下载功能已验证；业务放行链路 L2 未实现，本轮不验不修）\nPRESIGNED_DOWNLOADS_OK=12\nPREVIEW_DOWNLOADS_OK=12\nSHA256_VERIFIED=12\nIS_PASS: YES —— 上传挂接 / 全文抽取 / 综合检索 / 预览下载 / sha256 完整性全链路通过\n\n[WARN] This Redis server's `default` user does not require a password, but a password was supplied\nIMPORTANT! Eviction policy is allkeys-lru. It should be \"noeviction\"\n"
+ },
+ {
+  "name": "4/4 IK 中文分词",
+  "passed": true,
+  "detail": "IK 切出「中华人民共和国」",
+  "output": "{\"tokens\":[{\"token\":\"中华人民共和国\",\"start_offset\":0,\"end_offset\":7,\"type\":\"CN_WORD\",\"position\":0},{\"token\":\"中华人民\",\"start_offset\":0,\"end_offset\":4,\"type\":\"CN_WORD\",\"position\":1},{\"token\":\"中华\",\"start_offset\":0,\"end_offset\":2,\"type\":\"CN_WORD\",\"position\":2},{\"token\":\"华人\",\"start_offset\":1,\"end_offset\":3,\"type\":\"CN_WORD\",\"position\":3},{\"token\":\"人民共和国\",\"start_offset\":2,\"end_offset\":7,\"type\":\"CN_WORD\",\"position\":4},{\"token\":\"人民\",\"start_offset\":2,\"end_offset\":4,\"type\":\"CN_WORD\",\"position\":5},{\"token\":\"共和国\",\"start_offset\":4,\"end_offset\":7,\"type\":\"CN_WORD\",\"position\":6},{\"token\":\"共和\",\"start_offset\":4,\"end_offset\":6,\"type\":\"CN_WORD\",\"position\":7},{\"token\":\"国\",\"start_offset\":6,\"end_offset\":7,\"type\":\"CN_CHAR\",\"position\":8},{\"token\":\"档案管理\",\"start_offset\":7,\"end_offset\":11,\"type\":\"CN_WORD\",\"position\":9},{\"token\":\"档案\",\"start_offset\":7,\"end_offset\":9,\"type\":\"CN_WORD\",\"position\":10},{\"token\":\"管理\",\"start_offset\":9,\"end_offset\":11,\"type\":\"CN_WORD\",\"position\":11},{\"token\":\"系统\",\"start_offset\":11,\"end_offset\":13,\"type\":\"CN_WORD\",\"position\":12}]}"
+ }
+]
+=== CX uos ALL-GREEN ===
