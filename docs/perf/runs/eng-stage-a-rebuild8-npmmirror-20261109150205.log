@@ -1,0 +1,107 @@
+=== rebuild8 with COREPACK_NPM_REGISTRY=npmmirror (2026-11-09T15:02:05+08:00) ===
+ Image tianji-archive-extractor:1.0.0 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 2.44kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.47kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:22-bookworm-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 1.48kB done
+#4 DONE 0.0s
+
+#5 [deps 1/7] FROM docker.io/library/node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
+#5 resolve docker.io/library/node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d 0.0s done
+#5 DONE 0.0s
+
+#6 [runtime 2/9] RUN apt-get update  && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends --fix-missing       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [runtime 3/9] WORKDIR /app
+#7 CACHED
+
+#8 [runtime 4/9] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+#8 ...
+
+#9 [internal] load build context
+#9 transferring context: 1.78kB done
+#9 DONE 0.0s
+
+#10 [deps 6/7] COPY apps/extractor/package.json apps/extractor/
+#10 CACHED
+
+#11 [deps 2/7] WORKDIR /repo
+#11 CACHED
+
+#12 [deps 3/7] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+#12 CACHED
+
+#13 [build 1/3] COPY packages/shared packages/shared
+#13 CACHED
+
+#14 [build 2/3] COPY apps/extractor apps/extractor
+#14 CACHED
+
+#15 [deps 4/7] COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+#15 CACHED
+
+#16 [deps 5/7] COPY packages/shared/package.json packages/shared/
+#16 CACHED
+
+#17 [deps 7/7] RUN pnpm install --filter @tianji/extractor... --frozen-lockfile=false
+#17 CACHED
+
+#18 [build 3/3] RUN pnpm --filter @tianji/shared build  && pnpm --filter @tianji/extractor build
+#18 CACHED
+
+#8 [runtime 4/9] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+#8 0.240 Preparing pnpm@9.12.0 for immediate activation...
+#8 8.749 Internal Error: Error when performing the request to https://registry.npmjs.org/pnpm/-/pnpm-9.12.0.tgz; for troubleshooting help, see https://github.com/nodejs/corepack#troubleshooting
+#8 8.749     at fetch (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+#8 8.749     at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+#8 8.749     at async fetchUrlStream (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+#8 8.749     at async download (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+#8 8.749     at async installVersion (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+#8 8.749     at async Engine.ensurePackageManager (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+#8 8.749     at async PrepareCommand.execute (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+#8 8.749     at async PrepareCommand.validateAndExecute (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+#8 8.749     at async _Cli.run (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+#8 8.749     at async Object.runMain (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+#8 ERROR: process "/bin/sh -c corepack enable && corepack prepare pnpm@9.12.0 --activate" did not complete successfully: exit code: 1
+------
+ > [runtime 4/9] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate:
+8.749     at fetch (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13170:11)
+8.749     at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+8.749     at async fetchUrlStream (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13200:20)
+8.749     at async download (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13352:18)
+8.749     at async installVersion (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13466:55)
+8.749     at async Engine.ensurePackageManager (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:13994:32)
+8.749     at async PrepareCommand.execute (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:14756:27)
+8.749     at async PrepareCommand.validateAndExecute (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:1352:26)
+8.749     at async _Cli.run (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:2462:22)
+8.749     at async Object.runMain (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:14832:19)
+------
+Dockerfile:26
+
+--------------------
+
+  24 |      && rm -rf /var/lib/apt/lists/*
+
+  25 |     WORKDIR /app
+
+  26 | >>> RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+  27 |     COPY --from=build /repo/node_modules ./node_modules
+
+  28 |     COPY --from=build /repo/packages/shared ./packages/shared
+
+--------------------
+
+failed to solve: process "/bin/sh -c corepack enable && corepack prepare pnpm@9.12.0 --activate" did not complete successfully: exit code: 1
+
+BUILD_EXIT=1

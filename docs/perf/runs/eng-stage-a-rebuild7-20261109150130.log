@@ -1,0 +1,134 @@
+=== rebuild7 as-is retry (2026-11-09T15:01:31+08:00) ===
+ Image tianji-archive-extractor:1.0.0 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 2.24kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.47kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/node:22-bookworm-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 1.48kB done
+#4 DONE 0.0s
+
+#5 [deps 1/7] FROM docker.io/library/node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
+#5 resolve docker.io/library/node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d 0.0s done
+#5 DONE 0.0s
+
+#6 [runtime 2/9] RUN apt-get update  && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends --fix-missing       curl ca-certificates tzdata       libreoffice-writer libreoffice-calc libreoffice-impress       fonts-noto-cjk fontconfig ffmpeg poppler-utils  && fc-cache -f  && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [runtime 3/9] WORKDIR /app
+#7 CACHED
+
+#8 [internal] load build context
+#8 transferring context: 1.78kB done
+#8 DONE 0.0s
+
+#9 [deps 7/7] RUN pnpm install --filter @tianji/extractor... --frozen-lockfile=false
+#9 CACHED
+
+#10 [build 2/3] COPY apps/extractor apps/extractor
+#10 CACHED
+
+#11 [deps 6/7] COPY apps/extractor/package.json apps/extractor/
+#11 CACHED
+
+#12 [deps 3/7] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+#12 CACHED
+
+#13 [deps 4/7] COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+#13 CACHED
+
+#14 [build 1/3] COPY packages/shared packages/shared
+#14 CACHED
+
+#15 [deps 2/7] WORKDIR /repo
+#15 CACHED
+
+#16 [deps 5/7] COPY packages/shared/package.json packages/shared/
+#16 CACHED
+
+#17 [build 3/3] RUN pnpm --filter @tianji/shared build  && pnpm --filter @tianji/extractor build
+#17 CACHED
+
+#18 [runtime 4/9] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+#18 0.279 Preparing pnpm@9.12.0 for immediate activation...
+#18 13.30 node:events:497
+#18 13.30       throw er; // Unhandled 'error' event
+#18 13.30       ^
+#18 13.30 
+#18 13.30 TypeError: terminated
+#18 13.30     at Fetch.onAborted (node:internal/deps/undici/undici:11581:53)
+#18 13.30     at Fetch.emit (node:events:519:28)
+#18 13.30     at Fetch.terminate (node:internal/deps/undici/undici:10738:14)
+#18 13.30     at Object.onError (node:internal/deps/undici/undici:11701:38)
+#18 13.30     at Request.onError (node:internal/deps/undici/undici:2304:31)
+#18 13.30     at Object.errorRequest (node:internal/deps/undici/undici:1742:17)
+#18 13.30     at TLSSocket.<anonymous> (node:internal/deps/undici/undici:6595:16)
+#18 13.30     at TLSSocket.emit (node:events:531:35)
+#18 13.30     at node:net:347:12
+#18 13.30     at TCP.done (node:internal/tls/wrap:748:7)
+#18 13.30 Emitted 'error' event on Readable instance at:
+#18 13.30     at emitErrorNT (node:internal/streams/destroy:170:8)
+#18 13.30     at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+#18 13.30     at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+#18 13.30   [cause]: SocketError: other side closed
+#18 13.30       at TLSSocket.<anonymous> (node:internal/deps/undici/undici:6569:28)
+#18 13.30       at TLSSocket.emit (node:events:531:35)
+#18 13.30       at endReadableNT (node:internal/streams/readable:1698:12)
+#18 13.30       at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+#18 13.30     code: 'UND_ERR_SOCKET',
+#18 13.30     socket: {
+#18 13.30       localAddress: '172.17.0.2',
+#18 13.30       localPort: 40982,
+#18 13.30       remoteAddress: '104.16.8.34',
+#18 13.30       remotePort: 443,
+#18 13.30       remoteFamily: 'IPv4',
+#18 13.30       timeout: undefined,
+#18 13.30       bytesWritten: 199,
+#18 13.30       bytesRead: 512784
+#18 13.30     },
+#18 13.30     [Symbol(undici.error.UND_ERR)]: true,
+#18 13.30     [Symbol(undici.error.UND_ERR_SOCKET)]: true
+#18 13.30   }
+#18 13.30 }
+#18 13.30 
+#18 13.30 Node.js v22.23.4
+#18 ERROR: process "/bin/sh -c corepack enable && corepack prepare pnpm@9.12.0 --activate" did not complete successfully: exit code: 1
+------
+ > [runtime 4/9] RUN corepack enable && corepack prepare pnpm@9.12.0 --activate:
+13.30       timeout: undefined,
+13.30       bytesWritten: 199,
+13.30       bytesRead: 512784
+13.30     },
+13.30     [Symbol(undici.error.UND_ERR)]: true,
+13.30     [Symbol(undici.error.UND_ERR_SOCKET)]: true
+13.30   }
+13.30 }
+13.30 
+13.30 Node.js v22.23.4
+------
+Dockerfile:26
+
+--------------------
+
+  24 |      && rm -rf /var/lib/apt/lists/*
+
+  25 |     WORKDIR /app
+
+  26 | >>> RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+  27 |     COPY --from=build /repo/node_modules ./node_modules
+
+  28 |     COPY --from=build /repo/packages/shared ./packages/shared
+
+--------------------
+
+failed to solve: process "/bin/sh -c corepack enable && corepack prepare pnpm@9.12.0 --activate" did not complete successfully: exit code: 1
+
+BUILD_EXIT=1

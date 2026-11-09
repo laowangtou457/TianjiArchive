@@ -23,6 +23,11 @@ RUN apt-get update \
  && fc-cache -f \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+# 构建期可选镜像源覆盖（默认空 = 官方源 npmjs，行为不变）。
+# 网络受限的构建机可传 --build-arg COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+# 让 corepack 从国内镜像源下载 pnpm；该值不写入镜像元数据之外的任何运行时行为。
+ARG COREPACK_NPM_REGISTRY=
+ENV COREPACK_NPM_REGISTRY=${COREPACK_NPM_REGISTRY}
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/packages/shared ./packages/shared
