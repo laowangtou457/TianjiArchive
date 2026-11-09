@@ -162,6 +162,11 @@ type session struct {
 	runner   execx.Runner
 	cleaner  *selfclean.Cleaner
 
+	// chown 单独抽成一个字段，只为了单测能断言「哪个目录被改成哪个 uid:gid」。
+	// 直接调 os.Chown 没法测：单测跑在 Windows/非 root 上，chown 必然 EPERM，
+	// 断言不了任何东西，最后只能退化成「不测」，而这段逻辑恰恰是 S6 的成败点。
+	chown func(path string, uid, gid int) error
+
 	// stepMu 串行化「跑步骤」这一动作（两个浏览器标签不能同时装 Docker）。
 	// mu 只保护下面的结果字段，读写都很短。
 	stepMu sync.Mutex
@@ -232,6 +237,7 @@ func newSession(cfg config) (*session, error) {
 		log:         logger,
 		runner:      execx.OSRunner{},
 		cleaner:     selfclean.New(),
+		chown:       os.Chown,
 		imagesTar:   cfg.imagesTar,
 		startedAt:   time.Now(),
 		stepTimings: make(map[state.Step]time.Duration),
@@ -801,14 +807,83 @@ func (s *session) prepareDeployRoot(w io.Writer) error {
 	}
 	fmt.Fprintf(w, "seaweedfs 入口与模板 → %s\n", seaweedDir)
 
-	for _, dir := range []string{"postgres", "wal_archive", "esdata", "seaweedfs", "redis", "backup"} {
+	for _, dir := range volumeDirs {
 		full := filepath.Join(s.layout.VolumesDir(), dir)
 		if err := os.MkdirAll(full, 0o750); err != nil {
 			return fmt.Errorf("创建卷目录 %s 失败: %w", full, err)
 		}
 	}
 	fmt.Fprintf(w, "卷目录已就绪: %s\n", s.layout.VolumesDir())
+
+	// 属主：只有「以非 root 直接启动、entrypoint 不做 chown」的镜像才需要，见 volumeOwners。
+	chowner := s.chown
+	if chowner == nil {
+		chowner = os.Chown
+	}
+	for _, vo := range volumeOwners {
+		full := filepath.Join(s.layout.VolumesDir(), vo.Dir)
+		if err := chowner(full, vo.UID, vo.GID); err != nil {
+			// 不 fail：NFS / CIFS / 某些容器文件系统上 chown 会被拒绝而 runc 仍能起来，
+			// 这里硬失败会把一个「可能能用」的环境判死。但必须把后果写到用户眼前——
+			// 属主错的症状是 S6 报 failed to obtain node locks，那句话完全看不出是属主问题。
+			fmt.Fprintf(w, "WARN: 卷目录 %s 属主未设成 %d:%d（%s）\n", full, vo.UID, vo.GID, vo.Why)
+			fmt.Fprintf(w, "      原因: %v\n", err)
+			fmt.Fprintf(w, "      后果: 该容器大概率起不来，且报错不会提属主（Elasticsearch 会报 "+
+				"failed to obtain node locks / AccessDeniedException）。\n"+
+				"      处置: 以 root 运行安装器，再重启该服务；或手工 chown %d:%d %s\n",
+				vo.UID, vo.GID, full)
+			continue
+		}
+		fmt.Fprintf(w, "卷属主 %s → %d:%d（%s）\n", full, vo.UID, vo.GID, vo.Why)
+	}
 	return nil
+}
+
+// volumeDirs 是 compose 里出现的全部 bind mount 源目录（顺序即创建顺序）。
+//
+// 与 compose 的对应关系（docker-compose.offline.yml，改 compose 时必须同步改这里）：
+//
+//	postgres    ./volumes/postgres    : /var/lib/postgresql/data
+//	wal_archive ./volumes/wal_archive : /wal_archive
+//	esdata      ./volumes/esdata      : /usr/share/elasticsearch/data
+//	seaweedfs   ./volumes/seaweedfs   : /data
+//	redis       ./volumes/redis       : /data
+//	backup      ./volumes/backup      : /backup
+var volumeDirs = []string{"postgres", "wal_archive", "esdata", "seaweedfs", "redis", "backup"}
+
+// volumeOwner 声明「某个卷目录必须属于容器内的哪个 uid:gid」。
+type volumeOwner struct {
+	Dir string
+	UID int
+	GID int
+	Why string
+}
+
+// volumeOwners 只登记「必须由安装器给属主」的卷。
+//
+// 为什么默认不管属主：bind mount 不改宿主目录属主，容器里看到的 uid 就是宿主上的
+// 数字 uid；而绝大多数镜像的 entrypoint 以 root 启动后自己 chown 数据目录——
+// 本轮实测 postgres:16-alpine 把 ./volumes/postgres 改成 70、redis:7-alpine 把
+// ./volumes/redis 改成 999，都能跑。给它们预设属主反而可能与镜像未来版本打架。
+//
+// 但以非 root 直接启动的镜像不 chown，属主给错就是硬失败，且报错完全不提属主：
+//
+//	elasticsearch:8.13.4 的 USER 是 elasticsearch(1000)，属主为 root:root 0750 时：
+//	  IllegalStateException: failed to obtain node locks, tried [/usr/share/elasticsearch/data]
+//	  Caused by: java.nio.file.NoSuchFileException: .../node.lock
+//	  Suppressed: java.nio.file.AccessDeniedException: .../node.lock
+//
+// 「no such file」+「access denied」同时出现很好骗人：会去查磁盘满、并发、锁残留，
+// 不会想到宿主目录属主。本轮 ③ 的 S6_UP 就是死在这上面（S1–S5 全 DONE）。
+var volumeOwners = []volumeOwner{
+	{
+		Dir: "esdata", UID: 1000, GID: 1000,
+		Why: "elasticsearch 镜像以 uid=1000(elasticsearch) 运行，entrypoint 不做 chown",
+	},
+	{
+		Dir: "wal_archive", UID: 70, GID: 70,
+		Why: "postgres:16-alpine 以 uid=70(postgres) 执行 archive_command 写 /wal_archive",
+	},
 }
 
 // newStack 用当前配置构造 stack 对象。

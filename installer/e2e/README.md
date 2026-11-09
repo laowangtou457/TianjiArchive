@@ -70,25 +70,69 @@ vfs 对每个镜像的每一层做**完整复制**（无硬链接），1.5GB 的
 恢复要人工：退出 Docker Desktop → 腾 10–20GB → Settings → Troubleshoot → Clean/Purge data
 → 重启（`isAdmin=False` 且 `wsl.exe` / `com.docker.service` 在安全策略黑名单里时，命令行救不了）。
 
-**下次要做这步的话**：给容器加 `--storage-opt size=`/`--memory` 限额，或把 Docker Desktop 的
-磁盘镜像挪到有大余量的盘（Settings → Resources → Disk image location），或干脆换真机/真 VM。
+### vfs 放大倍数实测区间（留盘按这个算，别信「1.5G 的 tar 大概占 2G」）
+
+| 轮次 | 载入情况 | 占盘 | 倍数 |
+| --- | --- | --- | --- |
+| 第一次（中断） | 7/8 镜像 | 22GB | **14.6 倍** |
+| 第二次（8/8 全部载完） | 8 个镜像 | 40GB | **约 26 倍** |
+
+镜像 tar 本体 1.51GB。倍数不是常数：vfs 对**每个镜像的每一层**做完整复制（无硬链接、
+共享层也不去重），所以镜像越多、层越碎，倍数越高。**按 30 倍留盘**，即「1.5GB tar → 留 45GB 以上」。
+
+**限额必须用 loop + ext4，`--storage-opt size=` 是假的**（本轮实测）：
+
+```sh
+docker run --rm --storage-opt size=1G alpine:3.20 df -h /     # 仍显示整盘 1006.9G，参数被静默忽略
+```
+
+Docker Desktop 的 overlayfs 驱动接受该参数但不实现配额。可用的硬限额是
+「特权容器里给 dockerd 的数据根挂一个固定大小的 ext4」：
+
+```sh
+# 容器内（先自证：hostname / [ -f /.dockerenv ] / readlink -f /var/lib/docker 三样都打出来！）
+systemctl stop docker docker.socket
+rm -rf /var/lib/docker                      # ← 宿主 daemon 的数据根也叫这个路径，务必先自证在容器里
+truncate -s 80G /root/nested-docker.img
+mkfs.ext4 -q -F -m 1 -L tj-nested /root/nested-docker.img
+mount -o loop /root/nested-docker.img /var/lib/docker
+df -hT /var/lib/docker                      # 必须显示 79G ext4 /dev/loopX，不是 overlay 1006.9G
+systemctl start docker
+```
+
+限额「是真的」要能证明，两步都留档：
+
+```sh
+dumpe2fs -h /dev/loop2 | grep -Ei 'block count|block size'   # 20971520 × 4096 = 80GiB
+fallocate -l 200G /var/lib/docker/.probe                      # 期望 No space left on device
+rm -f /var/lib/docker/.probe
+```
+
+`fallocate` 是秒级且不落数据（只做超额分配），比 `dd` 写 35GB 安全得多——**在宿主机磁盘
+刚被写爆过一次的机器上，不要用 dd 做这个验证**。
+
+**其余可选**：把 Docker Desktop 的磁盘镜像挪到有大余量的盘（Settings → Resources →
+Disk image location），或干脆换真机/真 VM。详见 `../../offline/README.md` §8.3。
 
 ## 它证明了什么 / 没证明什么
 
 **已证明**（本轮实测，见 `../README.md` §4）：
 
-- `S1_PREFLIGHT`：OS 识别为 `Ubuntu 22.04.5 LTS` → `osMatch.level=exact`，K 值实测
-  （`vm.max_map_count=262144`、磁盘 1007GB、内存充足）；
-- `S2_VERIFY`：真 1.5GB 镜像 tar 的深度校验 `IS_PASS: YES`，12.8s；
-- `S3_DOCKER`：真 85 个 deb 的 `dpkg -i` + `systemctl enable --now docker` 成功，
-  `client=29.9.3 server=29.9.3`、`systemctl is-active docker=active`。
-  （这一步先暴露了 Pre-Depends 顺序缺陷，修完才通过——这就是做这层的价值。）
+- 十步**全部 DONE**：`S1_PREFLIGHT`（`osMatch.level=exact`）→ `S2_VERIFY`（真 1.5GB tar
+  `IS_PASS: YES`）→ `S3_DOCKER`（真 85 个 deb + `systemctl enable --now docker`，
+  `client=29.9.3 server=29.9.3`）→ `S4_IMAGES`（**8/8** 镜像，1m30s）→ `S5_ENV`
+  → `S6_UP`（**8/8 容器 running，6 个带 healthcheck 的全 healthy**，21.2s）
+  → `S7_MIGRATE`（2.7s）→ `S8_SEED`（1.8s）→ `S9_SMOKE`（**4/4 PASS**，6.9s）
+  → `S10_DONE`（`99-summary.txt`）；
+- 这条路**真的抓到过两个单测抓不到的缺陷**：S3 的 `dpkg -i` Pre-Depends 参数顺序、
+  S6 的 `volumes/esdata` 属主（ES 以 uid=1000 跑，报错完全不提属主）。修完各重跑一遍才通过。
 
 **没证明**（所以不能算验收）：
 
-- `S4_IMAGES` 之后（`docker load` 全量、`compose up --wait`、`migrate`、`seed`、四项冒烟）
-  **一次都没跑完**；
-- 容器不是真机：内核是构建机的（本轮 `6.18.54.1-microsoft-standard-WSL2`，不是
-  Ubuntu 22.04 自带的 5.15）、**cgroup v2**（真机 Ubuntu 22.04 默认 v1 hybrid）、
-  AppArmor 基本不生效、`dockerd` 跑在 `vfs` 而不是 `overlay2`；
-- 真机的 systemd 行为（unit 依赖顺序、`TimeoutStartSec`、restart 语义）只能靠真机验。
+- **这不是真机**：内核是构建机的（`6.18.54.1-microsoft-standard-WSL2`，不是 Ubuntu 22.04
+  自带的 5.15）、**cgroup v2**（真机 Ubuntu 22.04 默认 v1 hybrid）、AppArmor 基本不生效、
+  `dockerd` 跑在 **vfs** 而不是 overlay2（磁盘表现、inode 消耗、并发写性能全不一样）；
+- 真机的 systemd 行为（unit 依赖顺序、`TimeoutStartSec`、restart 语义）只能靠真机验；
+- 变体 B（麒麟/UOS 的 static 方案）完全不在这条路径上；
+- 它证明了「安装器的十步逻辑在 Linux + 真 docker + 真镜像上能走通」，**不能**证明
+  「在某台国产化服务器上能装好」。

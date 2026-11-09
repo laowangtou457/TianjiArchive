@@ -712,6 +712,7 @@ bash installer/build/make-manifest.sh --sign
 |---|---|---|
 | v1.0 | 2026-11-09 | 首版。裁定图形化向导形态（本机临时 Web 安装器 + 同源 TUI 降级入口）；Docker 双变体（deb 闭包 / static 二进制）；tar 分离分发；用户端两阶段；8 项开放问题待裁定 |
 | v1.1 | 2026-11-09 | 新增 §14 实施与验证状态：①② 闭环（真闭包 / 真签名 / 独立验签），③ **部分闭环**（未覆盖项与接手人写明，不算完成） |
+| v1.2 | 2026-11-09 | ③ 升级为**容器内十步闭环**（S1→S10 全 DONE），并登记由此抓到的两个只在真栈上暴露的缺陷（Pre-Depends 顺序、卷属主）；包体因代码变更重打包，sha256 更新；真机与变体 B 仍交 vm-harness |
 
 ---
 
@@ -738,32 +739,57 @@ bash installer/build/make-manifest.sh --sign
 | 密钥 | `tianji-build`，RSA4096，**无口令**（构建机无人值守），有效期至 2027-11-09 |
 | 公钥 | `installer/build/pubkeys/tianji-build.asc` + 指纹文件入库；**私钥只在构建机 `~/.gnupg`，绝不入库** |
 | 指纹 | `0AD2 912C F8FE 57E2 02C2 75F2 0A03 8555 B153 ACC9` |
-| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,088,493 字节**，sha256 `85478f08b5d42d8120a7262015762cd04cfb1844c51f42dac3af79d6a834c138`，payload sha256 `e1380de6…` |
-| 闸门 | G1 载荷同源 7/7 · G2 ELF64/amd64（6,344,856 字节）· G3 壳层 `--verify-only` PASS |
+| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,089,731 字节**，sha256 `7082d4cf2b8e33fffa14b9b2d4fc915ebec85f7a0350f5a7ecec6d5d75318b0a`，payload sha256 `d744bbdb…`（v1.2 因卷属主修法 + gofmt 重打包；上一版 150,088,493 / `85478f08…` 已被替换，签名与验签流程不变。**容器内十步是在这一版产物上跑的**，包 sha256 与容器内 `sha256sum` 逐字一致） |
+| 闸门 | G1 载荷同源 7/7 · G2 ELF64/amd64（6,348,952 字节）· G3 壳层 `--verify-only` PASS |
 | 验签 | **在新导出的 `GNUPGHOME` 里验签通过**（只 import 仓库公钥，不在生成它的 keyring 里自证）：`Good signature from "tianji-build (Tianji Archive build key)"` + `sha256sum -c` **98/98 OK** |
+| 重打包后复核 | 容器内 `sh <run> --verify-only` → `IS_PASS: YES`；包 sha256 与构建机公布值逐字一致 |
 
-### 14.3 ③ 十步端到端 —— **部分闭环（明确不算完成）**
+### 14.3 ③ 十步端到端 —— **容器内闭环（真机仍待 vm-harness）**
 
-**已实际通过**（安装器自检与命令行层，6 项）：包安装解包、二进制形态与版本、
-S3 与 systemd unit 落盘、CLI 参数行为、失败路径、`--verify-only`；
-以及特权 systemd 容器内的 **S1_PREFLIGHT / S2_VERIFY / S3_DOCKER** 三步：
-OS 识别 `exact` 匹配、真 1.5GB 镜像 tar 深度校验通过（12.8s）、
-真 85 个 deb 的 `dpkg -i` 装完且 `dockerd 29.9.3` 起来（`systemctl is-active docker=active`）。
+**口径先说清楚**：闭环的是「特权 systemd 容器 + 嵌套 dockerd（vfs）」这条降级路径上的
+**S1_PREFLIGHT → S10_DONE 全部 DONE**；它证明的是**安装器的十步逻辑在 Linux + 真 docker +
+真镜像 + 真 deb 闭包上能走通**，**不**证明「在某台国产化服务器上能装好」。
 
-**未覆盖（这是「部分」的含义，不得写成闭环）**：
-
-| 未覆盖项 | 卡在哪 | 接手 |
+| 步 | 结果 | 关键证据 |
 |---|---|---|
-| `S4_IMAGES` 全量 `docker load`（只载入 7/8 个镜像） | 容器内 `dockerd` 只能用 `vfs`，1.5GB tar 展开放大十倍，把构建机 Docker 虚拟盘与宿主 C 盘写满，daemon 转只读 | — |
-| `S5_ENV → S6_UP → S7_MIGRATE → S8_SEED → S9_SMOKE` | 同上，一次都没在真实栈上跑过 | vm-harness（#43 真 OS 链路本就要跑 dockerd，顺带覆盖） |
-| 真机安装（ISO 装系统后 `--tui` 十步） | 构建机无虚拟化工具（`wsl.exe` / Hyper-V 被策略拦、无 VirtualBox/VMware） | vm-harness |
-| 变体 B（麒麟 / 统信）安装 | 同上；基线已从 ISO 离线取证（`docs/VARIANT-B-OS-BASELINE.md`） | vm-harness |
+| S1_PREFLIGHT | DONE | `Ubuntu 22.04.5 LTS` → `osMatch.level=exact`；`vm.max_map_count=262144` |
+| S2_VERIFY | DONE | 真 1.5GB 镜像 tar 深度校验 `IS_PASS: YES` |
+| S3_DOCKER | DONE | 真 85 个 deb 装完；`client=29.9.3 server=29.9.3`；`systemctl is-active docker=active` |
+| S4_IMAGES | DONE | **8/8** 镜像；限额卷 `79G 40G 39G 51%` |
+| S5_ENV | DONE | `.env` 渲染 + 卷属主 `esdata → 1000:1000` / `wal_archive → 70:70` |
+| S6_UP | DONE | **8/8 容器 running，6 个带 healthcheck 的全 healthy**，21.2s |
+| S7_MIGRATE | DONE | `typeorm_migrations` 逐条 `executed successfully`，2.7s |
+| S8_SEED | DONE | 示例机构 / 档号规则 / `admin`，1.8s |
+| S9_SMOKE | DONE | **4/4 PASS**：health `objectStorage.ok=true`、S3 九项探针 `IS_PASS: YES`、样品书籍全链路 `IS_PASS: YES`（6 册 / 12 文件 / 检索命中 6）、IK 切出「中华人民共和国」 |
+| S10_DONE | DONE | `99-summary.txt`（访问地址 / 部署根 / 各步耗时）；S5→S10 合计 **46s** |
 
-**失败根因如实记录**：不是产品缺陷，也不是「环境本来就不行」，而是**验证手段本身**的代价——
-在外层 Docker Desktop 上用 `vfs` 跑嵌套 `dockerd` 加载 GB 级镜像，会把虚拟盘撑爆并拖死宿主
-daemon（连别人的容器一起没）。该负面经验与替代做法写进了 `installer/e2e/README.md`，
-下次重跑必须先给容器加 `--storage-opt size=` 限额，或直接把这一步放到真 VM / 有 overlay2
-backing 的机器上做。
+另有安装器自检 6 项（包安装解包、二进制形态与版本、S3 与 systemd unit 落盘、CLI 参数行为、
+失败路径、`--verify-only`）此前已实际通过，本轮不变。
 
-**因此 `#41` 的验收口径是**：①② 闭环；③ 部分闭环，未覆盖项由上表接手人补齐。
-**「服务器端安装包已可用」这句话现在不能写**——写它需要上表四行全部变绿。
+**这一步的价值：抓到两个只可能在真栈上暴露的缺陷（都已修，并各补回归用例）**
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| `S3_DOCKER` 整步 FAIL：`dpkg: python3.10-minimal is not installed` | `dpkg -i` 按**参数顺序**检查 Pre-Depends，`python3-minimal` 排在 `python3.10-minimal` 前面 | 第 1 轮失败 → `dpkg --configure -a` → 补装第 2 轮；仍不 `--force-depends` |
+| `S6_UP` FAIL：ES 无限重启，`failed to obtain node locks … AccessDeniedException: node.lock` | 安装器建的 `volumes/esdata` 是 `root:root 0750`，而 `elasticsearch:8.13.4` 以 **uid=1000** 运行且 entrypoint 不 chown | `prepareDeployRoot` 新增 `volumeOwners` 表按容器内 uid 分派；`wal_archive`（postgres uid=70 写归档）一并修 |
+
+两条都不在单测与 `--verify-only` 的能力范围内——第一条要真装 85 个 deb 才暴露，
+第二条要真起 ES 才暴露，且报错文案**完全不提**真正原因。
+
+**仍未覆盖（交给 vm-harness，本项不算真机验收）**
+
+| 未覆盖项 | 为什么容器覆盖不了 |
+|---|---|
+| 真机安装（ISO 装系统后跑十步） | 容器内核是构建机的（`6.18.x-WSL2`）、cgroup v2（真机 Ubuntu 22.04 默认 v1 hybrid）、AppArmor 基本不生效、`dockerd` 是 **vfs** 而非 overlay2 |
+| 真 systemd 语义 | unit 依赖顺序、`TimeoutStartSec`、restart 行为在容器里被简化 |
+| 变体 B（麒麟 / 统信）安装 | 完全不在这条路径上；基线已从 ISO 离线取证（`docs/VARIANT-B-OS-BASELINE.md`），静态版锁 27.5.1 |
+
+**验证手段本身的代价（负面经验，已入库）**：容器内只能 `vfs`，1.5GB tar 展开后放大
+**14.6～26 倍**（7/8 镜像 22GB；8/8 镜像 40GB），第一次直接把构建机 Docker 虚拟盘与宿主
+C 盘写满、daemon 转只读。第二次改成 loop + ext4 80GiB 硬限额（`--storage-opt size=` 在
+Docker Desktop 的 overlayfs 上**被静默忽略**），并用 `fallocate` 超额分配验证限额真实生效。
+细节见 `installer/e2e/README.md`「磁盘陷阱」与 `offline/README.md` §8.3。
+
+**因此 `#41` 的验收口径是**：①② 闭环；③ **容器内闭环**（十步全 DONE，两个缺陷已修）；
+真机与变体 B 由 vm-harness 覆盖，未绿之前**「服务器端安装包已通过真机验收」这句话不能写**。
+

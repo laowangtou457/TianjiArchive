@@ -4,14 +4,14 @@
 服务器端运行期逻辑在 `server/`（Go 静态二进制），用户端在 `client-lite/`。
 
 > 状态（本轮）：`build/` 与 `server/` 两侧均已打通，**真载荷、真签名、真体积的包已经出来了**。
-> `server/` 为 16 个 Go 文件 / 10 个测试文件，`go test ./...` **71 pass / 3 skip（Windows
+> `server/` 为 16 个 Go 文件 / 10 个测试文件，`go test ./...` **74 pass / 3 skip（Windows
 > 无 `sh` 的三个用例）**，`gofmt -l` 与 `go vet` 均干净；交叉编译产物
-> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,344,856 字节。
-> 真实安装包 = 150,088,493 字节（含 85 个真 `.deb` / 147,505,075 字节闭包），G1/G2/G3 全绿，
-> `SHA256SUMS.asc` 已签。
-> 安装器本体在 `ubuntu:22.04` 容器内跑到过 `S3_DOCKER` 完成（真 dpkg 装真闭包 + 真 dockerd 起来），
-> 第 ③ 步「特权 systemd 容器十步端到端」**在 S4 因构建机磁盘写满而中断**，未跑完，
-> 详见文末「仍然没验证的事」第 1 条——不打包成「已通过」。
+> `GOOS=linux GOARCH=amd64 CGO_ENABLED=0` = 6,348,952 字节。
+> 真实安装包 = 150,089,731 字节（含 85 个真 `.deb` / 147,505,075 字节闭包），G1/G2/G3 全绿，
+> `SHA256SUMS.asc` 已签，sha256 = `7082d4cf2b8e33fffa14b9b2d4fc915ebec85f7a0350f5a7ecec6d5d75318b0a`。
+> **第 ③ 步「特权 systemd 容器十步端到端」已跑通 S1→S10 全 DONE**（8/8 容器 healthy、
+> 迁移执行、种子完成、四项冒烟 4/4 PASS）；真机（含变体 B 麒麟/UOS）仍由 vm-harness 覆盖，
+> 容器不能替代真机，见文末「仍然没验证的事」。
 
 ## 目录
 
@@ -194,6 +194,17 @@ Web 安全边界（设计 §3.3）：默认只绑回环；`--listen` 到非回�
     上游命令吃 SIGPIPE（141）后，`set -o pipefail` 判整条失败，`set -e` 又让脚本静默退出——
     现象是「刚打印抓到 N 个 deb 就退出，既不报错也不生成清单」，只能靠 `bash -x` 定位。
     统一改 `awk '…' | sed -n '1p'` 与 `[ -n "$(find … -print -quit)" ]`。
+16. **卷目录属主由安装器按「容器内 uid」分派，不靠镜像自己 chown**。
+    bind mount 不改宿主目录属主，容器里看到的就是宿主上的数字 uid。多数镜像以 root 启动后
+    自己 chown（实测 `postgres:16-alpine` → 70、`redis:7-alpine` → 999），但**以非 root
+    直接启动的镜像不做**：`elasticsearch:8.13.4` 的 `USER` 是 `uid=1000`，属主给成
+    `root:root 0750` 就报
+    `failed to obtain node locks … Suppressed: AccessDeniedException: .../node.lock`——
+    这句话一个字都不提属主，现场会去查磁盘满 / 并发 / 锁残留。
+    因此 `prepareDeployRoot` 内置 `volumeOwners` 表：`esdata → 1000:1000`、
+    `wal_archive → 70:70`（后者错不会让 postgres 起不来，只会让 WAL 归档静默失败）。
+    表里只登记「必须由安装器给属主」的卷；其余交给镜像 entrypoint，避免与镜像未来版本打架。
+    chown 失败只 WARN 不中断（NFS/CIFS 上会被拒而 runc 仍能起来），但必须把后果写进输出。
 
 ## 本轮验证结果（可复现）
 
@@ -202,7 +213,7 @@ Web 安全边界（设计 §3.3）：默认只绑回环；`--listen` 到非回�
 ```text
 gofmt -l .            → 空
 go vet ./...          → 空
-go test ./...         → 11 个包全绿，71 pass / 3 skip（Windows 无 sh）
+go test ./...         → 11 个包全绿，74 pass / 3 skip（Windows 无 sh）
 ```
 
 关键回归用例（都指向真实踩过的坑）：
@@ -216,19 +227,25 @@ go test ./...         → 11 个包全绿，71 pass / 3 skip（Windows 无 sh）
 - `TestInstallDebsRetriesOnceOnPreDependsOrder`：Pre-Depends 顺序失败必须补装一轮，
   且两轮都失败才算失败（真机踩过，见实现决定 12）
 - `TestLoadEnvValuesRejectsPartialEnv`：`--resume` 只认 8 个键全非空的 `.env`（实现决定 13）
+- `TestPrepareDeployRootAssignsEsVolumeOwner`：卷目录属主必须是容器内 uid（esdata 1000:1000、
+  wal_archive 70:70），否则 S6 以 `failed to obtain node locks` 失败（实现决定 16）
+- `TestVolumeOwnersTargetsAreRealVolumeDirs`：属主表里的目录名必须在 `volumeDirs` 里，
+  防「改了卷名但 chown 打在空气上」
+- `TestPrepareDeployRootChownFailureIsWarnNotAbort`：chown 被拒只 WARN 不中断，但必须把
+  「报错不会提属主」这个后果写进输出
 
 ### 2. 交叉编译与打包（真载荷）
 
 ```text
-binary  : 6,344,856 字节（ELF64 / e_machine=0x3e / CGO_ENABLED=0）
+binary  : 6,348,952 字节（ELF64 / e_machine=0x3e / CGO_ENABLED=0）
 deb 闭包 : 85 个 .deb / 147,505,075 字节
            docker-ce 5:29.9.3-1~ubuntu.22.04~jammy
            docker-ce-cli 5:29.9.3 · containerd.io 2.4.2-3
            docker-compose-plugin 5.7.0-1 · libseccomp2 2.5.3-2ubuntu3~22.04.1
 package : tianji-server-setup-ubuntu-debian-amd64-1.0.0.run
-          150,088,493 字节
-          sha256 85478f08b5d42d8120a7262015762cd04cfb1844c51f42dac3af79d6a834c138
-          payload sha256 e1380de63e484535eae9d5f07da5496e46b7ccf85bf1eed702cff0ebf916c1e0
+          150,089,731 字节
+          sha256 7082d4cf2b8e33fffa14b9b2d4fc915ebec85f7a0350f5a7ecec6d5d75318b0a
+          payload sha256 d744bbdb96b716bcaa1aeea1c48b9db31e9ef5a1f12723cdc468c07f7eb3e1b9
 闸门    : G1 7/7 逐字节一致 · G2 ELF64/amd64 · G3 壳层校验 PASS
 签名    : SHA256SUMS.asc（gpg armor 分离签名，key 0A038555B153ACC9）
 ```
@@ -273,7 +290,7 @@ package : tianji-server-setup-ubuntu-debian-amd64-1.0.0.run
 [K11] PASS dpkg 锁 —— 未被占用
 ```
 
-### 4. 特权 systemd 容器内的十步端到端（本轮，**未跑完**）
+### 4. 特权 systemd 容器内的十步端到端（本轮，**S1→S10 全 DONE**）
 
 构建机没有虚拟化工具（`wsl.exe` 与 Hyper-V 均被策略拦、无 VirtualBox/VMware），
 因此第 ③ 步按 team-lead 的降级口径做：特权 systemd 容器 + 嵌套 dockerd。
@@ -295,33 +312,65 @@ docker run -d --name tj-e2e --privileged --cgroupns=host \
 
 | 步 | 结果 | 证据 |
 |---|---|---|
-| S1_PREFLIGHT | **DONE** | OS 识别 `Ubuntu 22.04.5 LTS` → `osMatch.level=exact`；`vm.max_map_count=262144`；磁盘 1007GB |
-| S2_VERIFY | **DONE** | `IS_PASS: YES —— 载荷与镜像 tar 校验全部通过`，真 1.5GB tar **12.8s** |
+| S1_PREFLIGHT | **DONE** | OS 识别 `Ubuntu 22.04.5 LTS` → `osMatch.level=exact`；`vm.max_map_count=262144` |
+| S2_VERIFY | **DONE** | `IS_PASS: YES —— 载荷与镜像 tar 校验全部通过` |
 | S3_DOCKER | **DONE**（修 bug 后才通） | `client=29.9.3 server=29.9.3`、`driver=vfs cgroup=2`、`systemctl is-active docker=active` |
-| S4_IMAGES | **未完成** | 镜像 tar sha256 校验通过，`docker load` 成功载入 **7/8** 个镜像（缺 `tianji-archive-extractor:1.0.0`）后构建机磁盘写满 |
-| S5–S10 | **未验证** | compose up / migrate / seed / 四项冒烟 全部没跑到 |
+| S4_IMAGES | **DONE** | **8/8** 镜像载入，`1m30s`；限额卷 `/dev/loop2 79G 40G 39G 51%` |
+| S5_ENV | **DONE** | `.env` 渲染 + 卷属主两行（`esdata → 1000:1000`、`wal_archive → 70:70`）|
+| S6_UP | **DONE**（修 bug 后才通） | `21.2s`，**8/8 容器 `state=running` 且 6 个带 healthcheck 的全 healthy** |
+| S7_MIGRATE | **DONE** | `2.7s`，`typeorm_migrations` 逐条 `executed successfully` |
+| S8_SEED | **DONE** | `1.8s`，示例机构 / 档号规则 / `admin` 账号 |
+| S9_SMOKE | **DONE** | **4/4 PASS**：`/api/health status=ok 且 objectStorage.ok=true`、S3 九项探针 `IS_PASS: YES`、样品书籍全链路 `IS_PASS: YES`（6 册 / 12 文件 / 抽取 12-12 / 检索命中 6）、IK 切出「中华人民共和国」 |
+| S10_DONE | **DONE** | `99-summary.txt` 输出访问地址与部署根；S5→S10 合计 **46s** |
 
-**中断原因（如实登记，不是「通过」）**：vfs 驱动对镜像每一层做完整复制，1.5GB tar 展开后
-把 Docker Desktop 的 ext4 虚拟盘（`docker_data.vhdx`，45.3GB，位于只有 199GB 的 C 盘）
-撑满，daemon 随即报 `read-only file system`、容器 fs 变只读、Docker Desktop 起不来。
-恢复需要人工退出 Docker Desktop → 腾空间 → `Clean/Purge data` → 重启（这些操作需要 GUI
-或提权，构建机当前 `isAdmin=False` 且 `wsl.exe`/`com.docker.service` 被策略拦）。
+> 上表是**冷启动**那一轮（容器全新建、ES 首次建索引）。因源码过了 `gofmt`（纯格式）导致
+> 二进制字节变化，交付件按格式后的源码**重打包**，并在新产物（sha256 `7082d4cf…`）上**复跑**
+> 了 S5→S10：仍全部 DONE，合计 23s（容器已就绪，S6 只花 130ms）。十步证据对应的是
+> **最终交付的那个包**，不是中间产物。
 
-**结论**：第 ③ 步只能记作「**特权 systemd 容器内分段验证，未跑完整十步**」。
-已证明的是 S1–S3 在真 OS 基线 + 真 deb 闭包 + 真 dockerd 下成立；
-**S4 之后（compose up / migrate / seed / 四项冒烟）仍未在真实栈上验证过**。
+**本轮在真栈上抓到并修掉的缺陷（这是做这一层的价值）**
 
-顺带一个必须写下来的负面经验：**别在这类「外层 Docker Desktop」的机器上用 vfs 跑嵌套
-dockerd 加载 GB 级镜像**。要么给虚拟盘留足空间并换 overlay2（需要非 overlay 的 backing fs），
-要么直接在真 VM / 独立机器上做——这本身就是「容器降级方案」的固有代价。
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| `S6_UP` 失败：ES 无限重启，日志 `failed to obtain node locks … AccessDeniedException: .../node.lock` | 安装器建的 `volumes/esdata` 是 `root:root 0750`，而 `elasticsearch:8.13.4` 以 **uid=1000** 启动且 entrypoint 不做 chown | `prepareDeployRoot` 新增 `volumeOwners` 表，按容器内 uid 分派（实现决定 16）；同类隐患 `wal_archive`（postgres uid=70 写归档）一并修 |
+
+对照证据：修前 `docker inspect` 显示 `tianji-elasticsearch Restarting (1)`、`volumes/esdata` 为 `0:0`；
+改属主后 20s 内 `healthy`。**报错文案一个字都没提属主**——这也是为什么必须在容器/真机上跑，
+单测与 `--verify-only` 都不可能发现它。
+
+**磁盘限额与放大倍数（本轮两次实测，都留了原始输出）**
+
+`--storage-opt size=` 在 Docker Desktop 的 overlayfs 驱动上**被静默忽略**（命令成功、`df` 仍显示整盘
+1006.9G），因此改用 loop + ext4 硬限额：
+
+```sh
+# 容器内（先自证：hostname / [ -f /.dockerenv ] / readlink -f /var/lib/docker）
+truncate -s 80G /root/nested-docker.img && mkfs.ext4 -q -F -m 1 -L tj-nested /root/nested-docker.img
+mount -o loop /root/nested-docker.img /var/lib/docker
+dumpe2fs -h /dev/loop2 | grep -Ei 'block count|block size'   # 20971520 × 4096 = 80GiB
+fallocate -l 200G /var/lib/docker/.probe                      # 期望 ENOSPC（实测 No space left on device）
+```
+
+| 轮次 | 载入情况 | 占盘 | 放大倍数 |
+|---|---|---|---|
+| 第一次（中断） | 7/8 镜像 | 22GB | **14.6 倍** |
+| 第二次（本轮） | 8/8 镜像 | 40GB | **约 26 倍** |
+
+tar 本体 1.51GB。**按 30 倍留盘**。详见 `installer/e2e/README.md`「磁盘陷阱」与
+`offline/README.md` §8.3。
+
+**结论**：第 ③ 步在「特权 systemd 容器 + 嵌套 dockerd（vfs）」这一降级环境下**十步全部跑通**，
+并因此在真栈上抓到两个单测抓不到的缺陷（S3 的 Pre-Depends 顺序、S6 的卷属主）。
+**它仍然不是真机验证**——差异见下一节第 2 条，该条仍由 vm-harness 覆盖。
+
 
 ## 仍然没验证的事（如实登记，不打包成「已通过」）
 
-1. **十步端到端（S4 之后）**：`S4_IMAGES` 只载入 7/8 个镜像就被构建机磁盘占满打断，
-   `S5_ENV → S6_UP → S7_MIGRATE → S8_SEED → S9_SMOKE` **一次都没在真栈上跑过**。
-   单测覆盖了逻辑（`TestSmokeUsesSameTokensAsSmokeSh` 用 httptest 复刻 `/api/health`
-   与 `_analyze` 响应形状），但「8 个容器真起来、迁移真跑、四项冒烟真绿」仍属未验证。
-   需要一个真 VM（Ubuntu 22.04 / 4C8G / 120G，dockerd 用 overlay2）或磁盘充裕的机器。
+1. **十步端到端只在容器里跑通过，真机仍未跑**：`S1→S10` 已在特权 systemd 容器 + 嵌套
+   dockerd（vfs）下全部 DONE（见上一节），但那是「容器里的 ten-step」。
+   真机要验的是另一批东西：真 systemd 的 unit 依赖与 restart 语义、cgroup v1 hybrid、
+   AppArmor 真生效、overlay2（而非 vfs）下的磁盘与 inode 表现。
+   需要一个真 VM（Ubuntu 22.04 / 4C8G / 120G，dockerd 用 overlay2）——由 vm-harness 覆盖。
 2. **真机安装（ISO 装系统后跑 `--tui` 十步）**：构建机无虚拟化工具，这一层完全没做。
    注意真机与容器有三处硬差异：真 systemd（无 `--cgroupns host` 这类妥协）、
    cgroup v1 hybrid（Ubuntu 22.04 默认，Docker 28+ 已标记 deprecated → 我们钉 29.9.3 需现场确认）、

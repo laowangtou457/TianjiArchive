@@ -242,14 +242,16 @@ R-2 裁定：**seaweedfs 只发布 8333**，master / filer / volume 均不占宿
 | 分片 PUT 成功、但 `completeMultipart` 失败 | 浏览器读不到 ETag 就无法汇总分片。3.79 零配置即返回 `Access-Control-Expose-Headers: *`，故**优先查三件事**：①请求是否带了 `Origin`（不带则无任何 CORS 头）；②8333 是否被反代收敛到与 Web 同域（同域浏览器不带 Origin）；③是否设了 `withCredentials=true` / `credentials: include`（此时 `*` 被当字面量）。用原生 OPTIONS + 真实 PUT 看响应头原值；**勿误判为 SigV4 签名或对象存储兼容性问题**，也不要据此改签名逻辑或去配 CORS |
 | `dpkg: error: could not read package info file in /var/lib/dpkg/status` | `/var/lib/dpkg/status` 被做成了**目录**（不是文件）。见 **§8.1**（含安全边界：正常文件绝不能删） |
 | `E: Could not fetch ./.deb from file:/debs ./` | 本地源三件事没同时成立：目录没挂进容器 / `file:/` 少两个斜杠 / 源行缺末尾 `./`。见 **§8.2** |
+| `--storage-opt size=1G` 加了却一点没限住 | **该参数在 Docker Desktop 的 overlayfs 驱动上被静默忽略**（命令成功、`df` 仍显示整盘）。判断标准是进去 `df`，不是看命令报错。见 **§8.3** |
+| ES 起不来：`failed to obtain node locks … AccessDeniedException: node.lock` | 九成是宿主卷目录属主不对（ES 以 uid=1000 跑、entrypoint 不 chown）。报错文案完全不提属主。见 **§8.4** |
 
 ---
 
-## 八、两条必踩的 dpkg / apt 坑（现场实录）
+## 八、现场必踩的四个坑（dpkg / apt / 磁盘限额 / 卷属主）
 
-这两条都是「手工补包 / 在容器里装 deb」时撞的，报错文案都不指向真正的原因，
-**先看本节再动别的地方**。也直接影响 `installer/build/fetch-docker-debs.sh` 与安装器的
-`S3_DOCKER`（两者都是「一堆 .deb + 本地源」的路子）。
+这四条都是「手工补包 / 在容器里装 deb / 给嵌套 dockerd 限额」时撞的，**报错文案都不指向真正的原因**。
+§8.1 / §8.2 直接影响 `installer/build/fetch-docker-debs.sh` 与安装器的 `S3_DOCKER`（都是「一堆 .deb + 本地源」的路子）；
+§8.3 / §8.4 是给「在容器里跑 dockerd」「手工 compose up」的人看的。
 
 ### 8.1 `dpkg: error: could not read package info file in /var/lib/dpkg/status`
 
@@ -332,8 +334,114 @@ cd "$(mktemp -d)" && apt-get download hello && apt-ftparchive packages . > Packa
 
 （故意用单斜杠 `file:/debs` 且不挂载 → 必现上面那句。）
 
-> 诚实边界：这两条是**现场实录整理**，本轮构建机 Docker 停机期间没有在容器里重新复跑；
+### 8.3 `--storage-opt size=1G` 被静默忽略（限额是假的）
+
+**现象**
+
+```text
+$ docker run --rm --storage-opt size=1G alpine:3.20 df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+overlay        1006.9G  8.1G  998G   1% /
+```
+
+命令**成功**、退出码 0、没有任何警告；`docker inspect` 里也能看到 `size=1G`。
+但容器里 `df -h /` 显示的是**整个数据盘**——限额根本没生效。
+
+**根因**
+
+`--storage-opt size=` 只有对支持配额的后端才有意义（xfs + `pquota`、devicemapper、
+btrfs qgroup）。构建机上是 **Docker Desktop（LinuxKit VM + overlayfs 驱动）**，
+overlayfs 驱动**接受这个参数但不实现它**——参数被解析、被存进容器配置、然后被忽略。
+所以「命令没报错」和「限额生效」是两件毫不相干的事。
+
+**判断标准**
+
+> **进去 `df` 看，不是看命令有没有报错。**
+> 正确的形态是「`df` 里 `/` 的 Size 等于你设的值」；
+> 若 `df` 仍显示整盘容量，限额就是假的，别在此基础上跑会写满盘的东西。
+
+**修法（要真限额只有这几条路）**
+
+| 方案 | 前提 | 备注 |
+| --- | --- | --- |
+| xfs + `pquota` 挂载 | 宿主要有独立的 xfs 分区 | 最正统，`--storage-opt size=` 才真生效 |
+| devicemapper + loop | 老方案 | 慢、已 deprecated |
+| **loop + ext4 固定大小文件** | 只要 `losetup` + `mkfs.ext4` | 本轮采用，见下 |
+| 不用容器限额，改限「容器内数据目录」 | 应用支持改数据目录 | 例如 `du` 监控 + 定时告警，不是硬限额 |
+
+本轮实测可用的硬限额做法（在特权容器里让 dockerd 的数据根落在一个 80GiB 的 ext4 上）：
+
+```sh
+truncate -s 80G /root/nested-docker.img          # 稀疏文件，80GiB
+mkfs.ext4 -q -F -m 1 -L tj-nested /root/nested-docker.img
+mount -o loop /root/nested-docker.img /var/lib/docker
+df -hT /var/lib/docker                            # 必须显示 79G ext4 /dev/loopX
+```
+
+**怎么证明这个限额是真的**（不要只配上去就信）
+
+```sh
+# ① 文件系统几何必须是固定块数（80GiB = 20971520 × 4096），不是整盘
+dumpe2fs -h /dev/loop2 | grep -Ei 'block count|block size'
+# ② 一次「故意超额分配」必须立刻 ENOSPC（fallocate 不落数据，秒级、不占盘）
+fallocate -l 200G /var/lib/docker/.probe   # 期望: fallocate failed: No space left on device
+rm -f /var/lib/docker/.probe
+```
+
+本轮实测：`fallocate -l 200G` → `No space left on device`；`Block count 20971520 × Block size 4096`
+= 85,899,345,920 = 80GiB；后备文件 `ls -l` = 85,899,345,920 字节。
+
+**顺带一条同一类陷阱**：`rm -rf /var/lib/docker` 前**先自证在容器里**
+（`hostname` / `[ -f /.dockerenv ]` / `readlink -f /var/lib/docker` 三样都打出来）。
+宿主 daemon 的数据根**也叫 `/var/lib/docker`**，在宿主上敲这条命令等于删掉全机镜像与容器。
+本轮构建机就因为数据盘被写爆停过 40 分钟。
+
+### 8.4 ES 报 `failed to obtain node locks` —— 其实是宿主机目录属主不对
+
+**现象**
+
+```text
+java.lang.IllegalStateException: failed to obtain node locks, tried [/usr/share/elasticsearch/data];
+  maybe these locations are not writable or multiple nodes were started on the same data path?
+Caused by: java.io.IOException: failed to obtain lock on /usr/share/elasticsearch/data
+Caused by: java.nio.file.NoSuchFileException: /usr/share/elasticsearch/data/node.lock
+  Suppressed: java.nio.file.AccessDeniedException: /usr/share/elasticsearch/data/node.lock
+```
+
+同一句里 `NoSuchFileException` 和 `AccessDeniedException` 一起出现，最容易往错误方向查：
+去查磁盘满、并发起了两个节点、上次残留锁文件——**都不是**。
+
+**根因**
+
+bind mount（`./volumes/esdata:/usr/share/elasticsearch/data`）**不会**改宿主目录的属主，
+容器里看到的 uid 就是宿主上的数字 uid。`elasticsearch:8.x` 镜像的 `USER` 是
+`elasticsearch`（**uid=1000**），且 entrypoint **不做 chown**；如果宿主目录是
+`root:root 0750`，它就只有 `r-x`、写不了 `node.lock`。
+（对比 `postgres:16-alpine` / `redis:7-alpine`：它们以 root 启动、entrypoint 自己 chown 成
+70 / 999，所以同样的 `0:0 0750` 也能跑——这更让人以为是 ES 的问题。）
+
+**修法**
+
+```sh
+# 一次性
+chown 1000:1000 /opt/tianji/volumes/esdata && chmod 0750 /opt/tianji/volumes/esdata
+docker restart tianji-elasticsearch
+```
+
+安装器 **v1.2 起已自动处理**（`prepareDeployRoot` 里按 `volumeOwners` 表 chown：
+`esdata → 1000:1000`、`wal_archive → 70:70`，后者是 postgres 的 `archive_command` 要写）。
+若是手工 compose up 起的栈，就得自己 chown。
+
+**顺带**：`wal_archive` 属主错**不会**让 postgres 起不来，只会让 WAL 归档在日志里静默失败——
+所以「容器 healthy」不等于「归档正常」，检查 `docker compose logs postgres | grep -i archive`。
+
+---
+
+> 诚实边界：§8.1 / §8.2 是**现场实录整理**，本轮构建机 Docker 停机期间没有在容器里重新复跑，
 > 复现命令按最小可复现路径给出，操作前请先确认 `status` 不是正常文件（§8.1 安全边界）。
+> §8.3 / §8.4 是**本轮 ③ 实测**（`--storage-opt` 的无效 `df` 输出、`fallocate` 的 ENOSPC、
+> ES 修属主前后 `Restarting` → `healthy` 均有原始输出留存）。
+
 
 ---
 
