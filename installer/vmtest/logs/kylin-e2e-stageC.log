@@ -1,0 +1,282 @@
+== 阶段C kylin 2026-11-09T18:45:04Z ==
+=== CX kylin BOOT ===
+== [0] 前置核对 ==
+/dev/vda2        59G  4.6G   55G   8% /
+5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb  /root/server-setup.run
+期望包: 5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb
+== [1] 重置 state（整链从头）==
+== [2] 只读盘 dd tar 落普通文件 ==
+NAME   MAJ:MIN RM        SIZE RO TYPE MOUNTPOINT
+vda    253:0    0 64424509440  0 disk 
+├─vda1 253:1    0  1073741824  0 part /boot
+└─vda2 253:2    0 63349719040  0 part /
+vdb    253:16   0  1512404992  1 disk 
+541065216 bytes (541 MB, 516 MiB) copied, 1 s, 533 MB/s641728512 bytes (642 MB, 612 MiB) copied, 2 s, 319 MB/s897581056 bytes (898 MB, 856 MiB) copied, 3 s, 297 MB/s1342177280 bytes (1.3 GB, 1.2 GiB) copied, 4 s, 335 MB/s
+360+1 records in
+360+1 records out
+1512404992 bytes (1.5 GB, 1.4 GiB) copied, 5.48584 s, 276 MB/s
+dd rc=0
+-rw-r--r-- 1 root root 1512404992 Nov 10 02:45 /root/tianji-offline-images.tar
+tar sha256: 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+期望    : 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+== [3] 启动安装器 --web ==
+18080 就绪（1s）
+== [4] 登记 tar + 提交 env ==
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/
+guest IP: 10.0.2.15
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/2026
+== [5] S1（含确认门处理）==
+命中风险自担确认门，confirm 后重跑 S1
+=== CX kylin S1-DONE ===
+== [6] 逐步 S2→S10 ==
+---- S2_VERIFY 开始 2026-11-09T18:45:15Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T184514Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S2_VERIFY-OK ===
+---- S3_DOCKER 开始 2026-11-09T18:45:16Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T184514Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S3_DOCKER-OK ===
+---- S4_IMAGES 开始 2026-11-09T18:45:16Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T184514Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S4_IMAGES-OK ===
+---- S5_ENV 开始 2026-11-09T18:45:59Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T184514Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S5_ENV-OK ===
+---- S6_UP 开始 2026-11-09T18:45:59Z ----
+curl rc=0 ok=0
+{"ok":false,"error":"docker compose up 失败: 命令失败（退出码 1）: /usr/local/lib/tianji/docker-static/docker compose -f /opt/tianji/docker-compose.offline.yml --env-file /opt/tianji/.env up -d\n--- 最后输出 ---\n Container tianji-seaweedfs  Waiting\n Container tianji-redis  Waiting\n Container tianji-postgres  Waiting\n Container tianji-seaweedfs  Error\n Container tianji-redis  He
+=== CX kylin S6_UP-FAIL ===
+{"ok":false,"error":"docker compose up 失败: 命令失败（退出码 1）: /usr/local/lib/tianji/docker-static/docker compose -f /opt/tianji/docker-compose.offline.yml --env-file /opt/tianji/.env up -d\n--- 最后输出 ---\n Container tianji-seaweedfs  Waiting\n Container tianji-redis  Waiting\n Container tianji-postgres  Waiting\n Container tianji-seaweedfs  Error\n Container tianji-redis  Healthy\n Container tianji-postgres  Healthy\n Container tianji-elasticsearch  Healthy\ndependency failed to start: container tianji-seaweedfs is unhealthy"}
+== [7] 终局核对 ==
+--- 进程存活（防 stale）：YES
+--- state.json 时间戳：2026-11-10 02:46:18.006223789 +0800
+{'S10_DONE': '', 'S1_PREFLIGHT': 'DONE', 'S2_VERIFY': 'DONE', 'S3_DOCKER': 'DONE', 'S4_IMAGES': 'DONE', 'S5_ENV': 'DONE', 'S6_UP': 'FAIL', 'S7_MIGRATE': '', 'S8_SEED': '', 'S9_SMOKE': ''}
+--- docker images：8 个
+tianji-archive-api:1.0.0
+tianji-archive-extractor:1.0.0
+tianji-archive-web:1.0.0
+tianji-archive-backup:1.0.0
+tianji-elasticsearch-ik:8.13.4
+redis:7-alpine
+postgres:16-alpine
+chrislusf/seaweedfs:3.79
+--- 容器健康：
+tianji-elasticsearch Up 16 seconds (healthy)
+tianji-postgres Up 16 seconds (healthy)
+tianji-seaweedfs Restarting (1) 6 seconds ago
+tianji-redis Up 16 seconds (healthy)
+--- 冒烟结果：
+=== CX kylin CHAIN-BROKEN ===
+== 阶段C kylin 2026-11-09T18:53:34Z ==
+=== CX kylin BOOT ===
+== [0] 前置核对 ==
+/dev/vda2        59G  8.4G   51G  15% /
+5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb  /root/server-setup.run
+期望包: 5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb
+== [1] 重置 state（整链从头）==
+== [2] 只读盘 dd tar 落普通文件 ==
+NAME   MAJ:MIN RM        SIZE RO TYPE MOUNTPOINT
+vda    253:0    0 64424509440  0 disk 
+├─vda1 253:1    0  1073741824  0 part /boot
+└─vda2 253:2    0 63349719040  0 part /
+NAME   MAJ:MIN RM        SIZE RO TYPE MOUNTPOINT
+sr0     11:0    1  4696293376  0 rom  
+vda    253:0    0 64424509440  0 disk 
+├─vda1 253:1    0  1073741824  0 part /boot
+└─vda2 253:2    0 63349719040  0 part /
+dd: failed to open '/dev/vdb': No such file or directory
+dd rc=1
+ls: cannot access '/root/tianji-offline-images.tar': No such file or directory
+sha256sum: /root/tianji-offline-images.tar: No such file or directory
+tar sha256: 
+期望    : 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+=== CX kylin FATAL tar-sha-mismatch ===
+== 阶段C kylin 2026-11-09T18:55:31Z ==
+=== CX kylin BOOT ===
+== [0] 前置核对 ==
+/dev/vda2        59G  7.0G   52G  12% /
+5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb  /root/server-setup.run
+期望包: 5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb
+== [1] 重置 state（整链从头）==
+== [2] 只读盘 dd tar 落普通文件 ==
+NAME   MAJ:MIN RM        SIZE RO TYPE MOUNTPOINT
+vda    253:0    0 64424509440  0 disk 
+├─vda1 253:1    0  1073741824  0 part /boot
+└─vda2 253:2    0 63349719040  0 part /
+vdb    253:16   0  1512404992  1 disk 
+532676608 bytes (533 MB, 508 MiB) copied, 1 s, 527 MB/s624951296 bytes (625 MB, 596 MiB) copied, 2 s, 312 MB/s1140850688 bytes (1.1 GB, 1.1 GiB) copied, 3 s, 380 MB/s1488977920 bytes (1.5 GB, 1.4 GiB) copied, 4 s, 372 MB/s
+360+1 records in
+360+1 records out
+1512404992 bytes (1.5 GB, 1.4 GiB) copied, 5.49244 s, 275 MB/s
+dd rc=0
+-rw-r--r-- 1 root root 1512404992 Nov 10 02:55 /root/tianji-offline-images.tar
+tar sha256: 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+期望    : 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+== [3] 启动安装器 --web ==
+18080 就绪（1s）
+== [4] 登记 tar + 提交 env ==
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/
+guest IP: 10.0.2.15
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/2026
+== [5] S1（含确认门处理）==
+命中风险自担确认门，confirm 后重跑 S1
+=== CX kylin S1-DONE ===
+== [6] 逐步 S2→S10 ==
+---- S2_VERIFY 开始 2026-11-09T18:55:40Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185540Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S2_VERIFY-OK ===
+---- S3_DOCKER 开始 2026-11-09T18:55:41Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185540Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S3_DOCKER-OK ===
+---- S4_IMAGES 开始 2026-11-09T18:55:42Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185540Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S4_IMAGES-OK ===
+---- S5_ENV 开始 2026-11-09T18:55:48Z ----
+curl rc=0 ok=0
+{"ok":false,"error":"/opt/tianji/.env 已存在且未指定覆盖。为避免静默丢弃现场配置，这里拒绝直接覆盖。\n处置：确认可以重写时，用 --overwrite 重启安装器，或在向导里勾选「覆盖已有 .env」"}
+
+=== CX kylin S5_ENV-FAIL ===
+{"ok":false,"error":"/opt/tianji/.env 已存在且未指定覆盖。为避免静默丢弃现场配置，这里拒绝直接覆盖。\n处置：确认可以重写时，用 --overwrite 重启安装器，或在向导里勾选「覆盖已有 .env」"}
+== [7] 终局核对 ==
+--- 进程存活（防 stale）：YES
+--- state.json 时间戳：2026-11-10 02:55:48.354321840 +0800
+{'S10_DONE': '', 'S1_PREFLIGHT': 'DONE', 'S2_VERIFY': 'DONE', 'S3_DOCKER': 'DONE', 'S4_IMAGES': 'DONE', 'S5_ENV': 'FAIL', 'S6_UP': '', 'S7_MIGRATE': '', 'S8_SEED': '', 'S9_SMOKE': ''}
+--- docker images：8 个
+tianji-archive-api:1.0.0
+tianji-archive-extractor:1.0.0
+tianji-archive-web:1.0.0
+tianji-archive-backup:1.0.0
+tianji-elasticsearch-ik:8.13.4
+redis:7-alpine
+postgres:16-alpine
+chrislusf/seaweedfs:3.79
+--- 容器健康：
+tianji-elasticsearch Up 13 seconds (health: starting)
+tianji-postgres Up 13 seconds (healthy)
+tianji-seaweedfs Restarting (1) Less than a second ago
+tianji-redis Up 13 seconds (healthy)
+--- 冒烟结果：
+=== CX kylin CHAIN-BROKEN ===
+== 阶段C kylin 2026-11-09T18:58:54Z ==
+=== CX kylin BOOT ===
+== [0] 前置核对 ==
+/dev/vda2        59G  8.5G   51G  15% /
+5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb  /root/server-setup.run
+期望包: 5ae9dd0fbcc7f31f5c5bf81e90ae8a9d7f2dae98b4d6cefc07206dec5c7a06eb
+== [1] 重置 state（整链从头）==
+== [2] 只读盘 dd tar 落普通文件 ==
+NAME   MAJ:MIN RM        SIZE RO TYPE MOUNTPOINT
+vda    253:0    0 64424509440  0 disk 
+├─vda1 253:1    0  1073741824  0 part /boot
+└─vda2 253:2    0 63349719040  0 part /
+vdb    253:16   0  1512404992  1 disk 
+520093696 bytes (520 MB, 496 MiB) copied, 1 s, 499 MB/s624951296 bytes (625 MB, 596 MiB) copied, 2 s, 312 MB/s1082130432 bytes (1.1 GB, 1.0 GiB) copied, 3 s, 359 MB/s1442840576 bytes (1.4 GB, 1.3 GiB) copied, 4 s, 357 MB/s
+360+1 records in
+360+1 records out
+1512404992 bytes (1.5 GB, 1.4 GiB) copied, 6.049 s, 250 MB/s
+dd rc=0
+-rw-r--r-- 1 root root 1512404992 Nov 10 02:59 /root/tianji-offline-images.tar
+tar sha256: 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+期望    : 50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372
+== [3] 启动安装器 --web ==
+18080 就绪（2s）
+== [4] 登记 tar + 提交 env ==
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/
+guest IP: 10.0.2.15
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/2026
+== [5] S1（含确认门处理）==
+命中风险自担确认门，confirm 后重跑 S1
+=== CX kylin S1-DONE ===
+== [6] 逐步 S2→S10 ==
+---- S2_VERIFY 开始 2026-11-09T18:59:06Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S2_VERIFY-OK ===
+---- S3_DOCKER 开始 2026-11-09T18:59:07Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S3_DOCKER-OK ===
+---- S4_IMAGES 开始 2026-11-09T18:59:07Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S4_IMAGES-OK ===
+---- S5_ENV 开始 2026-11-09T18:59:12Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S5_ENV-OK ===
+---- S6_UP 开始 2026-11-09T18:59:12Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S6_UP-OK ===
+---- S7_MIGRATE 开始 2026-11-09T19:00:00Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S7_MIGRATE-OK ===
+---- S8_SEED 开始 2026-11-09T19:00:04Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S8_SEED-OK ===
+---- S9_SMOKE 开始 2026-11-09T19:00:05Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S9_SMOKE-OK ===
+---- S10_DONE 开始 2026-11-09T19:00:13Z ----
+curl rc=0 ok=1
+{"ok":true,"data":{"product":"tianji-archive","version":"1.0.0","variant":"kylin-uos","arch":"amd64","rootDir":"/opt/tianji-installer","deployRoot":"/opt/tianji","logDir":"/var/log/tianji-install/20261109T185904Z","stateFile":"/var/lib/tianji-install/state.json","imagesTar":"/root/tianji-offline-images.tar","os":{"id":"kylin","versionId":"V10","codename":"","prettyName":"Kylin Linux Advanced Serve
+=== CX kylin S10_DONE-OK ===
+== [7] 终局核对 ==
+--- 进程存活（防 stale）：YES
+--- state.json 时间戳：2026-11-10 03:00:13.267610157 +0800
+{'S10_DONE': 'DONE', 'S1_PREFLIGHT': 'DONE', 'S2_VERIFY': 'DONE', 'S3_DOCKER': 'DONE', 'S4_IMAGES': 'DONE', 'S5_ENV': 'DONE', 'S6_UP': 'DONE', 'S7_MIGRATE': 'DONE', 'S8_SEED': 'DONE', 'S9_SMOKE': 'DONE'}
+--- docker images：8 个
+tianji-archive-api:1.0.0
+tianji-archive-extractor:1.0.0
+tianji-archive-web:1.0.0
+tianji-archive-backup:1.0.0
+tianji-elasticsearch-ik:8.13.4
+redis:7-alpine
+postgres:16-alpine
+chrislusf/seaweedfs:3.79
+--- 容器健康：
+tianji-backup Up 27 seconds
+tianji-extractor Up 28 seconds
+tianji-api Up 33 seconds (healthy)
+tianji-seaweedfs Up 59 seconds (healthy)
+tianji-web Up 33 seconds (healthy)
+tianji-elasticsearch Up About a minute (healthy)
+tianji-postgres Up About a minute (healthy)
+tianji-redis Up About a minute (healthy)
+--- 冒烟结果：
+[
+ {
+  "name": "1/4 健康检查 /api/health",
+  "passed": true,
+  "detail": "status=ok 且 objectStorage.ok=true",
+  "output": "{\"code\":0,\"data\":{\"status\":\"ok\",\"version\":\"1.0.0\",\"uptimeSeconds\":23,\"deps\":[{\"name\":\"postgres\",\"ok\":true,\"latencyMs\":0},{\"name\":\"elasticsearch\",\"ok\":true,\"latencyMs\":3},{\"name\":\"objectStorage\",\"ok\":true,\"latencyMs\":1},{\"name\":\"redis\",\"ok\":true,\"latencyMs\":0}]},\"message\":\"成功\",\"timestamp\":\"2026-11-09T19:00:05.929Z\"}"
+ },
+ {
+  "name": "2/4 S3 兼容性探针",
+  "passed": true,
+  "detail": "输出含 IS_PASS: YES",
+  "output": "\n> @tianji/api@1.0.0 s3:probe /app/apps/api\n> ts-node src/scripts/seaweedfs-s3-probe.ts\n\n════════════ SeaweedFS S3 兼容性探针 ════════════\n端点=seaweedfs:8333 pathStyle=true region=us-east-1 探测桶=tianji-s3-probe-1794250806944\n  bucketExists（新建前，应为 false）= false\n探测桶清理完成：tianji-s3-probe-1794250806944\n\n──────────── 逐项结果 ────────────\nPASS | bucketExists | false\nPASS | makeBucket | created\nPASS | bucketExists(created) | true\nPASS | putObject | size=55 sha256=e4081d0c89a0…\nPASS | statObject | size=55 etag=c8b8bc7ed774128bde6e461518604dc0\nPASS | getObject | bytes=55 内容一致\nPASS | presignedUrl(PUT 直传) | http=200\nPASS | presignedGetObject | http=200 内容一致\nPASS | initiateNewMultipartUpload | 59cf26284fbff4854a5e1557d13d8f013086f150_6530346279fd44bcb10554009ddbf08b\nPASS | presignedUrl(PUT 分片签名) | http=200 etag=\"0111b902b0a410e023fbbf87fb721e41\"\nPASS | listParts | parts=1 firstPart=1\nPASS | completeMultipartUpload | ok\nPASS | getObject(multipart 合成结果) | bytes=27\n\nOPS_TOTAL=13 OPS_PASSED=13 OPS_FAILED=0\nIS_PASS: YES —— 9 类 S3 操作与 SeaweedFS 3.79 S3 Gateway 全部兼容\n"
+ },
+ {
+  "name": "3/4 样品书籍全链路",
+  "passed": true,
+  "detail": "输出含 IS_PASS: YES",
+  "output": "\n> @tianji/api@1.0.0 demo:books /app/apps/api\n> ts-node src/scripts/demo-books-seed.ts\n\n════════════ 离线样品 demo：模拟书籍档案全链路 ════════════\nS3=seaweedfs:8333（SeaweedFS S3 Gateway） ES=http://elasticsearch:9200 index=archive_items 全宗=DEMO-BOOK 书目=6 本\n▶ 数据库已连接\n  著录：DEMO-BOOK-2026-0001-0001 《档案管理学基础》\n  著录：DEMO-BOOK-2026-0001-0002 《DA/T 22 归档文件整理规则释义》\n  著录：DEMO-BOOK-2026-0001-0003 《电子文件四性检测实践》\n  著录：DEMO-BOOK-2026-0002-0001 《数字档案馆建设导论》\n  著录：DEMO-BOOK-2026-0002-0002 《海量小文件存储优化》\n  著录：DEMO-BOOK-2026-0002-0003 《档案信息检索与知识服务》\n  ES 文档写入：6 条\n  已投抽取任务：12 个（等待 extractor worker 处理）\n  全文抽取完成：12/12 个文件，document_text 7 条\n  综合检索命中：6 条（全文标记 + 全宗/状态过滤）\n\n──────────── demo 链路汇总 ────────────\nDEMO_BOOKS_TOTAL=6\nDEMO_VOLUMES_TOTAL=2\nFILES_UPLOADED=12\nEXTRACTED_OK=12\nDOCUMENT_TEXT_ROWS=7\nSEARCH_HITS=6\nDOWNLOAD_SCOPE=S3_WIRE_LAYER_ONLY（PRESIGNED_DOWNLOADS_OK / PREVIEW_DOWNLOADS_OK 为 S3 wire 层自检，不绕鉴权，不构成下载功能已验证；业务放行链路 L2 未实现，本轮不验不修）\nPRESIGNED_DOWNLOADS_OK=12\nPREVIEW_DOWNLOADS_OK=12\nSHA256_VERIFIED=12\nIS_PASS: YES —— 上传挂接 / 全文抽取 / 综合检索 / 预览下载 / sha256 完整性全链路通过\n\n[WARN] This Redis server's `default` user does not require a password, but a password was supplied\nIMPORTANT! Eviction policy is allkeys-lru. It should be \"noeviction\"\n"
+ },
+ {
+  "name": "4/4 IK 中文分词",
+  "passed": true,
+  "detail": "IK 切出「中华人民共和国」",
+  "output": "{\"tokens\":[{\"token\":\"中华人民共和国\",\"start_offset\":0,\"end_offset\":7,\"type\":\"CN_WORD\",\"position\":0},{\"token\":\"中华人民\",\"start_offset\":0,\"end_offset\":4,\"type\":\"CN_WORD\",\"position\":1},{\"token\":\"中华\",\"start_offset\":0,\"end_offset\":2,\"type\":\"CN_WORD\",\"position\":2},{\"token\":\"华人\",\"start_offset\":1,\"end_offset\":3,\"type\":\"CN_WORD\",\"position\":3},{\"token\":\"人民共和国\",\"start_offset\":2,\"end_offset\":7,\"type\":\"CN_WORD\",\"position\":4},{\"token\":\"人民\",\"start_offset\":2,\"end_offset\":4,\"type\":\"CN_WORD\",\"position\":5},{\"token\":\"共和国\",\"start_offset\":4,\"end_offset\":7,\"type\":\"CN_WORD\",\"position\":6},{\"token\":\"共和\",\"start_offset\":4,\"end_offset\":6,\"type\":\"CN_WORD\",\"position\":7},{\"token\":\"国\",\"start_offset\":6,\"end_offset\":7,\"type\":\"CN_CHAR\",\"position\":8},{\"token\":\"档案管理\",\"start_offset\":7,\"end_offset\":11,\"type\":\"CN_WORD\",\"position\":9},{\"token\":\"档案\",\"start_offset\":7,\"end_offset\":9,\"type\":\"CN_WORD\",\"position\":10},{\"token\":\"管理\",\"start_offset\":9,\"end_offset\":11,\"type\":\"CN_WORD\",\"position\":11},{\"token\":\"系统\",\"start_offset\":11,\"end_offset\":13,\"type\":\"CN_WORD\",\"position\":12}]}"
+ }
+]
+=== CX kylin ALL-GREEN ===
