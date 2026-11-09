@@ -135,7 +135,16 @@ GIT_HEAD='unknown'
 if command -v git >/dev/null 2>&1 && [ -d "${REPO_ROOT}/.git" ]; then
   GIT_HEAD="$(cd "${REPO_ROOT}" && git rev-parse HEAD 2>/dev/null || echo unknown)"
 fi
-BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# built_at 每次构建都不同 → payload sha256 必然不同（打包脚本注释里「同输入同输出」
+# 的说法在这一点上不成立，本轮实测才发现）。可复现构建用 SOURCE_DATE_EPOCH 固定它；
+# 未设置时退回当前时间（正式交付要的就是真实构建时间）。
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+  BUILT_AT="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+              || date -u -r "${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+              || date -u +%Y-%m-%dT%H:%M:%SZ)"
+else
+  BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
 BUILDER="$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)"
 
 JSON="${STAGE_DIR}/manifest.json"

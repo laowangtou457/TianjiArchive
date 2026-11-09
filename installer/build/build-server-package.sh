@@ -22,11 +22,19 @@
 #        --installer installer/server/dist/tianji-installer --images-tar offline/tianji-offline-images.tar
 #
 # 退出码：0 成功；1 参数/前置不满足；2 载荷闸门失败；3 打包失败
+#
+# 退出码语义固定为「产物是否可用」：收尾清理（删暂存目录）失败**不**改退出码，
+# 只在 stderr 打 WARN 并留下残留路径与大小——理由见 lib/stage-cleanup.sh。
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# 收尾清理逻辑单独成文件：既能被这里的 EXIT trap 用，也能被 tests/ 里的用例
+# 用 stub 的 rm 单独验证「删不掉时必须 warn 且不改退出码」。
+# shellcheck source=lib/stage-cleanup.sh
+. "${SCRIPT_DIR}/lib/stage-cleanup.sh"
 
 VARIANT=''
 CODENAME=''
@@ -38,6 +46,7 @@ DO_SIGN='no'
 GPG_KEY=''
 
 log() { printf '[package] %s\n' "$*"; }
+warn() { printf '[package] WARN: %s\n' "$*" >&2; }
 die() { printf '[package] FAIL: %s\n' "$*" >&2; exit 1; }
 
 usage() {
@@ -143,7 +152,13 @@ log "G2 PASS：ELF64/amd64，${BIN_BYTES} 字节"
 # 组装暂存目录
 # =============================================================================
 STAGE="$(mktemp -d "${OUT_DIR}/.stage.XXXXXX")"
-trap 'rm -rf "${STAGE}"' EXIT INT TERM
+
+# 收尾清理：容忍失败但必须喊得响（见 lib/stage-cleanup.sh 里的完整理由）。
+# 语义分界：这一步跑在「G1/G2/G3 全过 + 产物摘要已打印」之后，
+# 所以**删不掉暂存目录不改判构建结果**——退出码只表示「产物是否可用」。
+# 两个清理对象都要清：暂存目录 + 中间的 payload 压缩包（只清目录会漏 ~150MB/次；
+# PAYLOAD_TGZ 在脚本后段才赋值，这里用 :- 兜底，避免提前失败时 set -u 报错）。
+trap 'stage_cleanup "${STAGE}" "${PAYLOAD_TGZ:-}"' EXIT INT TERM
 
 mkdir -p "${STAGE}/bin" "${STAGE}/common" "${STAGE}/docker"
 cp -p "${INSTALLER_BIN}" "${STAGE}/bin/tianji-installer"
@@ -277,13 +292,18 @@ fi
 bash "${SCRIPT_DIR}/make-manifest.sh" "${MANIFEST_ARGS[@]}"
 
 # =============================================================================
-# payload.tar.gz：确定性打包（同输入同输出，便于对比两次构建）
+# payload.tar.gz 打包
+#
+# 「确定性」的范围要说准（本轮实测纠正）：tar 侧是确定的（--sort=name + 固定 mtime/owner），
+# 但 manifest.json 里有 built_at 与 builder（含 hostname），所以**同一台机器两次构建的
+# payload sha256 天然不同**。要逐字节可复现，构建时传 SOURCE_DATE_EPOCH 固定 built_at，
+# 且构建机名相同——否则别拿「两次 sha256 不同」当异常。
 #
 # 必须打到暂存目录**外面**：tgz 落在被扫描的目录里会让 tar 报
 # 「file changed as we read it」并中断（已实测）。
 # =============================================================================
 PAYLOAD_TGZ="${STAGE}.payload.tar.gz"
-log '打包 payload.tar.gz（确定性：排序 + 固定 mtime/owner）'
+log '打包 payload.tar.gz（排序 + 固定 mtime/owner；要完全可复现再设 SOURCE_DATE_EPOCH）'
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
     -czf "${PAYLOAD_TGZ}" -C "${STAGE}" . \
   || die 'tar 打包失败'
