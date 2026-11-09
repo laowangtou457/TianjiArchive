@@ -1,0 +1,10 @@
+=== stage-A L0 mutation re-verify #2 (2026-11-09T15:07:38+08:00) ===
+--- mutated line:
+IMAGE_ID[tianji-archive-api:1.0.0]=sha256:deadbeef0000000000000000000000000000000000000000000000000000000000
+mutation_applied_lines=4
+[L1] cmp 防漂移：entrypoint.sh / s3.json.tpl 均 SAME
+ERROR: 镜像 ID 与构建记录不符：tianji-archive-api:1.0.0 记录=sha256:deadbeef0000000000000000000000000000000000000000000000000000000000 当前=sha256:a4094431b782512fcace310de00e8f15c84af3c7990f3c657ed6436a35d101da；说明镜像被替换/重建后未重新 --record，拒绝导出
+MUTATED_CHECK_EXIT=1
+--- restored, diff-vs-bak lines: 0
+IS_PASS: YES —— 前置校验全通过（--check 不导出 tar）
+RESTORED_CHECK_EXIT=0

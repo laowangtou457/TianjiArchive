@@ -1,0 +1,4 @@
+=== stage-A --record (2026-11-09T15:05:10+08:00) HEAD=56505b1ba7ce30627dc1136c2e9f7f4b332d9249 ===
+[record] 已生成 /e/TianjiArchive/offline/BUILD-INFO.txt
+[record] GIT_HEAD=56505b1ba7ce30627dc1136c2e9f7f4b332d9249  RECORD_COMPLETE=yes  GIT_WORKTREE_DIRTY=no
+RECORD_EXIT=0
