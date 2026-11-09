@@ -29,6 +29,9 @@ type Options struct {
 	// ExpectedCount 来自 manifest.json.images_tar.image_count，>0 时与清单条数比对。
 	ExpectedCount int
 	Runner        execx.Runner
+	// DockerBin 是 docker 命令：变体 A 走 PATH，变体 B 是静态目录的绝对路径。
+	// 空值按 "docker" 处理（保持既有调用方不感知）。
+	DockerBin string
 	// Hash 可注入（单测里避免真算 1.5GB），nil 时用 buildplan.HashFile。
 	Hash func(path string) (string, error)
 	// Logf 用于把进度写进该步骤的日志文件，nil 时静默。
@@ -81,6 +84,9 @@ func (o Options) logf(format string, args ...any) {
 }
 
 func (o *Options) normalize() {
+	if o.DockerBin == "" {
+		o.DockerBin = "docker"
+	}
 	if o.Hash == nil {
 		o.Hash = buildplan.HashFile
 	}
@@ -146,7 +152,7 @@ func Load(ctx context.Context, opts Options) (*Result, error) {
 
 	// ② docker load
 	opts.logf("执行 docker load（1.5GB 级，通常 1~3 分钟）…")
-	loadRes, err := opts.Runner.Run(ctx, "docker", "load", "-i", opts.TarPath)
+	loadRes, err := opts.Runner.Run(ctx, opts.DockerBin, "load", "-i", opts.TarPath)
 	res.LoadOutput = loadRes.Combined()
 	opts.logf("%s", strings.TrimRight(res.LoadOutput, "\n"))
 	if err != nil {
@@ -157,7 +163,7 @@ func Load(ctx context.Context, opts Options) (*Result, error) {
 	opts.logf("按清单逐个核对镜像（%d 个）…", len(wanted))
 	for _, name := range wanted {
 		check := ImageCheck{Name: name}
-		inspect, iErr := opts.Runner.Run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", name)
+		inspect, iErr := opts.Runner.Run(ctx, opts.DockerBin, "image", "inspect", "--format", "{{.Id}}", name)
 		switch {
 		case iErr != nil:
 			check.Err = strings.TrimSpace(inspect.Tail(3))

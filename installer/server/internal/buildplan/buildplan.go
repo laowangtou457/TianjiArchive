@@ -147,6 +147,13 @@ type Layout struct {
 	StateFile  string // /var/lib/tianji-install/state.json
 	LogRoot    string // /var/log/tianji-install
 	UnitPath   string // /etc/systemd/system/tianji-stack.service
+
+	// 下面四项只给变体 B 的静态安装用（真实路径见 static_paths.go 的常量）。
+	// 空值 = 用默认落点；单测把它们指到 t.TempDir()，否则断言不了「写到哪儿去了」。
+	StaticDockerDir  string // /usr/local/lib/tianji/docker-static
+	ComposePluginDir string // /usr/local/lib/docker/cli-plugins
+	DockerUnit       string // /etc/systemd/system/docker.service
+	RecordFile       string // /var/lib/tianji-install/installed-files.json
 }
 
 // DefaultLayout 返回生产默认布局。

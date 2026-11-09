@@ -21,6 +21,7 @@ import (
 
 	"tianji-archive/installer/internal/buildplan"
 	"tianji-archive/installer/internal/execx"
+	"tianji-archive/installer/internal/installed"
 )
 
 // MinComposeMajor/Minor 是硬门槛：离线 compose 用了顶层 `name:` 与
@@ -29,37 +30,6 @@ const (
 	MinComposeMajor = 2
 	MinComposeMinor = 20
 )
-
-// docker.service 的内容（变体 B 专用）。
-//
-// LimitMEMLOCK=infinity 与 LimitNOFILE 是 ES 的要求（compose 里 elasticsearch
-// 服务声明了 memlock 与 nofile），写在 unit 上比只写 limits.d 更可靠——limits.d
-// 只对登录会话生效，而 dockerd 由 systemd 拉起。
-const staticDockerUnit = `[Unit]
-Description=Docker Application Container Engine (tianji static install)
-Documentation=https://docs.docker.com
-After=network-online.target firewalld.service
-Wants=network-online.target
-
-[Service]
-Type=notify
-ExecStart=/usr/local/bin/dockerd
-ExecReload=/bin/kill -s HUP $MAINPID
-TimeoutStartSec=0
-RestartSec=2
-Restart=always
-LimitNOFILE=65535
-LimitMEMLOCK=infinity
-LimitNPROC=infinity
-LimitCORE=infinity
-TasksMax=infinity
-Delegate=yes
-KillMode=process
-OOMScoreAdjust=-500
-
-[Install]
-WantedBy=multi-user.target
-`
 
 // Options 是一次 Docker 安装的全部输入。
 type Options struct {
@@ -78,7 +48,15 @@ type Options struct {
 	DaemonTimeout time.Duration
 	// Hash 可注入，nil 用 buildplan.HashFile（用于复核 DEBS-MANIFEST.txt）。
 	Hash func(string) (string, error)
-	Logf func(format string, args ...any)
+	// CheckSystemd 可注入「本机是否有可用的 systemctl」，nil 时用 execx.Has。
+	// 单测必须能注入：Windows 上没有 systemctl，否则 firewalld 处置与
+	// unit 写入这两条分支永远测不到（会以「跳过」形式假通过）。
+	CheckSystemd func() bool
+	// DockerBin 是本变体该用哪个 docker 命令：变体 A 走 PATH（"docker"），
+	// 变体 B 是静态目录里的绝对路径（我们刻意不往 PATH 里放任何东西）。
+	// 空值由 normalize 填 "docker"，保持既有调用方（含单测）不感知。
+	DockerBin string
+	Logf      func(format string, args ...any)
 }
 
 // Result 是安装结果。
@@ -92,6 +70,26 @@ type Result struct {
 	// 只在日志里用，不进 JSON（可能上千行）。
 	DpkgSnapshot string   `json:"-"`
 	Steps        []string `json:"steps,omitempty"`
+	// DockerBin 是本次实际使用的 docker 命令（变体 B 会是绝对路径），
+	// 让安装报告能回答「到底调的是哪个 docker」——PATH 里可能还有一个同名的。
+	DockerBin string `json:"dockerBin,omitempty"`
+	// Firewalld 只有变体 B 才有值：处置前后的 is-active 原文 + 人话结论。
+	Firewalld *FirewalldState `json:"firewalld,omitempty"`
+	// Installed 是「安装器亲手写了哪些文件」，落盘给卸载用（internal/installed）。
+	Installed []installed.Entry `json:"installed,omitempty"`
+}
+
+// addInstalled 往清单里追加一项；路径非法时返回错误（宁可失败，也不写一份脏清单）。
+func (r *Result) addInstalled(path string, kind installed.Kind, why string) error {
+	if r == nil {
+		return nil
+	}
+	rec := installed.New("", "")
+	if err := rec.Add(path, kind, why); err != nil {
+		return fmt.Errorf("登记安装清单失败（%s）: %w", path, err)
+	}
+	r.Installed = append(r.Installed, rec.Entries[0])
+	return nil
 }
 
 func (o Options) logf(format string, args ...any) {
@@ -116,6 +114,23 @@ func (o *Options) normalize() {
 	if o.Hash == nil {
 		o.Hash = buildplan.HashFile
 	}
+	if o.DockerBin == "" {
+		o.DockerBin = "docker"
+	}
+	if o.CheckSystemd == nil {
+		o.CheckSystemd = func() bool { return execx.Has("systemctl") }
+	}
+}
+
+// hasSystemctl 统一回答「本机能不能用 systemctl」。
+func (o Options) hasSystemctl() bool {
+	if o.NoSystemd {
+		return false
+	}
+	if o.CheckSystemd == nil {
+		return execx.Has("systemctl")
+	}
+	return o.CheckSystemd()
 }
 
 // Install 按 manifest 声明的变体安装（或复用）Docker，然后写内核参数、
@@ -126,7 +141,7 @@ func Install(ctx context.Context, opts Options) (*Result, error) {
 		return nil, errors.New("dockerinstall: manifest 为空")
 	}
 
-	res := &Result{}
+	res := &Result{DockerBin: opts.DockerBin}
 	daemonVersion, composeVersion, err := probeExisting(ctx, opts)
 
 	switch {
@@ -157,6 +172,11 @@ func Install(ctx context.Context, opts Options) (*Result, error) {
 			res.DpkgSnapshot = snapshot
 		case buildplan.VariantKylinUOS:
 			res.Method = "static"
+			// firewalld 处置必须**在起 dockerd 之前**：统信实测「firewalld 在跑时
+			// dockerd 二次启动直接 ZONE_CONFLICT 失败」（是 daemon 起不来，不是端口不通）。
+			// 处置属安装步骤（preflight 只报告不处置），前后状态都进安装报告。
+			fw := handleFirewalld(ctx, &opts)
+			res.Firewalld = &fw
 			if err := installStatic(ctx, &opts, res); err != nil {
 				return res, err
 			}
@@ -171,8 +191,8 @@ func Install(ctx context.Context, opts Options) (*Result, error) {
 	}
 	res.Steps = append(res.Steps, "sysctl+limits 已写入并应用")
 
-	// 等 dockerd 就绪
-	version, err := WaitDaemon(ctx, opts.Runner, opts.DaemonTimeout, opts.logf)
+	// 等 dockerd 就绪（变体 B 用绝对路径的 CLI：我们不往 PATH 放东西）
+	version, err := WaitDaemonBin(ctx, opts.DockerBin, opts.Runner, opts.DaemonTimeout, opts.logf)
 	if err != nil {
 		return res, err
 	}
@@ -180,7 +200,7 @@ func Install(ctx context.Context, opts Options) (*Result, error) {
 	res.Steps = append(res.Steps, "dockerd 就绪: "+version)
 
 	// compose v2 版本硬门槛
-	cv, err := CheckComposeVersion(ctx, opts.Runner)
+	cv, err := CheckComposeVersionBin(ctx, opts.DockerBin, opts.Runner)
 	if err != nil {
 		return res, err
 	}
@@ -191,10 +211,10 @@ func Install(ctx context.Context, opts Options) (*Result, error) {
 
 // probeExisting 探测是否已有可用的 dockerd 与 compose 插件。
 func probeExisting(ctx context.Context, opts Options) (daemonVersion, composeVersion string, err error) {
-	if out, e := opts.Runner.Run(ctx, "docker", "version", "--format", "{{.Server.Version}}"); e == nil {
+	if out, e := opts.Runner.Run(ctx, opts.DockerBin, "version", "--format", "{{.Server.Version}}"); e == nil {
 		daemonVersion = strings.TrimSpace(out.Stdout)
 	}
-	cv, cerr := CheckComposeVersion(ctx, opts.Runner)
+	cv, cerr := CheckComposeVersionBin(ctx, opts.DockerBin, opts.Runner)
 	if cerr == nil {
 		composeVersion = cv
 	}
@@ -288,79 +308,13 @@ func installDebs(ctx context.Context, opts *Options, res *Result) (int, string, 
 	return len(debs), snapshot, nil
 }
 
-// installStatic 走变体 B：static tgz + 自写 unit + compose 插件。
-func installStatic(ctx context.Context, opts *Options, res *Result) error {
-	tgzs, err := filepath.Glob(filepath.Join(opts.Layout.StaticDir(), "docker-*.tgz"))
-	if err != nil {
-		return fmt.Errorf("扫描 static 目录失败: %w", err)
-	}
-	if len(tgzs) == 0 {
-		return fmt.Errorf("变体 B 载荷缺失：%s 下没有 docker-*.tgz", opts.Layout.StaticDir())
-	}
-	sort.Strings(tgzs)
-	tgz := tgzs[len(tgzs)-1]
-	opts.logf("解开 static 包 %s → /usr/local/bin", filepath.Base(tgz))
-
-	// --strip-components=1：tgz 内是 docker/ 一级目录（设计 §4.3）。
-	tarRes, err := opts.Runner.Run(ctx, "tar", "-xzf", tgz, "-C", "/usr/local/bin", "--strip-components=1")
-	if err != nil {
-		return fmt.Errorf("解压 docker static 包失败: %w\n%s", err, tarRes.Tail(10))
-	}
-
-	for _, bin := range []string{"docker", "dockerd"} {
-		if _, statErr := os.Stat(filepath.Join("/usr/local/bin", bin)); statErr != nil {
-			return fmt.Errorf("static 包解压后缺少 /usr/local/bin/%s（包损坏）", bin)
-		}
-	}
-
-	// compose v2 单二进制（static 包不含插件）
-	if err := installComposePluginOnly(ctx, *opts); err != nil {
-		return err
-	}
-
-	// 自写 unit
-	if !opts.NoSystemd {
-		if err := os.MkdirAll(filepath.Dir(buildplan.DefaultSystemdUnit), 0o755); err != nil {
-			return fmt.Errorf("创建 unit 目录失败: %w", err)
-		}
-		if err := os.WriteFile(buildplan.DefaultSystemdUnit, []byte(staticDockerUnit), 0o644); err != nil {
-			return fmt.Errorf("写 %s 失败: %w", buildplan.DefaultSystemdUnit, err)
-		}
-		opts.logf("已写入 %s（LimitMEMLOCK=infinity / LimitNOFILE=65535）", buildplan.DefaultSystemdUnit)
-	}
-
-	if err := enableAndStart(ctx, opts); err != nil {
-		return err
-	}
-	res.Steps = append(res.Steps, "static 安装完成（docker/dockerd/containerd/runc 已就位）")
-	return nil
-}
-
-// installComposePluginOnly 只补装 compose v2 插件（变体 B 必需，变体 A 通常在 deb 里自带）。
-func installComposePluginOnly(ctx context.Context, opts Options) error {
-	src := opts.Layout.ComposePluginPath()
-	if _, err := os.Stat(src); err != nil {
-		return fmt.Errorf("缺少 compose v2 单二进制 %s（变体 B 必须随包提供：compose v1 不认 name: 与 depends_on.condition）", src)
-	}
-	destDir := "/usr/local/lib/docker/cli-plugins"
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return fmt.Errorf("创建 %s 失败: %w", destDir, err)
-	}
-	dest := filepath.Join(destDir, "docker-compose")
-	if out, err := opts.Runner.Run(ctx, "install", "-m", "0755", src, dest); err != nil {
-		return fmt.Errorf("安装 compose 插件失败: %w\n%s", err, out.Tail(6))
-	}
-	opts.logf("compose 插件已安装到 %s", dest)
-	return nil
-}
-
 // enableAndStart 拉起 dockerd。systemd 缺失时降级为「由外部拉起」，并如实记录。
 func enableAndStart(ctx context.Context, opts *Options) error {
 	if opts.NoSystemd {
 		opts.logf("已指定 --no-systemd：跳过 systemctl，等待外部拉起的 dockerd")
 		return nil
 	}
-	if !execx.Has("systemctl") {
+	if !opts.hasSystemctl() {
 		opts.logf("WARN: 本机没有 systemctl（容器或精简系统），跳过 enable --now；请手动拉起 dockerd")
 		return nil
 	}
@@ -380,6 +334,14 @@ func enableAndStart(ctx context.Context, opts *Options) error {
 // 为什么要轮询而不是 sleep 固定秒数：慢机器上 dockerd 首次起要初始化
 // containerd 与 overlay2，可能 10 秒也可能 40 秒；固定 sleep 要么慢要么假失败。
 func WaitDaemon(ctx context.Context, runner execx.Runner, timeout time.Duration, logf func(string, ...any)) (string, error) {
+	return WaitDaemonBin(ctx, "docker", runner, timeout, logf)
+}
+
+// WaitDaemonBin 与 WaitDaemon 相同，但显式指定 docker 命令（变体 B 是绝对路径）。
+func WaitDaemonBin(ctx context.Context, dockerBin string, runner execx.Runner, timeout time.Duration, logf func(string, ...any)) (string, error) {
+	if dockerBin == "" {
+		dockerBin = "docker"
+	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
@@ -388,7 +350,7 @@ func WaitDaemon(ctx context.Context, runner execx.Runner, timeout time.Duration,
 	var lastErr error
 	for {
 		attempt++
-		out, err := runner.Run(ctx, "docker", "version", "--format", "{{.Server.Version}}")
+		out, err := runner.Run(ctx, dockerBin, "version", "--format", "{{.Server.Version}}")
 		if err == nil {
 			if v := strings.TrimSpace(out.Stdout); v != "" {
 				return v, nil
@@ -414,11 +376,19 @@ func WaitDaemon(ctx context.Context, runner execx.Runner, timeout time.Duration,
 
 // CheckComposeVersion 校验 compose v2 版本 ≥ 2.20。
 func CheckComposeVersion(ctx context.Context, runner execx.Runner) (string, error) {
-	out, err := runner.Run(ctx, "docker", "compose", "version", "--short")
+	return CheckComposeVersionBin(ctx, "docker", runner)
+}
+
+// CheckComposeVersionBin 与 CheckComposeVersion 相同，但显式指定 docker 命令。
+func CheckComposeVersionBin(ctx context.Context, dockerBin string, runner execx.Runner) (string, error) {
+	if dockerBin == "" {
+		dockerBin = "docker"
+	}
+	out, err := runner.Run(ctx, dockerBin, "compose", "version", "--short")
 	raw := strings.TrimSpace(out.Stdout)
 	if err != nil || raw == "" {
 		// 老版本没有 --short，退回解析整段输出
-		out2, err2 := runner.Run(ctx, "docker", "compose", "version")
+		out2, err2 := runner.Run(ctx, dockerBin, "compose", "version")
 		if err2 != nil {
 			return "", fmt.Errorf("docker compose 插件不可用（%v）", err2)
 		}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -44,6 +45,15 @@ func runTUI(sess *session) int {
 		}
 
 		fmt.Fprintf(out, "\n下一步：%s（%s）\n", names[string(next)], next)
+		// S2 之前确认镜像包实际路径（设计 §7.1：镜像 tar 与 setup.run 分离分发，
+		// 现场经常放在 U 盘挂载点或数据盘）。安装器能按约定猜几个位置，但
+		// 「猜到了」与「用户确认过」是两件事——让用户看一眼，比事后 sha256 不匹配便宜。
+		if next == state.StepVerify {
+			if err := confirmImagesTar(sess, in, out); err != nil {
+				fmt.Fprintln(os.Stderr, "读取输入失败:", err)
+				return 1
+			}
+		}
 		if next == state.StepEnv {
 			fmt.Fprintln(out, "提示：渲染 .env 需要先填写部署表单。TUI 模式请用参数提供，或改用 Web 向导。")
 		}
@@ -94,6 +104,41 @@ func runTUI(sess *session) int {
 		}
 		fmt.Fprintf(out, "OK   %s 完成\n", names[string(next)])
 	}
+}
+
+// confirmImagesTar 让用户确认（或改正）镜像包路径。
+//
+// 三种输入：回车 = 用当前路径；输入新路径 = 改用它；s = 跳过确认（保持当前路径）。
+// 路径不存在只提示、不退出：S2 会用统一的错误话术说明「拷贝到哪、怎么改」，
+// 在这里提前拦住反而会让人以为安装器只会报错。
+func confirmImagesTar(sess *session, in *bufio.Reader, out io.Writer) error {
+	sess.mu.Lock()
+	current := sess.imagesTar
+	sess.mu.Unlock()
+
+	fmt.Fprintf(out, "镜像包：%s（%s）\n", current, describeFile(current))
+	fmt.Fprint(out, "  回车确认 / 输入新路径 / s 跳过: ")
+	line, err := in.ReadString('\n')
+	if err != nil && strings.TrimSpace(line) == "" {
+		return err
+	}
+	answer := strings.TrimSpace(line)
+	if answer == "" || strings.EqualFold(answer, "s") {
+		return nil
+	}
+	sess.SetImagesTar(answer)
+	fmt.Fprintf(out, "  已改为：%s（%s）\n", answer, describeFile(answer))
+	return nil
+}
+
+// describeFile 给出一句人话的大小描述，读不到就说读不到（不猜）。
+func describeFile(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "读不到：" + err.Error()
+	}
+	mb := float64(info.Size()) / (1024 * 1024)
+	return fmt.Sprintf("%.1f MB", mb)
 }
 
 // prompt 读取一行 y/n 确认。空行按默认值处理。

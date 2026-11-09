@@ -713,6 +713,7 @@ bash installer/build/make-manifest.sh --sign
 | v1.0 | 2026-11-09 | 首版。裁定图形化向导形态（本机临时 Web 安装器 + 同源 TUI 降级入口）；Docker 双变体（deb 闭包 / static 二进制）；tar 分离分发；用户端两阶段；8 项开放问题待裁定 |
 | v1.1 | 2026-11-09 | 新增 §14 实施与验证状态：①② 闭环（真闭包 / 真签名 / 独立验签），③ **部分闭环**（未覆盖项与接手人写明，不算完成） |
 | v1.2 | 2026-11-09 | ③ 升级为**容器内十步闭环**（S1→S10 全 DONE），并登记由此抓到的两个只在真栈上暴露的缺陷（Pre-Depends 顺序、卷属主）；包体因代码变更重打包，sha256 更新；真机与变体 B 仍交 vm-harness；新增 §14.4：变体 B 六项 OS 基线预检落成 Go 代码（只探测不处置，10 条单测，真机复跑待做） |
+| v1.3 | 2026-11-09 | 新增 §14.5：**变体 B 安装流程落成代码**（静态落点不在 PATH、compose 插件、unit 绝对路径 + 独立就绪脚本、firewalld 处置留痕、安装清单驱动的卸载），+27 条用例；同时把「同输入同输出」的说法收敛成「tar 侧确定 + SOURCE_DATE_EPOCH 可复现」，收尾清理改为 warn 且不改退出码 |
 
 ---
 
@@ -811,5 +812,26 @@ Docker Desktop 的 overlayfs 上**被静默忽略**），并用 `fallocate` 超�
 验证：10 条单测全部用 fake runner（覆盖命令不存在 / 超时 / 输出无法解析 / 麒麟与非麒麟分支），
 `go test ./...` 85 pass / 3 skip。**这 10 条跑的是构造输出，不是真机**——
 vm-harness 已用 shell 在麒麟真机上实测六项并回写基线；Go 侧需在真机复跑一次才能说「代码与实测一致」。
+
+### 14.5 变体 B 安装流程 —— **代码与单测就绪，真机端到端待 vm-harness**
+
+落点：`internal/dockerinstall/variantb.go`（静态安装 + firewalld 处置）、
+`internal/buildplan/static_paths.go`（落点即协议）、`internal/installed`（安装清单与按清单卸载）、
+`cmd/tianji-installer/{flow,tui}.go`（docker 绝对路径贯穿、清单落盘、S2 前确认镜像包路径）。
+
+| 要求（`VARIANT-B-OS-BASELINE.md` §6） | 落法 |
+|---|---|
+| 二进制落 `/usr/local/lib/tianji/docker-static/`，不放 PATH | `Layout.StaticDockerBinDir()`；unit 与全流程命令都用绝对路径（`Layout.DockerCLI`），用例断言调用串里**不出现** `/usr/local/bin` |
+| compose 插件落 `/usr/local/lib/docker/cli-plugins` | `resolveComposeSource` 认「规范落点 → 旧落点（并 WARN）」，两个都没有就 fail-closed |
+| unit：绝对 `ExecStart` + `After=network-online.target firewalld.service` + 就绪等待 | 就绪等待**独立成 `wait-ready.sh`**，不走 `ExecStartPost=` 内联循环：systemd 会展开 `$VAR`/`${VAR}`，内联必须用 `$$` 转义且看不出来；用例断言 unit 里不出现 shell 循环 |
+| 不碰发行版包管理（禁 `rpm -e`/`dnf`/`brctl`/`apt`/`dpkg`/`update-ca-certificates`） | 用例遍历所有调用串，命中黑名单即失败；卸载只删清单项，`volumes/` 永不在清单里且额外按路径分段保护 |
+| firewalld 处置是安装步骤、必须留痕 | `S3_DOCKER` 起 dockerd **之前**读 `is-active` → `disable --now` → 再读一次，`Before/After/Action` 进 `Result.Firewalld` 与 99-summary；`is-active` 对 inactive 返回 3，不能用 err 判探测失败；处置失败不阻断（真失败会在起 dockerd 时以 `ZONE_CONFLICT` 暴露） |
+| 保留镜像 tar 路径确认交互 | TUI 在 `S2_VERIFY` 前确认（回车 / 新路径 / `s` 跳过）；Web 早已有 `SetImagesTar`；读不到就如实说「读不到」，不编大小 |
+| Go 单测照旧（execx fake 覆盖命令不存在/超时/输出异常） | 新增 27 条（`installed` 10 / `dockerinstall` 11 / `flow` 6），`go test ./...` **112 pass / 3 skip**；`CheckSystemd` 做成可注入，否则 Windows 上 firewalld 与 unit 两条分支永远测不到 |
+
+**仍未验证**：以上都是 fake runner + 临时目录。真机上要验的是 firewalld `is-active` 的真实
+输出形态、kysec 对静态目录的 exectl 判定、systemd 实际执行 `ExecStartPost` 脚本的时机与失败语义、
+以及「不进 PATH 的 docker」在现场运维脚本里的可发现性（需要文档里明确写绝对路径）。
+
 
 

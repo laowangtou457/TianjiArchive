@@ -18,6 +18,7 @@ import (
 	"tianji-archive/installer/internal/envfile"
 	"tianji-archive/installer/internal/execx"
 	"tianji-archive/installer/internal/images"
+	"tianji-archive/installer/internal/installed"
 	"tianji-archive/installer/internal/preflight"
 	"tianji-archive/installer/internal/selfclean"
 	"tianji-archive/installer/internal/stack"
@@ -162,6 +163,11 @@ type session struct {
 	runner   execx.Runner
 	cleaner  *selfclean.Cleaner
 
+	// dockerBin 是本变体该用哪个 docker 命令：变体 A 走 PATH（"docker"），
+	// 变体 B 是静态目录的绝对路径（安装器刻意不往 PATH 里放东西）。
+	// 全流程只从这里取，避免「有的步骤走 PATH、有的走绝对路径」这种半截状态。
+	dockerBin string
+
 	// chown 单独抽成一个字段，只为了单测能断言「哪个目录被改成哪个 uid:gid」。
 	// 直接调 os.Chown 没法测：单测跑在 Windows/非 root 上，chown 必然 EPERM，
 	// 断言不了任何东西，最后只能退化成「不测」，而这段逻辑恰恰是 S6 的成败点。
@@ -252,6 +258,7 @@ func newSession(cfg config) (*session, error) {
 	if values, ok := loadEnvValues(s.layout.DeployRoot); ok {
 		s.values = values
 	}
+	s.dockerBin = layout.DockerCLI(mf.Variant)
 	if raw, readErr := os.ReadFile("/etc/os-release"); readErr == nil {
 		s.osInfo = buildplan.ParseOSRelease(string(raw))
 		s.osMatch = buildplan.MatchOS(s.osInfo, mf.Variant)
@@ -650,7 +657,7 @@ func (s *session) stepPreflight(ctx context.Context, w io.Writer) error {
 
 // existingContainers 探测是否已有 tianji 容器。
 func (s *session) existingContainers(ctx context.Context) []string {
-	out, err := s.runner.Run(ctx, "docker", "ps", "-a", "--filter", "label=com.docker.compose.project=tianji-archive", "--format", "{{.Names}}")
+	out, err := s.runner.Run(ctx, s.dockerBinOf(), "ps", "-a", "--filter", "label=com.docker.compose.project=tianji-archive", "--format", "{{.Names}}")
 	if err != nil {
 		return nil
 	}
@@ -707,6 +714,7 @@ func (s *session) stepDocker(ctx context.Context, w io.Writer) error {
 		Layout:    s.layout,
 		Manifest:  s.manifest,
 		Runner:    s.runner,
+		DockerBin: s.dockerBinOf(),
 		Codename:  s.osInfo.Codename,
 		NoSystemd: s.cfg.noSystemd || !execx.Has("systemctl"),
 		Hash:      buildplan.HashFile,
@@ -716,11 +724,54 @@ func (s *session) stepDocker(ctx context.Context, w io.Writer) error {
 	s.mu.Lock()
 	s.dockerRes = res
 	s.mu.Unlock()
+	// 安装清单要先落盘再判错：哪怕后面起 daemon 失败，已经写下去的文件也必须
+	// 能被卸载找到（否则下次安装会撞上「文件已存在」而两头都不知道是谁放的）。
+	if saveErr := s.saveInstallRecord(res); saveErr != nil {
+		fmt.Fprintf(w, "WARN: 安装清单未落盘（%v）：卸载时将无法按清单删除，需手工清理\n", saveErr)
+	}
+	if res != nil && res.Firewalld != nil {
+		fw := res.Firewalld
+		fmt.Fprintf(w, "firewalld: tool=%s before=%q after=%q —— %s\n", fw.Tool, fw.Before, fw.After, fw.Action)
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "方式=%s dockerd=%s compose=%s\n", res.Method, res.DaemonVersion, res.ComposeVersion)
+	fmt.Fprintf(w, "方式=%s docker=%s dockerd=%s compose=%s\n", res.Method, res.DockerBin, res.DaemonVersion, res.ComposeVersion)
 	return nil
+}
+
+// dockerBinOf 返回本变体使用的 docker 命令（空值时回落 PATH 里的 docker）。
+func (s *session) dockerBinOf() string {
+	if s.dockerBin != "" {
+		return s.dockerBin
+	}
+	return "docker"
+}
+
+// saveInstallRecord 把「安装器亲手写了哪些文件」落盘，供卸载按清单删除。
+//
+// 为什么单独一个文件而不是塞进 state.json：state.json 是**流程**进度（步骤状态、
+// 断点），删掉重装会重置；清单是**事实**记录（系统里现在有哪些文件），
+// 生命周期与 state.json 不同——重装不该丢掉上一轮的清单，否则孤儿文件没人清。
+func (s *session) saveInstallRecord(res *dockerinstall.Result) error {
+	if res == nil || len(res.Installed) == 0 {
+		return nil
+	}
+	rec, err := installed.Load(s.layout.InstallRecordPath())
+	if err != nil {
+		// 旧文件坏了也要能继续装：改用新清单，但把原因说出来。
+		fmt.Printf("WARN: %v（将重建安装清单）\n", err)
+		rec = nil
+	}
+	if rec == nil {
+		rec = installed.New(s.manifest.Variant, s.manifest.Version)
+	}
+	for _, e := range res.Installed {
+		if addErr := rec.Add(e.Path, e.Kind, e.Why); addErr != nil {
+			return addErr
+		}
+	}
+	return rec.Save(s.layout.InstallRecordPath())
 }
 
 func (s *session) stepImages(ctx context.Context, w io.Writer) error {
@@ -734,6 +785,7 @@ func (s *session) stepImages(ctx context.Context, w io.Writer) error {
 		ExpectedSHA256: s.manifest.ImagesTar.SHA256,
 		ExpectedCount:  s.manifest.ImagesTar.ImageCount,
 		Runner:         s.runner,
+		DockerBin:      s.dockerBinOf(),
 		Hash:           buildplan.HashFile,
 		Logf:           func(format string, args ...any) { fmt.Fprintf(w, format+"\n", args...) },
 	})
@@ -919,6 +971,7 @@ func (s *session) newStack(w io.Writer) *stack.Stack {
 		ComposeFile:   s.layout.DeployedComposePath(),
 		EnvFile:       s.layout.EnvPath(),
 		Runner:        s.runner,
+		DockerBin:     s.dockerBinOf(),
 		APIBaseURL:    "http://127.0.0.1:3000",
 		ESBaseURL:     "http://127.0.0.1:9200",
 		HealthTimeout: 8 * time.Minute,
@@ -1003,6 +1056,15 @@ func (s *session) stepDone(w io.Writer) error {
 	fmt.Fprintf(w, "部署根  : %s\n", s.layout.DeployRoot)
 	fmt.Fprintf(w, "日志    : %s\n", s.log.Dir())
 	fmt.Fprintf(w, "状态    : %s\n", s.layout.StateFile)
+	// Docker 用的是哪个二进制必须写清楚：变体 B 不走 PATH，现场 `docker ps` 找不到命令
+	// 时会怀疑没装好，其实是装在 /usr/local/lib/tianji/docker-static（刻意不放 PATH）。
+	if s.dockerRes != nil {
+		fmt.Fprintf(w, "Docker  : %s（方式 %s，版本 %s）\n",
+			orDash(s.dockerRes.DockerBin), orDash(s.dockerRes.Method), orDash(s.dockerRes.DaemonVersion))
+		if fw := s.dockerRes.Firewalld; fw != nil {
+			fmt.Fprintf(w, "firewalld: %s → %s（%s）\n", orDash(fw.Before), orDash(fw.After), orDash(fw.Action))
+		}
+	}
 	fmt.Fprintf(w, "卸载    : sh %s --uninstall （保留业务数据）\n", s.cfg.runFile)
 	return nil
 }
@@ -1045,19 +1107,80 @@ func (e *formRequiredError) Error() string {
 	return "部署表单未填写：" + strings.Join(e.problems, "；")
 }
 
-// Uninstall 执行卸载：compose down（默认保留 volumes）。
+// Uninstall 执行卸载。
+//
+// 三步，顺序不能换：
+//  1. compose down —— 需要 dockerd 还活着，所以排在最前；
+//  2. 按安装清单删「安装器亲手写的文件」（变体 B：静态二进制目录、compose 插件、unit）；
+//  3. 可选删业务数据（volumes），默认保留。
+//
+// 第 2 步的纪律（设计 §6 第 4 条）：**只删清单里登记的**。清单缺失时说清楚
+// 「没装过 / 变体 A 由 deb 管」，绝不按「约定路径」猜着删——猜宽了删掉运维的东西，
+// 猜窄了留下孤儿文件让下次安装撞车，两种都比明确报错更糟。
 func (s *session) Uninstall(ctx context.Context, purgeVolumes bool, w io.Writer) error {
 	fmt.Fprintf(w, "执行卸载：%s\n", s.layout.DeployRoot)
-	if _, err := os.Stat(s.layout.DeployedComposePath()); err != nil {
-		return fmt.Errorf("部署根没有 compose 文件（%s），本机可能未安装：%w", s.layout.DeployedComposePath(), err)
+
+	// ① compose down
+	if _, err := os.Stat(s.layout.DeployedComposePath()); err == nil {
+		st := s.newStack(w)
+		args := st.ComposeArgs("down", "--remove-orphans")
+		out, err := s.runner.Run(ctx, s.dockerBinOf(), args...)
+		fmt.Fprintf(w, "%s\n", strings.TrimRight(out.Combined(), "\n"))
+		if err != nil {
+			// 不停在这里：栈没停掉也要把清单里的文件删掉，否则「卸载失败」会让
+			// 现场既没有干净的栈、也留着一堆半截文件。这里只记 WARN，由人来决定
+			// 要不要接着排查（compose down 失败常见原因：dockerd 已经没在跑了）。
+			fmt.Fprintf(w, "WARN: compose down 失败（继续按清单清理文件）: %v\n", err)
+		}
+	} else {
+		fmt.Fprintf(w, "部署根没有 compose 文件（%s），跳过 compose down\n", s.layout.DeployedComposePath())
 	}
-	st := s.newStack(w)
-	args := st.ComposeArgs("down", "--remove-orphans")
-	out, err := s.runner.Run(ctx, "docker", args...)
-	fmt.Fprintf(w, "%s\n", strings.TrimRight(out.Combined(), "\n"))
+
+	// ② 按清单删文件
+	rec, err := installed.Load(s.layout.InstallRecordPath())
 	if err != nil {
-		return fmt.Errorf("compose down 失败: %w", err)
+		return err
 	}
+	if rec == nil {
+		fmt.Fprintf(w, "没有安装清单（%s）：本机可能未装过，或装的是由 deb 管理的变体 A。\n"+
+			"按纪律不猜路径、不做删除；如需清理请对照交付文档手工处理。\n", s.layout.InstallRecordPath())
+	} else {
+		fmt.Fprintf(w, "安装清单：%s（%d 项，变体 %s）\n", s.layout.InstallRecordPath(), len(rec.Entries), rec.Variant)
+		// unit 在清单里才停服务：unit 被删掉后 systemd 仍认为 docker 在运行，
+		// 下一次安装会出现「service 已存在但 ExecStart 指向的文件不见了」。
+		if s.recordHasPath(rec, s.layout.DockerUnitPath()) {
+			if execx.Has("systemctl") && !s.cfg.noSystemd {
+				out, stopErr := s.runner.Run(ctx, "systemctl", "disable", "--now", "docker")
+				fmt.Fprintf(w, "%s\n", strings.TrimRight(out.Combined(), "\n"))
+				if stopErr != nil {
+					fmt.Fprintf(w, "WARN: systemctl disable --now docker 失败（继续删文件）: %v\n", stopErr)
+				}
+			} else {
+				fmt.Fprintln(w, "本机没有 systemctl（或 --no-systemd），跳过停 docker 服务")
+			}
+		}
+		items := rec.Uninstall(installed.RemoveOptions{
+			// 业务数据永不进清单，这里再保护一次：清单被人手改过也不至于删掉 volumes。
+			Protected: []string{s.layout.VolumesDir()},
+		})
+		for _, it := range items {
+			switch {
+			case it.Err != nil:
+				fmt.Fprintf(w, "FAIL  %s（%s）: %v\n", it.Path, it.Kind, it.Err)
+			case it.Skipped != "":
+				fmt.Fprintf(w, "SKIP  %s（%s）: %s\n", it.Path, it.Kind, it.Skipped)
+			default:
+				fmt.Fprintf(w, "DEL   %s（%s）\n", it.Path, it.Kind)
+			}
+		}
+		fmt.Fprintf(w, "%s\n", installed.Summary(items))
+		// 清单本身也删掉：留着会让下一次卸载对着一批不存在的文件再删一遍。
+		if rmErr := os.Remove(s.layout.InstallRecordPath()); rmErr != nil && !os.IsNotExist(rmErr) {
+			fmt.Fprintf(w, "WARN: 清单文件未删除（%v），下次卸载会重复处理同一批路径\n", rmErr)
+		}
+	}
+
+	// ③ 业务数据
 	if !purgeVolumes {
 		fmt.Fprintln(w, "业务数据已保留（volumes/ 未删除）")
 		return nil
@@ -1067,6 +1190,16 @@ func (s *session) Uninstall(ctx context.Context, purgeVolumes bool, w io.Writer)
 	}
 	fmt.Fprintf(w, "已删除业务数据目录 %s（不可恢复）\n", s.layout.VolumesDir())
 	return nil
+}
+
+// recordHasPath 判断清单里是否有某一项（卸载时决定要不要先停服务）。
+func (s *session) recordHasPath(rec *installed.Record, path string) bool {
+	for _, e := range rec.Entries {
+		if filepath.Clean(e.Path) == filepath.Clean(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // copyFile 复制文件并设置权限（先建目录，权限在 Windows 上不生效但不影响逻辑）。

@@ -401,6 +401,63 @@ kysec 探测失败不当放行、enforcing+exectl on 判 FAIL、命令不存在�
 非麒麟标 N/A、每项都留 Raw 与 Hint。
 
 
+### 6. 变体 B 安装流程（`kylin-uos`，本轮实现）
+
+`docs/VARIANT-B-OS-BASELINE.md` §6 的六条实现要求落到了代码里。与变体 A 的根本差别：
+**不经过任何包管理器**，系统里没有 rpm/dpkg 的归属数据库可查，所以「装了哪些文件」由安装器自己记账。
+
+| 项 | 落点 | 为什么 |
+|---|---|---|
+| docker/dockerd/containerd/runc | `/usr/local/lib/tianji/docker-static/`（tar 解压，`--strip-components=1`） | **不放 `/usr/local/bin`**：会与将来可能装的发行版 docker 争 PATH；**不放 `/usr/bin`**：麒麟装了 kysec-utils 时可能落进文件保护范围 |
+| compose v2 单二进制 | `/usr/local/lib/docker/cli-plugins/docker-compose` | 已实测被 docker CLI 识别；不用 `/usr/libexec/docker/cli-plugins`（RPM 系自带 docker 会争抢） |
+| 就绪等待脚本 | `<静态目录>/wait-ready.sh` | unit 的 `ExecStartPost=` 调它。**不把循环写进 unit**：systemd 会自己展开 `$VAR`/`${VAR}`，一个 shell 循环塞进 `Exec=` 要么得用 `$$` 转义（极易写错且看不出来），要么被悄悄展开成空串；独立脚本可以单独 `sh wait-ready.sh` 复现 |
+| docker.service | `/etc/systemd/system/docker.service` | `ExecStart=` 绝对路径；`After=network-online.target firewalld.service`；`LimitMEMLOCK=infinity` / `LimitNOFILE=65535`（ES 的要求，limits.d 只对登录会话生效，dockerd 由 systemd 拉起） |
+| 安装清单 | `/var/lib/tianji-install/installed-files.json` | 卸载**只删这份清单里的**东西（见下） |
+
+**docker 命令一律走绝对路径**（`buildplan.Layout.DockerCLI`）：变体 A 是 PATH 里的 `docker`，
+变体 B 是 `<静态目录>/docker`。这不是洁癖——把二进制放进 PATH 会出现「安装器能跑、宿主机
+`docker ps` 找不到命令」的半截状态，现场只会以为没装好。全流程（S3 安装、S4 导镜像、
+S6 up、S9 冒烟、卸载 compose down）都从 `session.dockerBin` 取，不允许有一步漏掉。
+
+**firewalld 处置是安装步骤，不是体检步骤**（统信实测：firewalld 在跑时 dockerd 二次启动
+直接 `ZONE_CONFLICT` 失败，是 daemon 起不来而不是端口不通）：
+
+1. 起 dockerd **之前**读 `systemctl is-active firewalld`（`is-active` 对 inactive 返回退出码 3，
+   不能拿 err 判「探测失败」）；
+2. 是 `active` 就 `systemctl disable --now firewalld`，再读一次；
+3. `Before` / `After` / 人话结论三项一起进安装报告（`dockerinstall.Result.Firewalld`），
+   S3 日志与 99-summary 都会打出来。**处置失败不阻断**：真失败会在起 dockerd 时以
+   `ZONE_CONFLICT` 暴露，那个报错比这里更具体——但结论里会明确写「处置失败/处置无效」。
+   没有 systemctl（或 `--no-systemd`）时写「跳过」，不假装处置过。
+
+SELinux / kysec **不做任何处置**，preflight 记录即可（`variantb.go` 只报告）。
+
+**卸载：只删自己写下的清单**。变体 B 没有包管理器帮忙反查归属，所以：
+
+- 安装时把每个写下去的文件/目录登记进 `installed-files.json`（含 `Why`，说明它是干什么的）；
+- 卸载时先 `compose down`（需要 dockerd 还活着）→ 按清单删（**文件先于目录**，深的先删）
+  → 可选删 `volumes/`；
+- 清单缺失时**什么都不删**，只说清「没装过 / 变体 A 由 deb 管」——按约定路径猜着删，
+  猜宽了删掉运维的东西、猜窄了留孤儿文件让下次安装撞车，两种都比明确报错更糟；
+- `volumes/` 永不在清单里，卸载时再额外按路径分段做一次受保护判断
+  （`tianji-backup-bak` 不会被误判成 `tianji/volumes` 的子路径）。
+
+S2 之前 TUI 也补了镜像包路径确认（回车确认 / 输入新路径 / `s` 跳过）：镜像 tar 分离分发，
+现场经常放在 U 盘挂载点。读不到路径时如实打「读不到：<原因>」，不编大小。
+
+**本轮新增用例 27 条**（`go test ./...` 共 **112 pass / 3 skip**，`gofmt`/`go vet` 干净；此前是 85 pass）：
+
+| 包 | 覆盖 |
+|---|---|
+| `internal/installed`（10 条） | 拒绝相对路径/根目录、去重、落盘往返、清单损坏报错、**只删清单内**、文件先于目录、volumes 前缀保护（含前缀相近不误判）、干跑、单项失败不中断、不存在不算失败 |
+| `internal/dockerinstall`（11 条） | 二进制落在静态目录且**引用里不出现 `/usr/local/bin`**、unit 三个硬要求（绝对 ExecStart / ExecStartPost / After）、unit 里不许有 shell 循环、**全程不碰 apt/dpkg/rpm/dnf/brctl/update-ca-certificates**、firewalld 四种分支（active→disable、inactive 不动、处置失败留痕不致命、无 systemd 说跳过）、compose 源规范/旧落点/缺失、缺 tgz fail-closed、变体 A 仍走 PATH |
+| `cmd/tianji-installer`（6 条） | 变体 B 的 docker 绝对路径、清单增量合并落盘、**卸载只删清单内**（运维文件与 volumes 保住、清单自身删掉）、无清单不删、`--purge` 才删数据、TUI 路径确认三种输入 |
+
+**诚实边界**：以上全部是 fake runner + 临时目录测出来的，**没有在真麒麟/统信上跑过**。
+firewalld 的真实 `is-active` 输出形态、kysec 对静态目录的 exectl 判定、systemd 对
+`ExecStartPost` 脚本的实际执行时机，都要等 vm-harness 真机端到端。
+
+
 ## 仍然没验证的事（如实登记，不打包成「已通过」）
 
 1. **十步端到端只在容器里跑通过，真机仍未跑**：`S1→S10` 已在特权 systemd 容器 + 嵌套

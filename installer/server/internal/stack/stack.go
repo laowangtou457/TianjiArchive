@@ -38,6 +38,9 @@ type Options struct {
 	ComposeFile string
 	EnvFile     string
 	Runner      execx.Runner
+	// DockerBin 是 docker 命令：变体 A 走 PATH，变体 B 是静态目录的绝对路径。
+	// 空值按 "docker" 处理（保持既有调用方不感知）。
+	DockerBin string
 	// HealthTimeout 是 up 之后等待所有服务 healthy 的上限，默认 5 分钟。
 	HealthTimeout time.Duration
 	// APIBaseURL / ESBaseURL 是宿主侧访问地址，默认 http://127.0.0.1:3000 与 :9200。
@@ -73,6 +76,9 @@ type Stack struct {
 func New(opts Options) *Stack {
 	if opts.Runner == nil {
 		opts.Runner = execx.OSRunner{}
+	}
+	if opts.DockerBin == "" {
+		opts.DockerBin = "docker"
 	}
 	if opts.HealthTimeout <= 0 {
 		opts.HealthTimeout = 5 * time.Minute
@@ -124,7 +130,7 @@ func (s *Stack) ComposeArgs(sub ...string) []string { return s.compose(sub...) }
 // Up 执行 docker compose up -d。
 func (s *Stack) Up(ctx context.Context) error {
 	s.logf("执行 docker compose up -d（首次启动要拉齐 8 个容器，1~3 分钟）…")
-	res, err := s.opts.Runner.Run(ctx, "docker", s.compose("up", "-d")...)
+	res, err := s.opts.Runner.Run(ctx, s.opts.DockerBin, s.compose("up", "-d")...)
 	s.logf("%s", strings.TrimRight(res.Combined(), "\n"))
 	if err != nil {
 		return fmt.Errorf("docker compose up 失败: %w", err)
@@ -169,7 +175,7 @@ func (s *Stack) WaitHealthy(ctx context.Context) ([]ServiceHealth, error) {
 // ps 解析 `docker compose ps --format json`。
 // compose v2.21+ 输出一个 JSON 数组，更早的版本输出每行一个 JSON 对象，两种都吃。
 func (s *Stack) ps(ctx context.Context) ([]ServiceHealth, error) {
-	res, err := s.opts.Runner.Run(ctx, "docker", s.compose("ps", "--format", "json")...)
+	res, err := s.opts.Runner.Run(ctx, s.opts.DockerBin, s.compose("ps", "--format", "json")...)
 	if err != nil {
 		return nil, fmt.Errorf("compose ps 失败: %w", err)
 	}
@@ -243,7 +249,7 @@ func orDash(s string) string {
 // Migrate 执行数据库迁移（幂等，可重跑）。命令形式与 offline/smoke.sh 一致。
 func (s *Stack) Migrate(ctx context.Context) error {
 	s.logf("执行数据库迁移 …")
-	res, err := s.opts.Runner.Run(ctx, "docker",
+	res, err := s.opts.Runner.Run(ctx, s.opts.DockerBin,
 		s.compose("exec", "-T", APIContainer, "pnpm", "--filter", "@tianji/api", "migration:run")...)
 	s.logf("%s", strings.TrimRight(res.Combined(), "\n"))
 	if err != nil {
@@ -255,7 +261,7 @@ func (s *Stack) Migrate(ctx context.Context) error {
 // Seed 执行种子数据（幂等，可重跑）。
 func (s *Stack) Seed(ctx context.Context) error {
 	s.logf("执行种子数据 …")
-	res, err := s.opts.Runner.Run(ctx, "docker",
+	res, err := s.opts.Runner.Run(ctx, s.opts.DockerBin,
 		s.compose("exec", "-T", APIContainer, "pnpm", "--filter", "@tianji/api", "seed")...)
 	s.logf("%s", strings.TrimRight(res.Combined(), "\n"))
 	if err != nil {
@@ -326,7 +332,7 @@ func (s *Stack) Smoke(ctx context.Context) ([]SmokeItem, error) {
 
 func (s *Stack) execSmoke(ctx context.Context, name, script string) SmokeItem {
 	item := SmokeItem{Name: name}
-	res, err := s.opts.Runner.Run(ctx, "docker",
+	res, err := s.opts.Runner.Run(ctx, s.opts.DockerBin,
 		s.compose("exec", "-T", APIContainer, "pnpm", "--filter", "@tianji/api", script)...)
 	output := res.Combined()
 	item.Output = truncate(output, 6000)
