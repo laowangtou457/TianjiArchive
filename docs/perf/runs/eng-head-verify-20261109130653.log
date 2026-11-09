@@ -1,0 +1,32 @@
+=== HEAD DYNAMIC VERIFY @ 870165b ===
+--- 1. api typecheck (tsc --noEmit) ---
+TSC_OK
+
+--- 2. full test suite (contains storage.dual-endpoint.spec.ts) ---
+[31m[Nest] 13472  - [39m2026/11/09 13:07:08 [31m  ERROR[39m [38;5;3m[FileService] [39m[31m合并分片失败: InvalidPart[39m
+[32m[Nest] 13472  - [39m2026/11/09 13:07:08 [32m    LOG[39m [38;5;3m[FileService] [39m[32m文件入库并已入抽取队列: 报告.pdf（c8cdecc3a6e4…）[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[FileService] [39m[33m入抽取队列失败（可手动重试）: redis down[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[FileService] [39m[33m文件哈希不一致 item=i-1 client=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff server=c8cdecc3a6e43b5288df52e901f69c30ac897cbb9719c0aa87f2111afe05b1d0[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[FileService] [39m[33m文件哈希不一致 item=i-1 client=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff server=c8cdecc3a6e43b5288df52e901f69c30ac897cbb9719c0aa87f2111afe05b1d0[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[FileService] [39m[33m文件哈希不一致 item=i-1 client=0000000000000000000000000000000000000000000000000000000000000000 server=c8cdecc3a6e43b5288df52e901f69c30ac897cbb9719c0aa87f2111afe05b1d0[39m
+[32m[Nest] 13472  - [39m2026/11/09 13:07:08 [32m    LOG[39m [38;5;3m[FileService] [39m[32m文件入库并已入抽取队列: 报告.pdf（c8cdecc3a6e4…）[39m
+[32m[Nest] 13472  - [39m2026/11/09 13:07:08 [32m    LOG[39m [38;5;3m[FileService] [39m[32m文件入库并已入抽取队列: 报告.pdf（c8cdecc3a6e4…）[39m
+[32m[Nest] 13472  - [39m2026/11/09 13:07:08 [32m    LOG[39m [38;5;3m[FileService] [39m[32m文件入库并已入抽取队列: a.txt（41613465bb3a…）[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[FileService] [39m[33m四性检测读取对象失败 file=file-1: NoSuchKey[39m
+ [32m✓[39m apps/api/__tests__/file.sha256-integrity.spec.ts [2m([22m[2m27 tests[22m[2m)[22m[90m 47[2mms[22m[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[PermissionGuard] [39m[33m越权拦截 user=u-1 domain=ITEM op=READ GET /api/archive/items?page=1&size=20[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[PermissionGuard] [39m[33m越权拦截 user=u-1 domain=ITEM op=READ GET /api/archive/items?page=1&size=20[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[PermissionGuard] [39m[33m越权拦截 user=u-1 domain=ITEM op=READ GET /api/archive/items?page=1&size=20[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[PermissionGuard] [39m[33m越权拦截 user=u-1 domain=ITEM op=READ GET /api/archive/items?page=1&size=20[39m
+[33m[Nest] 13472  - [39m2026/11/09 13:07:08 [33m   WARN[39m [38;5;3m[PermissionGuard] [39m[33m越权拦截 user=u-1 domain=ITEM op=READ GET /api/archive/items?page=1&size=20[39m
+ [32m✓[39m apps/api/__tests__/user.permission-request-level.spec.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m apps/api/__tests__/app.module-tree.spec.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 4385[2mms[22m[39m
+   [33m[2m✓[22m[39m 应用模块树守卫[2m > [22m模块间装配审计脚本通过（含正向证据，非空转） [33m4367[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m25 passed[39m[22m[90m (25)[39m
+[2m      Tests [22m [1m[32m443 passed[39m[22m[90m (443)[39m
+[2m   Start at [22m 13:07:02
+[2m   Duration [22m 13.11s[2m (transform 8.55s, setup 1.07s, collect 80.87s, tests 5.53s, environment 8ms, prepare 5.93s)[22m
+
+
+=== DYNAMIC VERIFY DONE: docs/perf/runs/eng-head-verify-20261109130653.log ===

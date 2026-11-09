@@ -1,0 +1,78 @@
+=== GLOBAL CONSISTENCY REVIEW @ 870165b62a892ecf97162921c80567d935d0c087 ===
+WORKTREE_CLEAN=[1] entries
+
+--- 1. 【2】双份同步：cmp 双向 + sha256 基线 ---
+CMP infra->offline entrypoint SAME
+CMP offline->infra entrypoint SAME
+CMP infra->offline s3.tpl SAME
+CMP offline->infra s3.tpl SAME
+BASELINE_EXPECT entrypoint=f3a4cf9e05cbd2e238589fcb93ba3b6b4c99f00586e9f3b77bc0b47eba4177cd s3.tpl=33846f862e14cd741b8ff146b1243675ccac6a0b26cd02ce725c1d5376bc8a70
+f3a4cf9e05cbd2e238589fcb93ba3b6b4c99f00586e9f3b77bc0b47eba4177cd *infra/seaweedfs/entrypoint.sh
+33846f862e14cd741b8ff146b1243675ccac6a0b26cd02ce725c1d5376bc8a70 *infra/seaweedfs/s3.json.tpl
+f3a4cf9e05cbd2e238589fcb93ba3b6b4c99f00586e9f3b77bc0b47eba4177cd *offline/seaweedfs/entrypoint.sh
+33846f862e14cd741b8ff146b1243675ccac6a0b26cd02ce725c1d5376bc8a70 *offline/seaweedfs/s3.json.tpl
+
+--- 2. save-images.sh 引用的 4 份文件在 HEAD 均存在 ---
+IN_HEAD infra/seaweedfs/entrypoint.sh
+IN_HEAD infra/seaweedfs/s3.json.tpl
+IN_HEAD offline/seaweedfs/entrypoint.sh
+IN_HEAD offline/seaweedfs/s3.json.tpl
+
+--- 3. compose 挂载源 / 镜像清单在 HEAD 均存在 ---
+IN_HEAD offline/images.txt
+IN_HEAD offline/load-images.sh
+IN_HEAD offline/smoke.sh
+IN_HEAD offline/save-images.sh
+IN_HEAD offline/docker-compose.offline.yml
+IN_HEAD infra/backup/Dockerfile
+IN_HEAD infra/backup/backup.sh
+IN_HEAD infra/backup/entrypoint.sh
+
+--- 4. 双端点契约：spec -> impl 符号引用 ---
+6: *   - rawClient（内部端点，供所有服务端 S3 操作）；
+7: *   - presignClient（S3_PUBLIC_*，仅签发预签名 URL）。
+62:  it('rawClient 走内部容器端点，presignClient 走 S3_PUBLIC_* 且二者独立', () => {
+64:    expect(svc.rawClient).toBeDefined();
+65:    expect(svc.presignClient).toBeDefined();
+67:    expect(svc.presignClient).not.toBe(svc.rawClient);
+impl:
+apps/api/src/infra/storage/storage.module.ts:67:      endPoint: mc?.publicEndPoint ?? '127.0.0.1',
+apps/api/src/infra/storage/storage.module.ts:68:      port: mc?.publicPort ?? 8333,
+apps/api/src/infra/storage/storage.module.ts:69:      useSSL: mc?.publicUseSSL ?? false,
+apps/api/src/infra/storage/storage.module.ts:108:  public get rawClient(): Minio.Client {
+apps/api/src/infra/storage/storage.module.ts:113:  public get presignClient(): Minio.Client {
+apps/api/src/config/configuration.ts:62:    publicEndPoint: string;
+apps/api/src/config/configuration.ts:63:    publicPort: number;
+apps/api/src/config/configuration.ts:64:    publicUseSSL: boolean;
+apps/api/src/config/configuration.ts:130:      publicEndPoint: str(process.env.S3_PUBLIC_ENDPOINT, '127.0.0.1'),
+apps/api/src/config/configuration.ts:131:      publicPort: int(process.env.S3_PUBLIC_PORT, 8333),
+apps/api/src/config/configuration.ts:132:      publicUseSSL: bool(process.env.S3_PUBLIC_USE_SSL, false),
+apps/api/src/config/configuration.ts:188:  if (config.minio.publicEndPoint === '127.0.0.1' || config.minio.publicEndPoint === 'localhost') {
+
+--- 5. presign:host 探针 -> MinioService 方法引用 ---
+HAS_METHOD initMultipart
+HAS_METHOD presignUploadPart
+HAS_METHOD presignPut
+HAS_METHOD presignGet
+HAS_METHOD abortMultipart
+package.json 脚本:
+19:    "s3:probe": "ts-node src/scripts/seaweedfs-s3-probe.ts",
+20:    "presign:host": "ts-node src/scripts/presign-host-probe.ts",
+21:    "demo:books": "ts-node src/scripts/demo-books-seed.ts",
+
+--- 6. compose config 解析（主 + 离线）---
+MAIN_CONFIG_OK
+OFFLINE_CONFIG_OK
+offline compose S3_PUBLIC/9333:
+38:  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-127.0.0.1}
+39:  S3_PUBLIC_PORT: ${S3_PUBLIC_PORT:-8333}
+40:  S3_PUBLIC_USE_SSL: ${S3_PUBLIC_USE_SSL:-false}
+
+--- 7. shell 语法全检 ---
+SHELL_SYNTAX_ALL_OK
+
+--- 8. 残留清理核查 ---
+TMP_SW_DIRS=0
+SW_LEGACY_CONTAINERS=0
+
+=== STATIC REVIEW DONE: docs/perf/runs/eng-head-consistency-20261109130606.log ===
