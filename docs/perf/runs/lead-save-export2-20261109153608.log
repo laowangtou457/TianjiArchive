@@ -1,0 +1,20 @@
+=== save-images.sh save (2026-11-09T15:36:09+08:00) ===
+[L1] cmp 防漂移：entrypoint.sh / s3.json.tpl 均 SAME
+[L0] 绑定校验通过：4/4 自建镜像 ID 与 BUILD-INFO.txt 一致
+[L0] 构建时 HEAD=aa7a2482c43918a7aebeba9fa669e9cc52d37be7 / 当前 HEAD=e362ac5be8c7081708851acef86a520d3fe5133f
+[L0] WARN: HEAD 已变化（构建后有新提交）；镜像 ID 未变说明未重建，请确认是否需重新 build + --record
+[L2/L3] images.txt 共 8 个镜像，全部本地存在
+导出镜像共 8 个：
+  postgres:16-alpine
+  redis:7-alpine
+  tianji-elasticsearch-ik:8.13.4
+  chrislusf/seaweedfs:3.79
+  tianji-archive-api:1.0.0
+  tianji-archive-web:1.0.0
+  tianji-archive-extractor:1.0.0
+  tianji-archive-backup:1.0.0
+完成：/e/TianjiArchive/offline/tianji-offline-images.tar
+校验文件：/e/TianjiArchive/offline/SHA256SUMS（现场 load 前先 sha256sum -c）
+SAVE_EXIT=0
+-rw-r--r-- 1 Administrator 197121   92 Nov  9 15:37 SHA256SUMS
+-rw-r--r-- 1 Administrator 197121 1.5G Nov  9 15:37 tianji-offline-images.tar
