@@ -1,0 +1,13 @@
+=== stage-C3 API 真实签发路径（guard 修复后）(2026-11-09T15:31:05+08:00) ===
+--- roles 列表（取 R1 id） ---
+R1ID=8171a305-0069-40d7-96b9-10d91b02eb70
+--- admin 创建 R1 用户 stagec1 ---
+{"code":0,"data":{"id":"0c526e80-80d5-47de-8095-b97a5c255ab0","username":"stagec1","displayName":"阶段C取证员","status":"ACTIVE","maxSecurityLevel":"PUBLIC","roles":[{"id":"8171a305-0069-40d7-96b9-10d91b02eb70","code":"R1","name":"档案管理员"}],"scopes":[{"id":"d5d9553b-b73e-433c-8d51-6eef392e2738","scopeType":"SELF","scopeRefId":null}],"lastLoginAt":null,"createdAt":"2026-11-09T07:31:06.415Z"},"message":"成功","timestamp":"2026-11-09T07:31:06.429Z"}
+HTTP=201
+newUserId=0c526e80-80d5-47de-8095-b97a5c255ab0
+--- R1 登录并 presign ---
+r1_token_head=eyJhbGciOi
+HTTP=400
+presign_url_host=NONE
+presign_proto=NONE
+bucket=?

@@ -1,0 +1,15 @@
+=== 授权全宗范围并重新签发 (2026-11-09T15:32:00+08:00) ===
+{"code":0,"data":{"id":"0c526e80-80d5-47de-8095-b97a5c255ab0","username":"stagec1","displayName":"阶段C取证员","status":"ACTIVE","maxSecurityLevel":"PUBLIC","roles":[{"id":"8171a305-0069-40d7-96b9-10d91b02eb70","code":"R1","name":"档案管理员"}],"scopes":[{"id":"ff37e7d3-4255-4164-b206-28fbf4635242","scopeType":"FONDS","scopeRefId":"ccc49af9-663e-4841-892b-369fd4b29396"}],"lastLoginAt":"2026-11-09T07:31:39.415Z","createdAt":"2026-11-09T07:31:06.415Z"},"message":"成功","timestamp":"2026-11-09T07:32:01.477Z"}
+HTTP=200
+--- R1 presign（scope 授权后） ---
+[eval]:1
+let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const d=j.data||j;if(d.partUrls){const u=d.partUrls[0].url;console.log('PRESIGN_OK');console.log('url_host='+new URL(u).host);console.log('url_proto='+new URL(u).protocol);console.log('bucket='+d.bucket);console.log('partCount='+d.partCount);console.log('sample_url='+u.slice(0,120)+'...')}else{console.log('FAIL_RAW:',s.slice(0,200))}})
+                                                                                                                                     ^
+
+TypeError: Cannot read properties of undefined (reading 'url')
+    at Socket.<anonymous> ([eval]:1:134)
+    at Socket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+
+Node.js v22.22.2

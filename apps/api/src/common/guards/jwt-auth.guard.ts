@@ -1,6 +1,7 @@
 import { ExecutionContext, Injectable, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
+import type { Request } from 'express';
 import { BizException, ErrorCode } from '@tianji/shared';
 import { META_KEY, CTX_KEY } from '../constants/enums';
 import type { AuthenticatedUser } from '../types/authenticated-user';
@@ -32,7 +33,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     err: unknown,
     user: TUser | false | null,
     info: unknown,
-    _context: ExecutionContext,
+    context: ExecutionContext,
   ): TUser {
     if (err) {
       this.logger.warn(`JWT 校验异常: ${(err as Error)?.message ?? String(err)}`);
@@ -49,6 +50,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       }
       throw new BizException(ErrorCode.UNAUTHORIZED);
     }
+    // 修复（2026-11-09 阶段 C「API 实际签发路径」实证）：passport 默认把用户挂到
+    // request.user，而权限守卫（permission.guard）与 @CurrentUser 装饰器读取的是
+    // request[CTX_KEY.USER]（'currentUser'）——此前从未挂载，导致所有 @RequirePerm
+    // 业务端点一律 401（静态 attach() 也无调用点）。此处等价于 attach() 的实例化调用。
+    const request = context.switchToHttp().getRequest<Request & Record<string, unknown>>();
+    request[CTX_KEY.USER] = user;
     return user;
   }
 

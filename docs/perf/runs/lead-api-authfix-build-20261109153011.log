@@ -1,0 +1,8 @@
+=== api rebuild with jwt currentUser fix (2026-11-09T15:30:12+08:00) ===
+BUILD_EXIT=0
+7e91c330c123 2026-11-09 15:30:28 +0800 CST
+#25 DONE 0.3s
+
+#26 resolving provenance for metadata file
+#26 DONE 0.0s
+ Image tianji-archive-api:1.0.0 Built 

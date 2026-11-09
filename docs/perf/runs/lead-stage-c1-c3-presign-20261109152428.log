@@ -1,0 +1,22 @@
+=== stage-C1 env + C3 API presign (2026-11-09T15:24:28+08:00) ===
+--- C1: api 容器 env 实际值 ---
+S3_PUBLIC_USE_SSL=false
+MINIO_ENDPOINT=seaweedfs
+S3_PUBLIC_PORT=8333
+S3_PUBLIC_ENDPOINT=127.0.0.1
+MINIO_PORT=8333
+--- C3: 登录并走 NestJS API 实际签发 ---
+token_head=eyJhbGciOiJI...
+itemId=c24df52e-dcd7-413e-aa67-2d639589c053
+curl: (22) The requested URL returned error: 401
+<anonymous_script>:1
+
+
+SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Socket.<anonymous> ([eval]:1:70)
+    at Socket.emit (node:events:531:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+
+Node.js v22.22.2

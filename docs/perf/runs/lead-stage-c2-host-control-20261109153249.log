@@ -1,0 +1,11 @@
+=== stage-C2 host 对照实验 (2026-11-09T15:32:49+08:00) ===
+--- [基线] 当前 S3_PUBLIC_ENDPOINT=127.0.0.1 ---
+presign_host=127.0.0.1:8333
+--- [实验组] 改为 192.168.20.51 并重建 api ---
+S3_PUBLIC_ENDPOINT=192.168.20.51
+ Container tianji-api Healthy 
+presign_host=192.168.20.51:8333
+--- [还原] 改回 127.0.0.1 并重建 api ---
+S3_PUBLIC_ENDPOINT=127.0.0.1
+ Container tianji-api Healthy 
+presign_host=127.0.0.1:8333
