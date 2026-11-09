@@ -872,21 +872,27 @@ kysec「工具不存在 → N/A，不写成已关闭」在真机报告落 `not-a
 **麒麟 V10 SP3 / 统信 UOS 20 最小化安装 + QEMU 环境**；外部端口可达性（tap/bridge）
 与现场真硬件仍不在已验证范围（RESULT §7.5）。
 
-**终版产物构建约定（占位）**
+**终版产物 digest（已回填，team-lead 独立复核 2026-11-10）**
 
-> 待两笔代码提交入库后执行终审定版包重建，本节 digest 由 team-lead 复核后回填：
-> ① 工程师 `normalizeVersionID`（os-release VERSION_ID 归一化，影响 osMatch 判定）；
-> ② redis `--maxmemory-policy noeviction`（demo 冒烟输出的 WARN，allkeys-lru 与
-> 持久化语义冲突；属 compose 调整，冒烟不阻塞）。
+> 终审定版包重建自 HEAD `ccbebc2`（含 ① 工程师 `normalizeVersionID` 归一化 `6bd1053`；
+> ② redis `--maxmemory 512mb --maxmemory-policy noeviction` `ccbebc2`）。三重核验独立
+> 复算通过：整体 sha256、按 offset 6527 切出 payload 的 sha256、载荷内 compose 的 redis
+> command 行逐字核对（`--maxmemory 512mb --maxmemory-policy noeviction` 在包）。
 >
 > | 项 | 值 |
 > |---|---|
-> | 产物文件名 | `tianji-server-setup-b-amd64-1.0.0.run`（占位） |
-> | 字节数 | （占位） |
-> | sha256 | （占位） |
-> | payload sha256 | （占位） |
-> | 安装器二进制 sha256 | （占位） |
-> | 与真机验证包（`5ae9dd0f…`）的差异 | （占位：仅上述两笔 + 既有重打包时间戳字段） |
+> | 产物文件名 | `dist/installer/tianji-server-setup-kylin-uos-amd64-1.0.0.run` |
+> | 字节数 | 99,967,481 |
+> | sha256 | `75621cca17fcb8e1ac5169c3d5f5983d61dff760a2c48f4103b68747fa028b8b` |
+> | payload sha256 | `00519149d8a3c0eb898afa7fd629bd7393dcfeafdf2e9520ddf512c8c3afafee` |
+> | 安装器二进制 sha256 | `67d0bae0f4df7b6e571359db1071c1460b212a38db657a45a2e3242781b9cae7`（9,350,223 B，GOOS=linux CGO=0 -trimpath） |
+> | 构建日志 | `dist/installer/build-kylin-uos-final.log`（闸门 G1/G1-static/G2-static/G3 全 PASS） |
+> | 与真机验证包（`5ae9dd0f…`，99,962,468 B）的差异 | 仅 `6bd1053` 归一化 + `ccbebc2` noeviction + manifest 重打包时间戳字段；安装流程与载荷布局零变化，真机验证结论继续有效 |
+>
+> **签名裁定（team-lead，2026-11-10）**：本审定版为**未签名基线**（与真机验证包同状态）。
+> `--sign` 属**交付时步骤**，不参与验证语义——正式对外交付前必须以 `--sign --gpg-key
+> tianji-build` 重建签名版（digest 会变，签名版 digest 在交付时另行登记，不回填本表）；
+> 签名前置条件：构建机 gpg stale-lockfile 问题修复（需重启构建机）。
 
 
 
