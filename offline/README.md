@@ -240,10 +240,104 @@ R-2 裁定：**seaweedfs 只发布 8333**，master / filer / volume 均不占宿
 | 备份记录 `minio_status=FAILED` | `docker compose logs backup` 与 `/backup/backup.log`；确认桶已建、aws-cli 可用 |
 | 检索命中数不足 | 确认 ES 索引 `archive_items` 已建且 IK 插件可用；重跑 `demo:books` |
 | 分片 PUT 成功、但 `completeMultipart` 失败 | 浏览器读不到 ETag 就无法汇总分片。3.79 零配置即返回 `Access-Control-Expose-Headers: *`，故**优先查三件事**：①请求是否带了 `Origin`（不带则无任何 CORS 头）；②8333 是否被反代收敛到与 Web 同域（同域浏览器不带 Origin）；③是否设了 `withCredentials=true` / `credentials: include`（此时 `*` 被当字面量）。用原生 OPTIONS + 真实 PUT 看响应头原值；**勿误判为 SigV4 签名或对象存储兼容性问题**，也不要据此改签名逻辑或去配 CORS |
+| `dpkg: error: could not read package info file in /var/lib/dpkg/status` | `/var/lib/dpkg/status` 被做成了**目录**（不是文件）。见 **§8.1**（含安全边界：正常文件绝不能删） |
+| `E: Could not fetch ./.deb from file:/debs ./` | 本地源三件事没同时成立：目录没挂进容器 / `file:/` 少两个斜杠 / 源行缺末尾 `./`。见 **§8.2** |
 
 ---
 
-## 八、已知边界
+## 八、两条必踩的 dpkg / apt 坑（现场实录）
+
+这两条都是「手工补包 / 在容器里装 deb」时撞的，报错文案都不指向真正的原因，
+**先看本节再动别的地方**。也直接影响 `installer/build/fetch-docker-debs.sh` 与安装器的
+`S3_DOCKER`（两者都是「一堆 .deb + 本地源」的路子）。
+
+### 8.1 `dpkg: error: could not read package info file in /var/lib/dpkg/status`
+
+**现象**
+
+```text
+dpkg: error: could not read package info file in /var/lib/dpkg/status
+```
+
+`dpkg -i` / `dpkg -l` / `apt-get install` 全部失效，后续一切都报成
+「包未安装」「依赖不满足」，看起来像闭包缺包，实际与包无关。
+
+**根因**
+
+dpkg 的已装包数据库是**文件** `/var/lib/dpkg/status`（`/var/lib/dpkg/updates/` 才是目录，
+且应为空）。当镜像/解包/挂载把它做成了**目录**——典型来源是 `cp -a` 目标已存在同名目录、
+或解包时 `status` 先被创建成空目录——dpkg 就会去 `open()` 一个目录，于是报这句。
+**它不表示任何 .deb 损坏**，纯粹是数据库路径形态不对。
+
+**修法**（只在确认它们是「空目录」时动手）
+
+```sh
+# 安全边界：status 是正常文件且有内容时，绝不能删——那是全机的已装包数据库
+[ -d /var/lib/dpkg/status ]  && [ -z "$(ls -A /var/lib/dpkg/status)" ]  && rm -rf /var/lib/dpkg/status
+[ -d /var/lib/dpkg/updates ] && [ -z "$(ls -A /var/lib/dpkg/updates)" ] && rm -rf /var/lib/dpkg/updates
+dpkg --configure -a || true     # dpkg 会自行重建 status 文件与 updates 目录
+dpkg -l | head -1               # 能打印表头即已自愈
+```
+
+害怕误删就先留底：`cp -a /var/lib/dpkg/status /root/status.bak.$(date +%s)`（对文件时）。
+
+**复现（一条命令）**
+
+```sh
+docker run --rm ubuntu:22.04 sh -c 'mkdir -p /var/lib/dpkg/status && dpkg -l 2>&1 | head -2'
+```
+
+### 8.2 `E: Could not fetch ./.deb from file:/debs ./`
+
+**现象**
+
+```text
+E: Could not fetch ./.deb from file:/debs ./
+```
+
+或 `W: Failed to fetch file:/debs/./xxx.deb  Could not open file - open (2: No such file or directory)`。
+注意路径里那个 **`./`**：它是 `Packages` 索引里的**相对** `Filename:` 字段原样拼出来的。
+
+**根因**
+
+用 `apt-ftparchive packages .` 生成本地仓库时，`Packages` 里的 `Filename:` 是相对的
+`./xxx.deb`，apt 会把它拼在源行的 base URI 后面。下面三件事任一不成立就报这句：
+
+1. 宿主目录**没挂进容器**，或挂到了与源行不一致的路径（最常见：`$PWD` 不是预期的那个目录）；
+2. 源行写成 `file:/debs`（**一个**斜杠）而不是 `file:///debs`（**三个**斜杠）——URI 被解析成
+   「file 协议 + 主机名 debs」，路径变成 `/`，于是去找 `/.deb`；
+3. 源行漏了末尾的 `./` 组件（`deb [trusted=yes] file:///debs`），而 `Filename:` 是 `./x.deb`。
+
+这条报错**不区分**「文件真不存在」与「URI 拼错」，所以先核对 URI 形态，再去怀疑包。
+
+**修法**（三者必须同时成立）
+
+```sh
+docker run --rm -v "$PWD":/debs:ro ubuntu:22.04 sh -c '
+  echo "deb [trusted=yes] file:///debs ./" > /etc/apt/sources.list
+  apt-get update && apt-get install -y --no-install-recommends <包名>'
+```
+
+- `-v "$PWD":/debs:ro`：宿主当前目录（放着 `Packages` 与 `.deb`）挂到 `/debs`；
+- `file:///debs`：三斜杠；
+- 末尾 `./`：与 `Filename: ./x.deb` 的组件对齐；
+- `[trusted=yes]`：本地目录没有签名，不加会先被 `NO_PUBKEY` 拦住。
+
+**复现（一条命令）**
+
+```sh
+cd "$(mktemp -d)" && apt-get download hello && apt-ftparchive packages . > Packages \
+ && docker run --rm ubuntu:22.04 sh -c 'echo "deb [trusted=yes] file:/debs ./" > /etc/apt/sources.list; apt-get update >/dev/null 2>&1; apt-get install -y hello 2>&1 | tail -2'
+```
+
+（故意用单斜杠 `file:/debs` 且不挂载 → 必现上面那句。）
+
+> 诚实边界：这两条是**现场实录整理**，本轮构建机 Docker 停机期间没有在容器里重新复跑；
+> 复现命令按最小可复现路径给出，操作前请先确认 `status` 不是正常文件（§8.1 安全边界）。
+
+---
+
+## 九、已知边界
 
 - 本离线包为**单实例**部署，未验证多容器 `pub/sub` 跨进程与多实例并发取号；
 - 真实书籍样本尚未提供，当前 `demo:books` 使用确定性生成的模拟数据（可重复执行、不污染正式数据）；

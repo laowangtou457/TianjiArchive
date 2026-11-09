@@ -711,3 +711,59 @@ bash installer/build/make-manifest.sh --sign
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v1.0 | 2026-11-09 | 首版。裁定图形化向导形态（本机临时 Web 安装器 + 同源 TUI 降级入口）；Docker 双变体（deb 闭包 / static 二进制）；tar 分离分发；用户端两阶段；8 项开放问题待裁定 |
+| v1.1 | 2026-11-09 | 新增 §14 实施与验证状态：①② 闭环（真闭包 / 真签名 / 独立验签），③ **部分闭环**（未覆盖项与接手人写明，不算完成） |
+
+---
+
+## 14. 实施与验证状态（截至 2026-11-09）
+
+> 本节只登记**已经发生的事实**与**明确没发生的事**。判定口径：能复现的才写「已通过」；
+> 靠推断、靠单测代替、靠「看起来正常」的一律写「未验证」。上游代码见
+> `installer/server/`（Go）与 `installer/build/`、`installer/e2e/`。
+
+### 14.1 ① deb 闭包 —— **闭环**
+
+| 项 | 事实 |
+|---|---|
+| 闭包 | 85 个 `.deb`，`.deb` 合计 **147,491,640 字节**（目录 `du -sb` 147,505,075，差 13,435 字节 = `DEBS-MANIFEST.txt` 本身） |
+| 版本 | `docker-ce 5:29.9.3-1~ubuntu.22.04~jammy`、`docker-ce-cli` 同版、`containerd.io 2.4.2-3`、`docker-compose-plugin 5.7.0-1`、`libseccomp2 2.5.3-2ubuntu3~22.04.1` |
+| 自洽性 | `installer/build/audit-debs.py` 逐包解析 control（等价 `dpkg-deb -I`）→ `IS_PASS: YES`；闭包外依赖 53 项，全部为基础系统核心件；闭包内部无版本冲突、无同名包 |
+| 完整性 | `DEBS-MANIFEST.txt` 85 行逐文件 sha256，双向核对（多登记 / 少登记 / 哈希不符全部拦截） |
+| 独立复核 | team-lead 用 `dpkg-deb -f` 逐包比对 `Depends`、确认无残缺文件、`PREINST_NEEDS` 五包齐全后判定通过 |
+
+### 14.2 ② 签名 —— **闭环**
+
+| 项 | 事实 |
+|---|---|
+| 密钥 | `tianji-build`，RSA4096，**无口令**（构建机无人值守），有效期至 2027-11-09 |
+| 公钥 | `installer/build/pubkeys/tianji-build.asc` + 指纹文件入库；**私钥只在构建机 `~/.gnupg`，绝不入库** |
+| 指纹 | `0AD2 912C F8FE 57E2 02C2 75F2 0A03 8555 B153 ACC9` |
+| 产物 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` = **150,088,493 字节**，sha256 `85478f08b5d42d8120a7262015762cd04cfb1844c51f42dac3af79d6a834c138`，payload sha256 `e1380de6…` |
+| 闸门 | G1 载荷同源 7/7 · G2 ELF64/amd64（6,344,856 字节）· G3 壳层 `--verify-only` PASS |
+| 验签 | **在新导出的 `GNUPGHOME` 里验签通过**（只 import 仓库公钥，不在生成它的 keyring 里自证）：`Good signature from "tianji-build (Tianji Archive build key)"` + `sha256sum -c` **98/98 OK** |
+
+### 14.3 ③ 十步端到端 —— **部分闭环（明确不算完成）**
+
+**已实际通过**（安装器自检与命令行层，6 项）：包安装解包、二进制形态与版本、
+S3 与 systemd unit 落盘、CLI 参数行为、失败路径、`--verify-only`；
+以及特权 systemd 容器内的 **S1_PREFLIGHT / S2_VERIFY / S3_DOCKER** 三步：
+OS 识别 `exact` 匹配、真 1.5GB 镜像 tar 深度校验通过（12.8s）、
+真 85 个 deb 的 `dpkg -i` 装完且 `dockerd 29.9.3` 起来（`systemctl is-active docker=active`）。
+
+**未覆盖（这是「部分」的含义，不得写成闭环）**：
+
+| 未覆盖项 | 卡在哪 | 接手 |
+|---|---|---|
+| `S4_IMAGES` 全量 `docker load`（只载入 7/8 个镜像） | 容器内 `dockerd` 只能用 `vfs`，1.5GB tar 展开放大十倍，把构建机 Docker 虚拟盘与宿主 C 盘写满，daemon 转只读 | — |
+| `S5_ENV → S6_UP → S7_MIGRATE → S8_SEED → S9_SMOKE` | 同上，一次都没在真实栈上跑过 | vm-harness（#43 真 OS 链路本就要跑 dockerd，顺带覆盖） |
+| 真机安装（ISO 装系统后 `--tui` 十步） | 构建机无虚拟化工具（`wsl.exe` / Hyper-V 被策略拦、无 VirtualBox/VMware） | vm-harness |
+| 变体 B（麒麟 / 统信）安装 | 同上；基线已从 ISO 离线取证（`docs/VARIANT-B-OS-BASELINE.md`） | vm-harness |
+
+**失败根因如实记录**：不是产品缺陷，也不是「环境本来就不行」，而是**验证手段本身**的代价——
+在外层 Docker Desktop 上用 `vfs` 跑嵌套 `dockerd` 加载 GB 级镜像，会把虚拟盘撑爆并拖死宿主
+daemon（连别人的容器一起没）。该负面经验与替代做法写进了 `installer/e2e/README.md`，
+下次重跑必须先给容器加 `--storage-opt size=` 限额，或直接把这一步放到真 VM / 有 overlay2
+backing 的机器上做。
+
+**因此 `#41` 的验收口径是**：①② 闭环；③ 部分闭环，未覆盖项由上表接手人补齐。
+**「服务器端安装包已可用」这句话现在不能写**——写它需要上表四行全部变绿。
