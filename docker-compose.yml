@@ -1,7 +1,18 @@
 # ============================================================================
 # 天玑档案管理系统本地复刻 —— Docker Compose 一键编排
-# 服务：web(nginx) / api / extractor / postgres / elasticsearch(IK) / minio / redis / backup sidecar
+# 服务：web(nginx) / api / extractor / postgres / elasticsearch(IK) / seaweedfs(S3) / redis / backup sidecar
 # 说明：数据卷独立目录，便于挂载 NAS；生产请替换 .env 中所有 change_me 密码。
+# 对象存储：MinIO 开源版归档停服（Docker Hub 仓库消失 + dl.min.io 410），
+#          改用 SeaweedFS S3 Gateway（方案 A）。应用侧仍用 minio npm SDK 走 S3 协议，
+#          MINIO_* 环境变量名保持不变以兼容 configuration.ts / cli-migrator / extractor / backup.sh。
+#
+# R-1 双端点：预签名 URL 由 S3_PUBLIC_*（浏览器可达，默认 127.0.0.1:8333）签发，
+#   服务端 S3 操作走内部 MINIO_ENDPOINT=seaweedfs:8333。封闭环境把 S3_PUBLIC_ENDPOINT
+#   改成宿主机局域网 IP（见 .env.example）。
+# R-2 端口：SeaweedFS 宿主只发布 8333；volume 8081 / filer 8888 / master 9333 /
+#   gRPC 端口一律不发布宿主；原 9001 MinIO Console 端口已移除。
+# R-3 建桶：无 minio-init，桶由 API 的 MinioService.onModuleInit → ensureBuckets() 单点创建；
+#   自动建桶由 infra/seaweedfs/s3.json.tpl 的桶级 identity 收权（3.79 无 autoCreateBucket flag）。
 # ============================================================================
 name: tianji-archive
 
@@ -19,8 +30,9 @@ x-db-env: &db-env
 x-infra-env: &infra-env
   ES_NODE: ${ES_NODE:-http://elasticsearch:9200}
   ES_INDEX: ${ES_INDEX:-archive_items}
-  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
-  MINIO_PORT: ${MINIO_PORT:-9000}
+  # S3 兼容端点（实现为 SeaweedFS S3 Gateway；MINIO_* 变量名保留以兼容存量代码）
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-seaweedfs}
+  MINIO_PORT: ${MINIO_PORT:-8333}
   MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tianji_minio}
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
@@ -28,6 +40,11 @@ x-infra-env: &infra-env
   MINIO_BUCKET_PREVIEW: ${MINIO_BUCKET_PREVIEW:-archive-preview}
   MINIO_BUCKET_THUMB: ${MINIO_BUCKET_THUMB:-archive-thumb}
   MINIO_BUCKET_BACKUP: ${MINIO_BUCKET_BACKUP:-archive-backup}
+  # R-1：仅有 API 用它签发预签名 URL；extractor/backup 忽略即可（多传无害）。
+  # demo 默认 127.0.0.1（浏览器与 Docker 同机）；封闭环境改成宿主机局域网 IP。
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-127.0.0.1}
+  S3_PUBLIC_PORT: ${S3_PUBLIC_PORT:-8333}
+  S3_PUBLIC_USE_SSL: ${S3_PUBLIC_USE_SSL:-false}
   REDIS_HOST: ${REDIS_HOST:-redis}
   REDIS_PORT: ${REDIS_PORT:-6379}
   REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -79,6 +96,7 @@ services:
       args:
         ES_VERSION: ${ES_VERSION:-8.13.4}
         IK_VERSION: ${IK_VERSION:-8.13.4}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: tianji-elasticsearch-ik:8.13.4
     container_name: tianji-elasticsearch
     restart: unless-stopped
@@ -108,59 +126,48 @@ services:
     networks:
       - tianji-net
 
-  # ------------------------------------------------------------------ MinIO 对象存储
-  minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
-    container_name: tianji-minio
+  # ------------------------------------------------------------------ SeaweedFS S3 Gateway（MinIO 替代，方案 A）
+  # image-only：chrislusf/seaweedfs:3.79 已实拉 digest sha256:21425305…；封闭环境不 build、不联网。
+  # 凭据/桶名注入：s3.json.tpl 是**模板**（无密钥/无硬编码桶名），entrypoint.sh 在容器启动时
+  #   用 MINIO_ACCESS_KEY / MINIO_SECRET_KEY / MINIO_BUCKET_* 渲染到 /tmp（不入库、不落镜像、
+  #   不写进持久卷），再委派内置 /entrypoint.sh 的 server 分支启动（继承调优参数）。
+  # R-3 关闭自动建桶：3.79 无 flag，改由 s3.json 桶级 identity 收权（无全局 Admin）。
+  # healthcheck：镜像内无 curl，用 busybox wget；同时验 master 9333/cluster/status（leader 就绪）
+  #   与 S3 8333（匿名 GET / 返回 403 恰说明「S3 网关已起且鉴权生效」，200/403 均视为健康）。
+  #   ——两条都要过，既响应架构师对 9333 的建议，也确保 8333 这一实际依赖真正可用。
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.79
+    container_name: tianji-seaweedfs
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    entrypoint: ['/bin/sh', '/scripts/entrypoint.sh']
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-tianji_minio}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
-      MINIO_BROWSER_REDIRECT_URL: http://localhost:${MINIO_CONSOLE_EXPOSED_PORT:-9001}
-    volumes:
-      - ./volumes/minio:/data
-    ports:
-      - '${MINIO_EXPOSED_PORT:-9000}:9000'
-      - '${MINIO_CONSOLE_EXPOSED_PORT:-9001}:9001'
-    healthcheck:
-      test: ['CMD-SHELL', 'mc ready local || exit 1']
-      interval: 15s
-      timeout: 10s
-      retries: 10
-    networks:
-      - tianji-net
-
-  # ------------------------------------------------------------------ MinIO 初始化（建桶）
-  minio-init:
-    image: minio/mc:RELEASE.2024-06-12T14-34-03Z
-    container_name: tianji-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        mc alias set tianji http://minio:9000 "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}"
-        for b in "$${MINIO_BUCKET_ORIGINAL}" "$${MINIO_BUCKET_PREVIEW}" "$${MINIO_BUCKET_THUMB}" "$${MINIO_BUCKET_BACKUP}"; do
-          mc mb --ignore-existing "tianji/$${b}"
-          mc anonymous set none "tianji/$${b}" || true
-        done
-        mc ilm rule add --expire-days 1 --prefix "tmp/" "tianji/$${MINIO_BUCKET_ORIGINAL}" || true
-        echo "[minio-init] buckets ready"
-    environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tianji_minio}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
       MINIO_BUCKET_ORIGINAL: ${MINIO_BUCKET_ORIGINAL:-archive-original}
       MINIO_BUCKET_PREVIEW: ${MINIO_BUCKET_PREVIEW:-archive-preview}
       MINIO_BUCKET_THUMB: ${MINIO_BUCKET_THUMB:-archive-thumb}
       MINIO_BUCKET_BACKUP: ${MINIO_BUCKET_BACKUP:-archive-backup}
+    volumes:
+      - ./volumes/seaweedfs:/data
+      - ./infra/seaweedfs/entrypoint.sh:/scripts/entrypoint.sh:ro
+      - ./infra/seaweedfs/s3.json.tpl:/scripts/s3.json.tpl:ro
+    ports:
+      # R-2：宿主只发布 S3(8333)。master 9333 / filer 8888 / volume 8081 / gRPC 端口
+      # 全部只在容器网络内可达（避免与 web 宿主 8080 冲突，也收敛攻击面）。
+      - '${SEAWEEDFS_S3_EXPOSED_PORT:-8333}:8333'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'wget -q -O - http://127.0.0.1:9333/cluster/status 2>/dev/null | grep -q IsLeader && wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -qE "HTTP/1\.[01] (200|403)" || exit 1',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     networks:
       - tianji-net
-    restart: 'no'
 
   # ------------------------------------------------------------------ Redis 7
   redis:
@@ -187,6 +194,8 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: tianji-archive-api:1.0.0
     container_name: tianji-api
     restart: unless-stopped
@@ -195,7 +204,7 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -236,6 +245,8 @@ services:
     build:
       context: .
       dockerfile: apps/extractor/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: tianji-archive-extractor:1.0.0
     container_name: tianji-extractor
     restart: unless-stopped
@@ -244,9 +255,15 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
-      minio:
+      seaweedfs:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # 桶由 API 的 MinioService.onModuleInit → ensureBuckets() 幂等创建。
+      # extractor 只在 API 处理上传后收到队列任务；api healthy 意味着
+      # 桶初始化已完成（health 的 objectStorage 检查即 bucketExists），
+      # 故以依赖顺序消除「桶未建好就取对象」的启动竞争。
+      api:
         condition: service_healthy
     environment:
       <<: [*common-env, *db-env, *infra-env]
@@ -265,6 +282,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: tianji-archive-web:1.0.0
     container_name: tianji-web
     restart: unless-stopped
@@ -286,22 +304,35 @@ services:
     build:
       context: ./infra/backup
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: tianji-archive-backup:1.0.0
     container_name: tianji-backup
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      seaweedfs:
+        condition: service_healthy
+      # 同 extractor：backup 启动即跑一次全量备份，必须等 API 建桶完成。
+      # 另在 backup.sh 内做有上限的 head-bucket 重试，双保险，失败显式报错
+      # （MINIO_STATUS=FAILED + 日志），绝不静默 SKIPPED。
+      api:
         condition: service_healthy
     environment:
       <<: [*common-env, *db-env]
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
-      MINIO_PORT: ${MINIO_PORT:-9000}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-seaweedfs}
+      MINIO_PORT: ${MINIO_PORT:-8333}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tianji_minio}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
       MINIO_BUCKET_BACKUP: ${MINIO_BUCKET_BACKUP:-archive-backup}
       MINIO_BUCKET_ORIGINAL: ${MINIO_BUCKET_ORIGINAL:-archive-original}
+      # aws-cli 侧：端点/凭据由 MINIO_* 单一来源派生（见 backup.sh 顶部兜底）
+      AWS_ENDPOINT_URL: http://${MINIO_ENDPOINT:-seaweedfs}:${MINIO_PORT:-8333}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-tianji_minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-tianji_minio_change_me}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: 'true'
       BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
       BACKUP_DIR: ${BACKUP_DIR:-/backup}
@@ -317,5 +348,5 @@ networks:
 volumes:
   postgres_data:
   esdata:
-  minio_data:
+  seaweedfs_data:
   redis_data:

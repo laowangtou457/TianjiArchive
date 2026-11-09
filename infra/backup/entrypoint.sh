@@ -14,10 +14,14 @@ EOF
 
 chmod 0644 /etc/crontabs/root
 
-# 容器启动即刻执行一次，避免首日空白
+# 容器启动即刻执行一次，避免首日空白。
+# 失败必须显式报错（不静默、不降级），但容器继续运行以便 cron 下轮重试；
+# backup.sh 自身也会以退出码 1 标记失败并写 backup_record.minio_status=FAILED。
 if [ "${BACKUP_ON_START:-true}" = "true" ]; then
   echo "[backup-entrypoint] running initial backup"
-  /scripts/backup.sh >> /backup/backup.log 2>&1 || echo "[backup-entrypoint] initial backup failed (non-fatal)"
+  if ! /scripts/backup.sh >> /backup/backup.log 2>&1; then
+    echo "[backup-entrypoint] ERROR: 首次备份失败（详见 /backup/backup.log，cron 将重试）" >&2
+  fi
 fi
 
 echo "[backup-entrypoint] starting crond"
