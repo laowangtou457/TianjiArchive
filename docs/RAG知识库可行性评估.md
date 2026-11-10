@@ -242,7 +242,7 @@ CHUNK_RETRIEVER = embedding.productionReady ? EsVectorStore : LexicalChunkRetrie
 | 单元测试 | `vitest run` | 490 passed / 28 files |
 | 静态检查 | `tsc --noEmit`（api + web）、`eslint --max-warnings=0`、`vite build` | 全部干净；构建产物正常 |
 
-> 环境限制记录：宿主直连容器映射的 PG:5432 / ES:9200 会在 TCP 握手后立即断开（`Connection terminated unexpectedly`），`curl localhost:3000` 却正常。故迁移、脚本、SQL 一律在**容器内**执行。这一条已写入维护手册的排障节。
+> 环境限制记录：宿主直连容器映射的 PG:5432 / ES:9200 会在 TCP 握手后立即断开（`Connection terminated unexpectedly`），`curl localhost:3000` 却正常。故迁移、脚本、SQL 一律在**容器内**执行。该口径已写入《系统维护手册》§7.4 的排查顺序。
 
 ---
 

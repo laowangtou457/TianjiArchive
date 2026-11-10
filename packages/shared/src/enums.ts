@@ -153,7 +153,7 @@ export const PERMISSION_DOMAIN_LABELS: Readonly<Record<PermissionDomain, string>
   IMPORT_EXPORT: '数据导入导出/移交接收',
   PARAM: '系统参数配置',
   DICT: '数据字典',
-  KB: '智能问答',
+  KB: '片段检索',
 };
 
 export const PERMISSION_DOMAIN_VALUES: readonly PermissionDomain[] = Object.values(PermissionDomain);

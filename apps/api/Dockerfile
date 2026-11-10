@@ -2,7 +2,8 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
-COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+# .npmrc 必须一起拷：里面配了 registry 镜像（npmjs.org 在部分网络下 TLS 建连即断）
+COPY pnpm-workspace.yaml package.json tsconfig.base.json .npmrc ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
 RUN pnpm install --filter @tianji/api... --frozen-lockfile=false
