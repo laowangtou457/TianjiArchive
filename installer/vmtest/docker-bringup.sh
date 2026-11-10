@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 天玑档案 变体 B 附加实测：把 docker 27.5.1 静态载荷真的搬进国产 OS 里跑起来
 #
-# 对应 docs/VARIANT-B-OS-BASELINE.md §7 的第 4、6 项：
+# 对应 docs/变体B-系统基线实测.md §7 的第 4、6 项：
 #   4. cgroup v1 上 dockerd 27.5.1 的实际启动行为（能不能起、选了什么 driver/cgroup）
 #   6. firewalld reload / restart 后 docker 写的 iptables 链还在不在（端口会不会全不通）
 #
@@ -25,7 +25,7 @@
 #   docker0 type bridge` 可立刻复现；`--bridge=none --iptables=false` 则完全不发生。
 #   → 本脚本第 [5]/[6] 段（firewalld reload/restart 之后的观测）**受此限制**，
 #     只能用来取「reload 是否清 DOCKER 链」这类在失联前就能拿到的值；
-#     不能用它判断「OS 把管理面弄挂了」。真正的 OS 级冲突见 docs/VARIANT-B-VM-RESULT.md §2.6(A)
+#     不能用它判断「OS 把管理面弄挂了」。真正的 OS 级冲突见 docs/变体B-真机实测结果.md §2.6(A)
 #     —— 统信的 `ZONE_CONFLICT: 'docker0' already bound to a zone`。
 set -uo pipefail
 

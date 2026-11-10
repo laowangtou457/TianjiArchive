@@ -1,6 +1,6 @@
 // Package state 维护安装状态机与断点重入。
 //
-// 设计依据：docs/INSTALLER-DESIGN.md §6.2。核心规则是「只有 PASS 才写 DONE」，
+// 设计依据：docs/安装器总体设计.md §6.2。核心规则是「只有 PASS 才写 DONE」，
 // FAIL 只记录原因不前进，因此 --resume 永远从第一个非 DONE 的步骤继续，
 // 不会出现「半装却被当成装完」的状态。
 package state

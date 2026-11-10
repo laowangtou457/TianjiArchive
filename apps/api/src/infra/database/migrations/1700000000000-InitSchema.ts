@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * 初始建表迁移 —— 对齐 ARCHITECTURE.md §4.2 DDL。
+ * 初始建表迁移 —— 对齐 系统架构设计.md §4.2 DDL。
  *
  * 关键设计：
  *  - audit_log 为按月 RANGE 分区表（PG 分区表不支持由 TypeORM 生成，故手写 DDL）；

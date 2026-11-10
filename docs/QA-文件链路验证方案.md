@@ -2,30 +2,30 @@
 
 > 编制：严过关（QA）｜ 阶段：**阶段一（方案与脚本准备，不执行验收）**｜ 基线：`E:\TianjiArchive` HEAD `f111a7c`（架构文档自述）｜ 日期：2026-11-09
 > **事实读取时刻锚**：§1 的源码事实读于 2026-11-09 09:39–09:45，且当时工作区有**工程师并发在途改造**（`git status` 显示 `storage.module.ts` / `configuration.ts` / `.env.example` / `docker-compose.yml` 等为 `M`，另有未跟踪的 `infra/seaweedfs/`、`apps/api/src/scripts/seaweedfs-s3-probe.ts`）。这些是**工作区状态、不是 HEAD 定论**；阶段二起栈时须以届时源码为准重新核对，本方案的 C05/C06/C08 均用实测判据而非读源码断言，故不受在途改动影响。
-> **v1.1 变更（并入主理人补充裁定 D-4、PM `DEMO-ACCEPTANCE.md` v1.1 `63f4d69`）**：新增独立检查点 **C18**（D-4 下载技术层 wire 用例，复现 `file.service.ts:418-420` 生产 `presignGet` + `response-content-disposition` 调用形态）；新增 **§2.5 D-4 下载链路分层纪律**；§8 阶段二对 §五 R1 的解除意见**收窄为「部分解除」——下载业务放行仍不可签**；脚本输出新增 `D4_TECH_LAYER` / `D4_BUSINESS_LAYER` / `D4_CONCLUSION` 三行分层结论。计数广播：core 19→**20**、full 20→**21**、`--self-test` 17→**18** 条，全部已全仓复核。PM 上一条消息中「R0 临时授予 FILE:DOWNLOAD」路径已由 D-1 否决作废，**本方案不含该夹具、不构造带 `DOWNLOAD` 授权的用户快照**。
+> **v1.1 变更（并入主理人补充裁定 D-4、PM `样品Demo验收清单.md` v1.1 `63f4d69`）**：新增独立检查点 **C18**（D-4 下载技术层 wire 用例，复现 `file.service.ts:418-420` 生产 `presignGet` + `response-content-disposition` 调用形态）；新增 **§2.5 D-4 下载链路分层纪律**；§8 阶段二对 §五 R1 的解除意见**收窄为「部分解除」——下载业务放行仍不可签**；脚本输出新增 `D4_TECH_LAYER` / `D4_BUSINESS_LAYER` / `D4_CONCLUSION` 三行分层结论。计数广播：core 19→**20**、full 20→**21**、`--self-test` 17→**18** 条，全部已全仓复核。PM 上一条消息中「R0 临时授予 FILE:DOWNLOAD」路径已由 D-1 否决作废，**本方案不含该夹具、不构造带 `DOWNLOAD` 授权的用户快照**。
 > **v1.2 变更（C08 判据必然假红修正 · 主理人放行前裁定，2026-11-09）**：架构师对 SeaweedFS **3.79** 完成 6 组容器内只读实测（镜像 `21425305e04b`），证伪阶段一 F9 / F10 / 风险② 基于「需显式配置 CORS 才能暴露 ETag」的**原假设**——3.79 内置全局 CORS middleware，带 `Origin` 的请求无条件返回 `Access-Control-Expose-Headers: *`（通配）+ `Allow-Origin: *` + `Allow-Credentials: true`，PUT / UploadPart 返回 ETag，OPTIONS 预检 200，鉴权开启下 403 亦带全套 CORS 头；`PutBucketCors`（501）、s3.json `cors` 段（被忽略）、`exposeHeaders` flag（不存在）均被证伪。**后果**：阶段一 C08 按字面量 `ETag` 精确断言，面对 `*` 必然假红，把一个正确实现误判为 `INCOMPATIBLE`（§8 C 档「验出不支持」），与「CORS 非阻断」结论相反。**修正**：抽出纯函数 `exposesEtag(v)` 接受 `*` 与显式 `ETag` 两种合法形态，C08 改为验「浏览器能否读到 ETag」这一**效果**而非响应头字面值；接受 `*` 附带 `credentials=omit` 静态源码守卫（不默认成立，运行时前端配置列入阶段二报告未验证项）；C08 失败归因改为三查（Origin / 同域反代 / credentials），`INCOMPATIBLE` 仅在「带了 Origin 且非同域前提成立、仍未返回合法暴露头」时使用，无任何 CORS 头归 `TOOL_ERROR`。**计数广播**：`--self-test` 18→**25 条**；core **20** / full **21** 不变。**等价正确性**：本次是**纠正语义错误（把响应头字面值误当验收目标），不是放宽判据、不是降级**——`*` 在 `credentials=omit` 下按 CORS 规范确实达成「浏览器可读 ETag」效果，故「`*` 或显式 `ETag`」是等价正确判据，强度不降低（完整论证见 §5 C08）。**按项目纪律保留「原假设 → 实测更正」全过程，不静默删改旧表述**（见 §1 F9/F10、§1.2 风险②、§7.1 更正链条第 5 条）。本次仍**未执行 `--suite core`、未改方案外文件**。
 6. > **v1.3 变更（阶段二首跑 3 FAIL 归因后主理人四项裁定授权，2026-11-09）**：阶段二 core 首跑（HEAD `5a0fbc2`，日志 `qa-file-pipeline-stage2-core-20261109084451952.log`）**17/20，3 FAIL**，QA 逐项归因均为**判据/裁定层**而非产品缺陷，上报后主理人四项裁定（采 QA 建议方案）授权修正：① **C01 → 收权正验证**：s3.json identity 收权（`storage.module.ts:34` 注释即来源）使业务身份 CreateBucket 被拒属**安全架构裁定**，判据改写为「业务身份 CreateBucket **应被拒**：403/AccessDenied 即 PASS（`isAccessDenied()` 纯函数）」，桶存在性由 G2 四桶 HeadBucket 保证；原「CreateBucket 幂等」判据与收权裁定冲突，留痕作废（§5 C01）。② **C02 → 等效判据**：主判据 `Content-Type` 回读一致（生产真实依赖：`backup.service:316`/`file.service:361`/`object.fetcher:50` 只传 Content-Type，`backup.service:319` 只读 `stat.etag`，**metaData 自定义键生产零消费面已查证**）；`x-amz-meta-*` 接受「带前缀 / SeaweedFS 剥前缀」两种回读形态（`metaValueLoose()` 纯函数），差异登记 §8 已知边界（§5 C02）。③ **C08 → methods/headers 效果判据**：实测（`qa-stage2-cors-20261109165117.log` + `lead-stage-c4-cors-headers-20261109153324.log` 原值双证）3.79 返回 `Allow-Methods: *` / `Allow-Headers: *` 通配形态，字面断言与 v1.2 前 Expose-Headers **同构必然假红**；`methodsOk`/`headersOk` 改用 `corsListAllows(v, needle)` 纯函数（`*` 通配或显式列表），与 `C08_WILDCARD_PREMISE=CREDENTIALS_OMIT_REQUIRED` **共用同一守卫**（任一头为 `*` 即触发 `credentialsOmitGuard()`），归因分叉维持（§5 C08）。④ **下载放行成功路径维持 L2 登记，不演示**（approval 授权写入链路未实现是产品事实，不为演示制造授权；QA 实测证据：预览放行 + sha256 与 DB 全等 + 下载 403/`code=4007` 拒绝正确 + 留痕 `DENIED`/`SUCCESS`）。**计数广播**：`--self-test` 25→**30 条**（新增 5 条守护用例）；core **20** / full **21** 不变。**等价正确性同 v1.2**：三项修正均为纠正「判据与架构裁定/实测形态不一致」的语义错误，**不是放宽、不是为绿改判据**——每项都以实测日志或生产消费面查证为依据，fail-closed 与归因分叉未松动。修正后复跑：`SELFTEST: PASS (30/30)`（`…selftest-v13-20261109090006172.log`）+ **core 20/20 全绿 `IS_PASS: YES`**（`…stage2-core-v13-20261109090025825.log`）。
-> 上游依据：`docs/ARCHITECTURE-SEAWEEDFS.md` v1.1 §1.2 / §4；`docs/QA-REPORT.md` §五 R1（第 512、522、756、829、863 行）、§六；`docs/DEMO-ACCEPTANCE.md` §2 S0-3 / S4 / S8、§5 范围口径；`apps/api/src/infra/storage/storage.module.ts`；`apps/web/src/components/FileUploader.tsx:104-114`；`apps/api/__tests__/storage.minio-contract.spec.ts:4-8`。
+> 上游依据：`docs/SeaweedFS架构规格.md` v1.1 §1.2 / §4；`docs/QA验收报告.md` §五 R1（第 512、522、756、829、863 行）、§六；`docs/样品Demo验收清单.md` §2 S0-3 / S4 / S8、§5 范围口径；`apps/api/src/infra/storage/storage.module.ts`；`apps/web/src/components/FileUploader.tsx:104-114`；`apps/api/__tests__/storage.minio-contract.spec.ts:4-8`。
 >
 > **本文件阶段一只交付「验证方案 + 可执行脚本」，不构成任何验证结论。** `IS_PASS` 只有在阶段二对真实 3.79 容器执行、并独立复核原始日志后才有意义。
 >
-> **边界（阶段一严格遵守）**：不改生产代码、不改 `docs/QA-REPORT.md` 正文、不改 `docs/ARCHITECTURE-SEAWEEDFS.md`、不改 `docs/DEV-PROCESS.md`、不改 `docs/DEMO-ACCEPTANCE.md`。`__tests__` 为 QA 领地，工程师改动测试文件前须报备（文件名 + 预计时长）。
+> **边界（阶段一严格遵守）**：不改生产代码、不改 `docs/QA验收报告.md` 正文、不改 `docs/SeaweedFS架构规格.md`、不改 `docs/开发过程记录.md`、不改 `docs/样品Demo验收清单.md`。`__tests__` 为 QA 领地，工程师改动测试文件前须报备（文件名 + 预计时长）。
 >
 > **纪律三条（写死，防止自造口径与假绿）**
-> 1. `apps/api/__tests__/storage.minio-contract.spec.ts:4-8` 明确「不发起网络请求」，只校验 SDK 方法存在与 `MinioService` 契约；`QA-REPORT.md:177` 记其为**契约绿（11 条）**。它**不能作为任何一条 wire 兼容性的证据**，也不能作为「四桶已创建」的证据（`ARCHITECTURE-SEAWEEDFS.md:153` 同口径）。
+> 1. `apps/api/__tests__/storage.minio-contract.spec.ts:4-8` 明确「不发起网络请求」，只校验 SDK 方法存在与 `MinioService` 契约；`QA验收报告.md:177` 记其为**契约绿（11 条）**。它**不能作为任何一条 wire 兼容性的证据**，也不能作为「四桶已创建」的证据（`SeaweedFS架构规格.md:153` 同口径）。
 > 2. **「脚本存在」≠「验证通过」**，「脚本 `--self-test` 全绿」≠「服务兼容」。脚本自证只证明判据引擎不假绿，不证明被测服务可用。
-> 3. 验证必须走 **真实 wire**（真实 S3 网关 + `minio@8.0.7` SDK 调用序列 + 原生 HTTP 模拟浏览器），**禁止只用 mock**；QA 脚本不 import 被测 `storage.module.ts`，避免「自己验自己」的替身陷阱（`docs/TESTING-GUIDELINES.md` §5 变异 0 红排查顺序第 ① 条）。
+> 3. 验证必须走 **真实 wire**（真实 S3 网关 + `minio@8.0.7` SDK 调用序列 + 原生 HTTP 模拟浏览器），**禁止只用 mock**；QA 脚本不 import 被测 `storage.module.ts`，避免「自己验自己」的替身陷阱（`docs/测试方法学规范.md` §5 变异 0 红排查顺序第 ① 条）。
 
 ---
 
 ## 0. 为什么要单独立这份方案
 
-`QA-REPORT.md` 终判为 **PASS（限定范围）**，并如实保留两项排除范围（`QA-REPORT.md:862-866`）：
+`QA验收报告.md` 终判为 **PASS（限定范围）**，并如实保留两项排除范围（`QA验收报告.md:862-866`）：
 
 1. **MinIO 文件存储真实链路**（§五 R1 行 522、§六 756、§六 829-830、§八 863）：「P0 文件入库 / 下载 / 四性检测链路未验证」，判为「❌ 中·保留（**不可签**）」；
 2. 多容器 pub/sub 跨进程投递。
 
-用户已拍板 MinIO 替代选型为 **SeaweedFS 方案 A**，当前目标为「样品 demo 送封闭环境试用」，8 项高敏参数走试用态默认值，真实书籍样本后续提供、先用模拟数据。因此本轮要关闭的是第 1 项中「**功能级实证**」部分。`DEMO-ACCEPTANCE.md:354,361` 已明确界定：demo 通过只代表「样品 demo 功能可演示」，**不等于** `QA-REPORT.md §六`「仍不能签字的两项」被关闭，也不等于 2GB 断点续传 / 多容器 pub/sub 等生产级验证完成。本方案与脚本严格服从该范围口径，**不把 demo 范围的结论写成生产级签字**。
+用户已拍板 MinIO 替代选型为 **SeaweedFS 方案 A**，当前目标为「样品 demo 送封闭环境试用」，8 项高敏参数走试用态默认值，真实书籍样本后续提供、先用模拟数据。因此本轮要关闭的是第 1 项中「**功能级实证**」部分。`样品Demo验收清单.md:354,361` 已明确界定：demo 通过只代表「样品 demo 功能可演示」，**不等于** `QA验收报告.md §六`「仍不能签字的两项」被关闭，也不等于 2GB 断点续传 / 多容器 pub/sub 等生产级验证完成。本方案与脚本严格服从该范围口径，**不把 demo 范围的结论写成生产级签字**。
 
 阶段二由 QA 独立裁定「是否解除 §五 R1 不可签意见」，判定档位见 §8。
 
@@ -40,24 +40,24 @@
 | F1 | `MinioService` 仍是**单 `client`**，`presignedUrl('PUT')` / `presignedGetObject` 均由该 `client` 签发；构造参数 `endPoint/port/useSSL/accessKey/secretKey` 全来自 `config.get('minio')` | `storage.module.ts:33,37-55,107-127,267-286` |
 | F2 | `configuration.ts` 的 `minio` 段默认 `endPoint='seaweedfs'`（**容器 DNS**）、`port=8333`，无任何 `S3_PUBLIC_*` / `publicClient` 字段 | `configuration.ts:107-122`（本次 grep `PUBLIC\|publicClient\|public` 命中 0） |
 | F3 | `.env.example` 与 `docker-compose.yml` 均无 `S3_PUBLIC_*`；`MINIO_ENDPOINT=seaweedfs`、`MINIO_PORT=8333`；SeaweedFS 服务 `chrislusf/seaweedfs:3.79` 已配置，宿主发布 `${SEAWEEDFS_S3_EXPOSED_PORT:-8333}:8333`，healthcheck 为 `wget http://127.0.0.1:8333/` 期望 200/403 | `.env.example:33-53`；`docker-compose.yml:26-27,122-142,296-303` |
-| F4 | 浏览器分片直传读 `res.headers.etag`（去引号）回传 `parts[]`，整对象直传走 `presign.putUrl`；分片阈值 `CHUNK_SIZE` | `FileUploader.tsx:97-119`；`ARCHITECTURE-SEAWEEDFS.md:314` 引 `packages/shared/src/enums.ts:572-574`（`MAX_FILE_SIZE=2GB`/`CHUNK_SIZE=5MB`） |
+| F4 | 浏览器分片直传读 `res.headers.etag`（去引号）回传 `parts[]`，整对象直传走 `presign.putUrl`；分片阈值 `CHUNK_SIZE` | `FileUploader.tsx:97-119`；`SeaweedFS架构规格.md:314` 引 `packages/shared/src/enums.ts:572-574`（`MAX_FILE_SIZE=2GB`/`CHUNK_SIZE=5MB`） |
 | F5 | `storage.minio-contract.spec.ts:4-8` 自述「本机无 Docker/MinIO，无法做真实连通性测试」「构造 `Minio.Client` 不会建立连接（惰性）」——**不发起网络请求** | 本次实读第 1-14 行 |
 | F6 | 四桶默认名 `archive-original` / `archive-preview` / `archive-thumb` / `archive-backup` | `configuration.ts:115-120`；`.env.example:50-53`；架构 §3.1 |
 | F7 | `minio@8.0.7` 实测存在于 `apps/api/node_modules/minio`（根 `.pnpm/minio@8.0.7`）；Node `v22.22.2`；`.gitignore:46` 已有 `!docs/perf/runs/*.log` 白名单 | 本次 `ls` / `node -v` / `.gitignore` 实读 |
-| F8 | 架构 §1.2 已把原「预签名 host 高风险假设」升级为**已裁定双端点方案**：新增 `S3_PUBLIC_ENDPOINT` / `S3_PUBLIC_PORT` / `S3_PUBLIC_USE_SSL`，独立 `publicClient` **仅**用于生成预签名 URL，其余操作走内部 `seaweedfs:8333`；浏览器直连宿主 8333、不经 nginx 反代 | `ARCHITECTURE-SEAWEEDFS.md:75-78` |
-| F9 | 架构 §4 明确 CORS `ExposeHeaders: ["ETag"]` 与分片 part ETag 格式仍「**待实测**」；双端点不消除跨域问题 | `ARCHITECTURE-SEAWEEDFS.md:77,224,324` |
+| F8 | 架构 §1.2 已把原「预签名 host 高风险假设」升级为**已裁定双端点方案**：新增 `S3_PUBLIC_ENDPOINT` / `S3_PUBLIC_PORT` / `S3_PUBLIC_USE_SSL`，独立 `publicClient` **仅**用于生成预签名 URL，其余操作走内部 `seaweedfs:8333`；浏览器直连宿主 8333、不经 nginx 反代 | `SeaweedFS架构规格.md:75-78` |
+| F9 | 架构 §4 明确 CORS `ExposeHeaders: ["ETag"]` 与分片 part ETag 格式仍「**待实测**」；双端点不消除跨域问题 | `SeaweedFS架构规格.md:77,224,324` |
 | F10 | 工作区 `infra/seaweedfs/entrypoint.sh:45-52` 的 `weed server -dir=/data -ip.bind=0.0.0.0 -filer -s3 -s3.port=8333 -s3.config=... -master.port=9333` **不含任何 CORS flag**；`s3.json.tpl` 只有 `identities[].actions=["Admin","Read","Write","List"]`，**无 CORS / ExposeHeaders 配置** | 本次实读 `infra/seaweedfs/entrypoint.sh`、`s3.json.tpl`；全目录 grep `cors\|allowedOrigins\|ExposeHeaders\|expose` 命中 0 |
 
 > **F9 / F10 实测更正（v1.2，保留原假设原文不删）**：上两行的**文件事实本身仍成立**（启动参数确无 CORS flag、s3.json.tpl 确无 cors 段），但由此推出的「3.79 未配置 CORS → 浏览器读不到 ETag」这一**推断已被实测证伪**。架构师对 3.79（镜像 `21425305e04b`）6 组容器内闭环实测：**全局 CORS middleware 是内置的、零配置生效**——带 `Origin` 的请求无条件返回 `Access-Control-Expose-Headers: *`（通配覆盖 ETag）+ `Allow-Origin: *` + `Allow-Credentials: true`；PUT / UploadPart 返回 ETag；OPTIONS 预检 200；鉴权开启下 403 响应亦带全套 CORS 头。`PutBucketCors` 返回 501、s3.json `cors` 段被忽略、无 `exposeHeaders` flag，即**无法按需配置成单列 ETag**。故「没有配置」≠「没有 CORS」；C08 判据必须验**效果**（浏览器能否读到 ETag），不能验响应头字面值。架构师该独立容器实测仅为「能力证据」，与阶段二**交付栈实测证据**分开、不合并。
 | F11 | 工程师自验脚本 `apps/api/src/scripts/seaweedfs-s3-probe.ts`（207 行，未跟踪）用**单 client** + Node `fetch` 跑 `presignedUrl` / `presignedGetObject` / `initiateNewMultipartUpload` / `listParts` / `completeMultipartUpload` / SHA-256；grep 未覆盖 `CORS`、`ExposeHeaders`、`Range`、错误凭据 403、预签名 host 浏览器可达性 | 本次实读该文件第 10-11、48-62、104-162 行 |
 
-| F12 | **QA 独立复核 D-4 事实（不轻信转述）**：`file.service.ts:410-434` 的 `download()` 在 `approval` 模式只读 `hasApprovedDownloadGrant(user)` → `user.grants['FILE'].ops.includes('DOWNLOAD')`；`:427` 注释称「审批通过后由审批链路写入」，但全仓 `*.ts` grep `DOWNLOAD` 字面量只命中枚举定义（`enums.ts:441,460,484`）、审计拦截器/装饰器注解、`configuration.ts:144,176` 的开关与启动提示、以及该读取点，**无任何一处把 `DOWNLOAD` 写入角色/用户授权**；`seed-data.ts` 五个内置角色 FILE 域 ops 均无该操作 | 本次实读 `file.service.ts:388-435`；全仓 Grep `DOWNLOAD` 20 处逐条分类；与 `DEMO-ACCEPTANCE.md:172` 结论一致但**证据源独立**（源码实读，非文档互证） |
+| F12 | **QA 独立复核 D-4 事实（不轻信转述）**：`file.service.ts:410-434` 的 `download()` 在 `approval` 模式只读 `hasApprovedDownloadGrant(user)` → `user.grants['FILE'].ops.includes('DOWNLOAD')`；`:427` 注释称「审批通过后由审批链路写入」，但全仓 `*.ts` grep `DOWNLOAD` 字面量只命中枚举定义（`enums.ts:441,460,484`）、审计拦截器/装饰器注解、`configuration.ts:144,176` 的开关与启动提示、以及该读取点，**无任何一处把 `DOWNLOAD` 写入角色/用户授权**；`seed-data.ts` 五个内置角色 FILE 域 ops 均无该操作 | 本次实读 `file.service.ts:388-435`；全仓 Grep `DOWNLOAD` 20 处逐条分类；与 `样品Demo验收清单.md:172` 结论一致但**证据源独立**（源码实读，非文档互证） |
 | F13 | `apps/api/src/scripts/demo-books-seed.ts:580-591` 的 `PRESIGNED_DOWNLOADS_OK` 是**纯 S3 wire 自检**（`client.presignedGetObject` + `fetch` + `sha256` 比对），**不经 `file.service.download()` 鉴权、不构造 `DOWNLOAD` 授权**，故**不构成** D-1 禁止的「以绕过手段制造下载成功」；但命名 `*_DOWNLOADS_OK` 会被读成「下载功能已验证」，与 D-4 分层表述冲突，建议工程师在输出/文档里标注为「wire 层自检」 | 本次实读 `demo-books-seed.ts:580-620` |
 
 ### 1.2 【三项确定性风险 · 阶段二重点观测，QA 只记录不修改】
 
 **风险① 双端点尚未落地（读取时刻 09:43 复核仍成立）**
-F1/F2/F3 与 F8 存在**实现落差**：架构已裁定双端点，而工程师在途改造（本次 `git diff` 实证）只把 `configuration.ts` 的默认端点改为 `seaweedfs`、`MINIO_PORT` 改为 `8333` 并补了注释，`storage.module.ts` 只改了注释措辞；**`S3_PUBLIC_*` 与 `publicClient` 在 `configuration.ts` / `storage.module.ts` / `.env.example` / `docker-compose.yml` 四个文件全仓 grep 仍为 0 命中**。若阶段二起栈时仍以 `MINIO_ENDPOINT=seaweedfs` 签发预签名 URL，URL host 为容器 DNS，封闭环境浏览器无法解析，S0-3（`DEMO-ACCEPTANCE.md:80`）与架构 §4 #6/#9 两条「最高优先」判据会直接失败。
+F1/F2/F3 与 F8 存在**实现落差**：架构已裁定双端点，而工程师在途改造（本次 `git diff` 实证）只把 `configuration.ts` 的默认端点改为 `seaweedfs`、`MINIO_PORT` 改为 `8333` 并补了注释，`storage.module.ts` 只改了注释措辞；**`S3_PUBLIC_*` 与 `publicClient` 在 `configuration.ts` / `storage.module.ts` / `.env.example` / `docker-compose.yml` 四个文件全仓 grep 仍为 0 命中**。若阶段二起栈时仍以 `MINIO_ENDPOINT=seaweedfs` 签发预签名 URL，URL host 为容器 DNS，封闭环境浏览器无法解析，S0-3（`样品Demo验收清单.md:80`）与架构 §4 #6/#9 两条「最高优先」判据会直接失败。
 > 措辞纪律：以上是**读取时刻的工作区快照**，不是对工程师最终交付的判断；改造仍在进行，阶段二须以届时源码重新核对。
 
 **风险② CORS 未配置，C08 大概率红（F10，架构 §7 第 2 条「仍待实测」）——【v1.2 原假设，已被实测证伪，保留留痕】**
@@ -77,11 +77,11 @@ F1/F2/F3 与 F8 存在**实现落差**：架构已裁定双端点，而工程师
 
 ### 1.3 与 PM 验收文档的口径对齐
 
-`docs/DEMO-ACCEPTANCE.md` 已建立「操作 / 预期 / 验收判据 / **如果失败，唯一原因是什么**」四栏体例（S0-3、S4、S7、S8 等），本方案 §5 全盘对齐该体例。读取范围口径亦对齐：
+`docs/样品Demo验收清单.md` 已建立「操作 / 预期 / 验收判据 / **如果失败，唯一原因是什么**」四栏体例（S0-3、S4、S7、S8 等），本方案 §5 全盘对齐该体例。读取范围口径亦对齐：
 
-- `DEMO-ACCEPTANCE.md:66,228,257,376`：2GB 真实大文件与断点续传**不在 demo 范围**，demo 只验 >5MB 分片链路，`QA-REPORT.md §五 R5` 列为 L5 上线前项；
-- `DEMO-ACCEPTANCE.md:189,378`：**不得把「四性全绿」写成验收判据**，P0 只实现完整性（SHA-256）；本方案 C07/C16 只判 SHA-256 一致性，不判四性；
-- `ARCHITECTURE-SEAWEEDFS.md:205,190`：**ETag 不是完整性基线**，完整性只认服务端重算 SHA-256；本方案 C07 用 ETag 只判「part ETag 可读可回传」，完整性判据独立用 SHA-256。
+- `样品Demo验收清单.md:66,228,257,376`：2GB 真实大文件与断点续传**不在 demo 范围**，demo 只验 >5MB 分片链路，`QA验收报告.md §五 R5` 列为 L5 上线前项；
+- `样品Demo验收清单.md:189,378`：**不得把「四性全绿」写成验收判据**，P0 只实现完整性（SHA-256）；本方案 C07/C16 只判 SHA-256 一致性，不判四性；
+- `SeaweedFS架构规格.md:205,190`：**ETag 不是完整性基线**，完整性只认服务端重算 SHA-256；本方案 C07 用 ETag 只判「part ETag 可读可回传」，完整性判据独立用 SHA-256。
 
 ---
 
@@ -98,7 +98,7 @@ F1/F2/F3 与 F8 存在**实现落差**：架构已裁定双端点，而工程师
 
 脚本用**两个独立 SDK client** 镜像架构 §1.2 双端点规格：`internalClient`（`S3_INTERNAL_ENDPOINT`，承担除预签名外全部操作）与 `publicClient`（`S3_PUBLIC_ENDPOINT`，**仅** `presignedUrl` / `presignedGetObject`）。这使脚本本身成为「双端点方案的可执行规格」：若 `S3_PUBLIC_ENDPOINT` 缺失或仍指向容器 DNS，判据会精确失败，而不是被 SDK 内部 host 处理掩盖。
 
-### 2.2 串联防线（沿用 `TESTING-GUIDELINES.md` 通则）
+### 2.2 串联防线（沿用 `测试方法学规范.md` 通则）
 
 测后一道闸门必先满足前一道；每条用例声明测哪道闸门，并断言拒绝理由指向它。据此把检查点分为三层：
 
@@ -108,7 +108,7 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 ```
 
 - 门禁任一失败 → 其后的**所有**检查点显式标 `BLOCKED`（不是静默跳过），并计入 fail-closed 统计；
-- 门禁全部通过后，任何 wire 用例失败 → 在已排除「服务没起来 / 凭据错 / 桶不存在」的前提下，**唯一原因**收敛到「SeaweedFS 3.79 对该 wire 操作不兼容」，与 `DEMO-ACCEPTANCE.md:145,154,190` 的归因写法同源。【v1.2 更正：删除原「或 CORS/ETag 配置未生效」——3.79 零配置即带 CORS，该分支不复存在；C08 若红须先按 §5 归因三查排除请求/环境侧原因，不自动收敛到不兼容】
+- 门禁全部通过后，任何 wire 用例失败 → 在已排除「服务没起来 / 凭据错 / 桶不存在」的前提下，**唯一原因**收敛到「SeaweedFS 3.79 对该 wire 操作不兼容」，与 `样品Demo验收清单.md:145,154,190` 的归因写法同源。【v1.2 更正：删除原「或 CORS/ETag 配置未生效」——3.79 零配置即带 CORS，该分支不复存在；C08 若红须先按 §5 归因三查排除请求/环境侧原因，不自动收敛到不兼容】
 
 ### 2.3 三类失败原因（+ 补充类），全部判 NO
 
@@ -134,7 +134,7 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 
 ### 2.5 D-4 下载链路分层纪律（主理人补充裁定，2026-11-09）
 
-**背景事实（QA 独立复核，见 F12）**：`approval` 下载模式只读 `grants.FILE.ops.DOWNLOAD`，全仓无授权写入处，即**下载业务放行链路未实现**，登记为上线前闭环项 **L2**。主理人裁定本次 demo 不修、不批准用 R0 临时授权绕过；PM 已把「临时 FILE:DOWNLOAD 授权」路径作废（D-1 / `docs/DEMO-ACCEPTANCE.md` v1.1 `63f4d69`）。
+**背景事实（QA 独立复核，见 F12）**：`approval` 下载模式只读 `grants.FILE.ops.DOWNLOAD`，全仓无授权写入处，即**下载业务放行链路未实现**，登记为上线前闭环项 **L2**。主理人裁定本次 demo 不修、不批准用 R0 临时授权绕过；PM 已把「临时 FILE:DOWNLOAD 授权」路径作废（D-1 / `docs/样品Demo验收清单.md` v1.1 `63f4d69`）。
 
 **三层必须分开写，禁止合并成一句「下载已验证」**：
 
@@ -146,12 +146,12 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 
 **硬约束**：
 1. C18 **只走 S3 wire**：不调用 `file.service.download()`、不构造 `PermissionSnapshot`、不写 `grants.FILE.ops`、不请求任何 `/api` 业务端点、不演示业务放行；脚本 `--self-test` 有一条静态检查钉死该边界（无 `file.service` / `PermissionSnapshot` import、且 C18 带 `D4_SCOPE=WIRE_ONLY` 声明）。
-2. **不准备任何 `DOWNLOAD` 授权夹具**：D-1 已否决「R0 临时授予 FILE:DOWNLOAD 再回收」，本方案与脚本均不含该路径。若阶段二发现有人擅自实现授权写入或给账号授权以制造「下载成功」，按**重大偏差单独上报**（`DEMO-ACCEPTANCE.md` §5.1 不通过条件⑤）。
+2. **不准备任何 `DOWNLOAD` 授权夹具**：D-1 已否决「R0 临时授予 FILE:DOWNLOAD 再回收」，本方案与脚本均不含该路径。若阶段二发现有人擅自实现授权写入或给账号授权以制造「下载成功」，按**重大偏差单独上报**（`样品Demo验收清单.md` §5.1 不通过条件⑤）。
 3. **S7b 的绿只证明 fail-closed 正确，不证明下载可用**；不得写「下载受控通过」这类合并说法。S7b 若「下载竟然成功」，唯一原因是 `preview.download_mode` 被改成 `free`（S0-7 被破坏）；`disabled` 同样拒绝下载、不在原因之列。
 4. **L2 闭环顺序**：先由保密部门确认 Q4 下载模式 → 再决定并实现授权写入 → 最后补业务放行验证。现在**不实现、不验证**授权写入链路。
 5. **S8 四性纪律**（PM §2 S8）：不得把「四性全绿」写成判据，P0 只实现完整性 SHA-256；本方案 C04/C07/C16/C18 只判 SHA-256 一致性。**S0-5 多角色前置**：演示前须备 R1/R3/R0 账号，否则 S2 403 会被误判成缺陷（属功能验收范围，不属本 wire 脚本）。
 
-**逐字固定表述**（阶段二 QA 报告与 demo 验收结论均须包含，`DEMO-ACCEPTANCE.md:194-195`）：
+**逐字固定表述**（阶段二 QA 报告与 demo 验收结论均须包含，`样品Demo验收清单.md:194-195`）：
 > 「**下载放行链路未演示**。`approval` 模式的下载授权写入链路未实现（上线前闭环项 L2），本次 demo 仅验证预览可用与下载 fail-closed 拒绝正确；QA 技术层另行验证 SeaweedFS `presignGet` 下载 wire 链路。**不构成下载功能已验证的结论。**」
 
 ---
@@ -192,13 +192,13 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 
 > `core` = **20 项**检查点（门禁 G0/G1/G2 共 3 项 + wire C01~C16 共 16 项 + D-4 技术层 **C18** 1 项，其中 C05/C06/C07/C08/C15/C18 覆盖最高优先项）；`full` = `core` + C17 = **21 项**。
 > **C18 为何不复用 C15**（避免重复用例）：C15 验 §4 #6 的通用预签名 GET + Range 兼容性，复用 C07 合并对象；C18 是 D-4 裁定的**独立技术层证据**，新建独立「下载源」对象、复现 `file.service.ts:418-420` 的生产调用形态（`presignGet` 带 `response-content-disposition` 响应头签名、300s 时效），并断言该响应头回显 —— 这是 C15 未覆盖的 SigV4 维度，故独立编号、独立执行、独立引用。
-> **⑧ 不进 core 不是「静默跳过」**：两个 suite 的完整清单在本文件与脚本输出中均事先公开，`core` 的 `YES` 会强制附 `SCOPE: CORE（未覆盖 2GB/410 片边界）` 且**不代表 `full` 通过**。依据 `DEMO-ACCEPTANCE.md:66,257,376`（demo 不宣称 2GB 达标）。
+> **⑧ 不进 core 不是「静默跳过」**：两个 suite 的完整清单在本文件与脚本输出中均事先公开，`core` 的 `YES` 会强制附 `SCOPE: CORE（未覆盖 2GB/410 片边界）` 且**不代表 `full` 通过**。依据 `样品Demo验收清单.md:66,257,376`（demo 不宣称 2GB 达标）。
 
 ---
 
 ## 5. 检查点详细规格
 
-> 统一四栏：**操作 / 预期 / 验收判据 / 如果失败，唯一原因是什么**（对齐 `DEMO-ACCEPTANCE.md` S0-3/S4/S8）。
+> 统一四栏：**操作 / 预期 / 验收判据 / 如果失败，唯一原因是什么**（对齐 `样品Demo验收清单.md` S0-3/S4/S8）。
 > 「唯一原因」成立的前提是 §2.2 的**门禁已全部通过**；门禁未过时后序检查点一律 `BLOCKED`，不得归因到 wire 层。
 > 所有对象使用 QA 专用前缀 `qa-pipeline/<runId>/`，跑完由脚本尽力清理（清理失败不进判据，但会在日志留档）。
 
@@ -276,7 +276,7 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 - **操作**：`completeMultipartUpload(uploadId, parts)` → 原生 GET 全对象 → 本地按 3 片拼接顺序重算 SHA-256 与源文件比对 → `statObject` 比对 size；**负向对照**：另起 uploadId，上传 1 片后故意传入错误 ETag 合并，期望非 2xx / 抛错。
 - **预期**：合并成功；合并后对象字节与源文件**逐字节一致**；错 ETag 被拒绝。
 - **验收判据**：`sha256(merged) === sha256(source)`（64 位 hex 全等，禁止前缀比对）；`stat.size === source.length`；负向对照 `rejected===true`（防「合并恒成功」假绿）。
-- **如果失败，唯一原因是什么**：**multipart 合并结果有误**（`INCOMPATIBLE`）——part ETag 格式/大小写差异导致合并失败，或合并后字节错序/缺失（`DEMO-ACCEPTANCE.md:190` 同口径归因）。**完整性只认 SHA-256，不认 ETag**（架构 §3.5）。
+- **如果失败，唯一原因是什么**：**multipart 合并结果有误**（`INCOMPATIBLE`）——part ETag 格式/大小写差异导致合并失败，或合并后字节错序/缺失（`样品Demo验收清单.md:190` 同口径归因）。**完整性只认 SHA-256，不认 ETag**（架构 §3.5）。
 
 #### C08 CORS preflight + 浏览器可读 ETag（§4 #9、用例⑦）——**重点单列③④，v1.2 判据修正**
 
@@ -356,7 +356,7 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 - **操作**：`--suite=full --large-mb 2048`，流式生成 2GB 确定性数据，按 5MB 切 410 片，逐片预签名 PUT → ETag 回读 → 合并 → GET 全对象流式重算 SHA-256。
 - **预期**：410 片全部成功；合并后 SHA-256 与源一致；`statObject.size === 2GB`。
 - **验收判据**：`partCount===410`（或 `ceil(total/5MB)`）、每片 ETag 非空、`sha256(merged)===sha256(source)`、size 精确。
-- **如果失败，唯一原因是什么**：**大文件分片边界不兼容**（`INCOMPATIBLE`）——片数上限 / 文件大小上限 / 长任务超时 / ETag 累积。**本项不在 demo 范围**（`DEMO-ACCEPTANCE.md:66,257,376`），core 的 `YES` 不覆盖本项。
+- **如果失败，唯一原因是什么**：**大文件分片边界不兼容**（`INCOMPATIBLE`）——片数上限 / 文件大小上限 / 长任务超时 / ETag 累积。**本项不在 demo 范围**（`样品Demo验收清单.md:66,257,376`），core 的 `YES` 不覆盖本项。
 
 ### 5.1 team-lead 八项重点单列的落点（自查表）
 
@@ -379,7 +379,7 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 
 > 「下载已验证」「下载受控通过」「R1 已全部关闭」为**禁用措辞**；逐字固定表述见 §2.5。
 
-> 断言强度下限按 `TESTING-GUIDELINES.md` PM 规则「= 防线被绕过的业务后果等级，合规红线必须 L4+」：本链路为唯一 P0 签字缺口，故**不使用** L1 裸 `toThrow` / L2 仅错误类型 / L3 仅文案，全部落到 L4 副作用或 L5 变异对照。
+> 断言强度下限按 `测试方法学规范.md` PM 规则「= 防线被绕过的业务后果等级，合规红线必须 L4+」：本链路为唯一 P0 签字缺口，故**不使用** L1 裸 `toThrow` / L2 仅错误类型 / L3 仅文案，全部落到 L4 副作用或 L5 变异对照。
 
 ---
 
@@ -449,8 +449,8 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 4. 执行 `node scripts/qa-file-pipeline-verify.cjs --suite core`；必要时 `--suite full --large-mb 2048`；
 5. **独立复核原始日志**（不是只看脚本摘要）：逐检查点核对 JSON 行、SHA-256 值、HTTP 状态码、ETag 原值、CORS 头原值（含 `Expose-Headers: *` 原值）；核对日志 LF、无凭据泄漏、`git ls-tree` 可入库；**C08 红时先按 §5 归因三查核对，不自动计入 `INCOMPATIBLE`**。
 6. **证据强度边界（分开表述）**：C05/C06/C15/C18 用 QA 自建 `publicClient` + 显式 public host，全绿只证明「给定正确 host 时 wire 链路可用」，**不证明被测服务读到了该配置**；报告把「wire 全绿」与「API 签发配置正确性」分两句写，后者证据不足如实写「未验证」，**不合并成「预签名 host 已验证」、不替被测服务背书**。
-7. 出具「是否解除 `QA-REPORT.md §五 R1` 不可签意见」的独立结论（三档见 §8，**已按 D-4 收窄为部分解除**），并逐字包含 §2.5 固定表述；D-4 两层分开写、不写「四性全绿」、CORS 已知边界与 `credentials=omit` 未验证项如实写出；
-8. 结论回传 team-lead 后，按通知更新 QA 文档（`QA-REPORT.md` 正文此时才允许改）；
+7. 出具「是否解除 `QA验收报告.md §五 R1` 不可签意见」的独立结论（三档见 §8，**已按 D-4 收窄为部分解除**），并逐字包含 §2.5 固定表述；D-4 两层分开写、不写「四性全绿」、CORS 已知边界与 `credentials=omit` 未验证项如实写出；
+8. 结论回传 team-lead 后，按通知更新 QA 文档（`QA验收报告.md` 正文此时才允许改）；
 9. 终判由 QA 独立裁定，不由工程师自验结果替代。
 
 ### 7.3 脚本不覆盖、需如实声明的范围
@@ -460,7 +460,7 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 - **（v1.3）`Allow-Methods: *` / `Allow-Headers: *` 同为通配且无法收紧**：与 Expose-Headers 同源于 3.79 内置全局 CORS middleware；credentials mode=omit 下通配全部方法/请求头（Authorization 除外，本链路预签名 PUT 不带凭据头），显式 `credentials: include` 下三头通配全部失效。报告口径同上，不单独写成「已按需配置」。
 - **（v1.3）C01 收权边界**：业务身份 `tianji_minio` 无 CreateBucket 权限是 s3.json identity 收权的**安全架构裁定**（`storage.module.ts:34`），C01 以「应被拒」为正向判据；若未来切换到需运行时建桶的部署形态，本判据须随架构裁定重开，不得沿用。
 - **（v1.3）C02 meta 回读剥前缀差异**：SeaweedFS 3.79 把 `x-amz-meta-*` 自定义键回读为剥前缀形态（如 `qa-case`），与 MinIO/SDK 带前缀形态不一致；**生产零消费面已查证**（`putObject` 只传 Content-Type、`statObject` 只读 `etag`），登记为兼容矩阵差异，不改代码、不改服务端；若未来业务需要消费自定义 meta，须按 `metaValueLoose()` 双形态适配或在服务端登记。
-- 业务侧 `file.service.ts` 的 `FILE_HASH_MISMATCH` 删脏对象、魔数白名单、权限判定：属 `DEMO-ACCEPTANCE.md` S4/S7 的功能验收，由功能用例覆盖，本脚本只覆盖其**对象存储侧**依赖。
+- 业务侧 `file.service.ts` 的 `FILE_HASH_MISMATCH` 删脏对象、魔数白名单、权限判定：属 `样品Demo验收清单.md` S4/S7 的功能验收，由功能用例覆盖，本脚本只覆盖其**对象存储侧**依赖。
 - **`approval` 下载业务放行链路（D-4 / L2）**：本脚本 C18 **只验 S3 wire 技术层**，不验 `file.service.download()` 的授权判定、`grants.FILE.ops.DOWNLOAD` 的写入、审批链路；该链路当前未实现，登记为上线前闭环项 L2，按 D-1/D-3 本次不修、不绕过、不演示成功下载。
 - 1~5GB 连续导入预演（架构 §6.2）、2GB 断点续传、多容器 pub/sub 跨进程：范围外。
 
@@ -480,17 +480,17 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 
 **D-4 分层表述为三档公用约束**：
 - 「S3 下载技术链路已验证」与「业务放行链路未验证」必须**分成两句**，不得合并成一句「下载已验证」；阶段二 QA 报告须逐字包含 §2.5 固定表述。
-- §五 R1 原文「文件入库 / 下载 / 四性检测真实链路未验证」中的「**下载**」按 D-4 拆读：技术层可解除、业务层保留；「**四性检测**」按 PM S8 纪律只认完整性 SHA-256，真实性/安全性为 `UNKNOWN`、可用性随 `extractStatus` 派生，**不得**写成「四性全绿」（与 `QA-REPORT.md` §3.5「契约绿/逻辑绿」同族）。
+- §五 R1 原文「文件入库 / 下载 / 四性检测真实链路未验证」中的「**下载**」按 D-4 拆读：技术层可解除、业务层保留；「**四性检测**」按 PM S8 纪律只认完整性 SHA-256，真实性/安全性为 `UNKNOWN`、可用性随 `extractStatus` 派生，**不得**写成「四性全绿」（与 `QA验收报告.md` §3.5「契约绿/逻辑绿」同族）。
 - L2 闭环前，QA 不会把「下载业务放行」计入已验证范围；多容器 pub/sub 跨进程仍按原判定保留。
 
-> 三档均需引用 `docs/perf/runs/` 的原始日志路径与 commit hash；`QA-REPORT.md` 正文更新只在阶段二结论回传后按 team-lead 通知进行。
+> 三档均需引用 `docs/perf/runs/` 的原始日志路径与 commit hash；`QA验收报告.md` 正文更新只在阶段二结论回传后按 team-lead 通知进行。
 
 ---
 
 ## 9. 边界声明与待办
 
 **阶段一已完成（5 个新文件 = 1 方案 + 1 脚本 + 3 份自证日志，`git status` 实证 5 个 `??`）**：
-1. `docs/QA-FILE-PIPELINE-PLAN.md`（本方案）；
+1. `docs/QA-文件链路验证方案.md`（本方案）；
 2. `scripts/qa-file-pipeline-verify.cjs`（可执行脚本，`node scripts/qa-file-pipeline-verify.cjs --suite core` 为阶段二入口）；
 3. `docs/perf/runs/qa-file-pipeline-self-test-20261109015949589.log`；
 4. `docs/perf/runs/qa-file-pipeline-prerun-noservice-20261109015950081.log`；
@@ -498,15 +498,15 @@ G0 服务可达 ──► G1 凭据正确且鉴权生效 ──► G2 四桶存�
 
 第 3~5 项为阶段一自证日志，**不计入阶段二验收证据**。
 
-> 上述文件只读了工程师在途工作区、未做任何修改；为避免与工程师并发工作区相互干扰，**阶段一产物暂未提交**，如需入库请 team-lead 通知，QA 可只提交这 5 个明确路径。【v1.2 注：以上为阶段一历史状态留痕，不删改；实际 5 个路径已于 `377a593` 入库（并发暂存竞态一并带入 PM 的 `DEMO-ACCEPTANCE.md` v1.2，主理人裁定 A 保留、不 reset）。】
+> 上述文件只读了工程师在途工作区、未做任何修改；为避免与工程师并发工作区相互干扰，**阶段一产物暂未提交**，如需入库请 team-lead 通知，QA 可只提交这 5 个明确路径。【v1.2 注：以上为阶段一历史状态留痕，不删改；实际 5 个路径已于 `377a593` 入库（并发暂存竞态一并带入 PM 的 `样品Demo验收清单.md` v1.2，主理人裁定 A 保留、不 reset）。】
 
-> **v1.2 变更文件（本次 C08 判据修正）**：改动 `docs/QA-FILE-PIPELINE-PLAN.md`（本方案）、`scripts/qa-file-pipeline-verify.cjs`（脚本）2 个既有文件；新增 `docs/perf/runs/qa-file-pipeline-self-test-20261109033617610.log`（v1.2 定版自证日志，仍**不计入阶段二验收证据**）。中间产物 `…031951773.log`、`…032129837.log` 与 `selftest-final2-*` 临时验证日志均已清理。**未执行 `--suite core`、未改方案外文件、未擅自提交**（待 team-lead 明确入库通知，避免重演并发暂存竞态）。
+> **v1.2 变更文件（本次 C08 判据修正）**：改动 `docs/QA-文件链路验证方案.md`（本方案）、`scripts/qa-file-pipeline-verify.cjs`（脚本）2 个既有文件；新增 `docs/perf/runs/qa-file-pipeline-self-test-20261109033617610.log`（v1.2 定版自证日志，仍**不计入阶段二验收证据**）。中间产物 `…031951773.log`、`…032129837.log` 与 `selftest-final2-*` 临时验证日志均已清理。**未执行 `--suite core`、未改方案外文件、未擅自提交**（待 team-lead 明确入库通知，避免重演并发暂存竞态）。
 
-> **v1.3 变更文件（阶段二首跑 3 FAIL 判据修正，主理人四项裁定授权）**：改动 `docs/QA-FILE-PIPELINE-PLAN.md`（本方案：顶部 v1.3 变更段、§5 C01/C02/C08 判据、§6 self-test 30 条、§7.1 S-A″ 行、§7.2 更正链条第 7 条、§8 已知边界 3 条、本注）、`scripts/qa-file-pipeline-verify.cjs`（脚本：文件头 v1.3 版本演进、`isAccessDenied()`/`metaValueLoose()`/`corsListAllows()` 三纯函数、C01 收权正验证、C02 双形态、C08 methods/headers 效果判据 + wildcardUsed 扩展三头、CHECK_DEFS 两处标题、self-test 25→30）。阶段二日志（`eb58a02` 已入库 4 份）之外新增 2 份 v1.3 复跑日志：`…stage2-selftest-v13-20261109090006172.log`、`…stage2-core-v13-20261109090025825.log`（后者为本方案首次 **`--suite core` 全绿 `IS_PASS: YES`** 记录）。**下载放行成功路径维持 L2 不演示（主理人裁定第 4 项）**；未碰 apps / installer / 他人域文件；提交报 hash 由 team-lead 统一推送。
+> **v1.3 变更文件（阶段二首跑 3 FAIL 判据修正，主理人四项裁定授权）**：改动 `docs/QA-文件链路验证方案.md`（本方案：顶部 v1.3 变更段、§5 C01/C02/C08 判据、§6 self-test 30 条、§7.1 S-A″ 行、§7.2 更正链条第 7 条、§8 已知边界 3 条、本注）、`scripts/qa-file-pipeline-verify.cjs`（脚本：文件头 v1.3 版本演进、`isAccessDenied()`/`metaValueLoose()`/`corsListAllows()` 三纯函数、C01 收权正验证、C02 双形态、C08 methods/headers 效果判据 + wildcardUsed 扩展三头、CHECK_DEFS 两处标题、self-test 25→30）。阶段二日志（`eb58a02` 已入库 4 份）之外新增 2 份 v1.3 复跑日志：`…stage2-selftest-v13-20261109090006172.log`、`…stage2-core-v13-20261109090025825.log`（后者为本方案首次 **`--suite core` 全绿 `IS_PASS: YES`** 记录）。**下载放行成功路径维持 L2 不演示（主理人裁定第 4 项）**；未碰 apps / installer / 他人域文件；提交报 hash 由 team-lead 统一推送。
 
 **阶段一未做（明确不做）**：
 - 未执行任何针对真实 SeaweedFS 服务的验收（等服务起栈 + team-lead 通知）；
-- 未改 `QA-REPORT.md` 正文、`ARCHITECTURE-SEAWEEDFS.md`、`DEV-PROCESS.md`、`DEMO-ACCEPTANCE.md`；
+- 未改 `QA验收报告.md` 正文、`SeaweedFS架构规格.md`、`开发过程记录.md`、`样品Demo验收清单.md`；
 - 未改任何生产代码、配置、测试文件；
 - **未准备任何 `DOWNLOAD` 授权夹具、未构造带 `DOWNLOAD` 授权的用户快照、未绕过 `approval` 鉴权**（D-1 否决的「R0 临时授权」路径已作废）；C18 只走 S3 wire，脚本 self-test 有静态边界检查；
 - 未对 §1.2 的实现落差做修改或代工程师下结论，仅记录为阶段二重点观测项。

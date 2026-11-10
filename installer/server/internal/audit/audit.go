@@ -1,4 +1,4 @@
-// Package audit 负责安装日志。设计依据：docs/INSTALLER-DESIGN.md §6.3。
+// Package audit 负责安装日志。设计依据：docs/安装器总体设计.md §6.3。
 //
 // 两条硬要求：
 //  1. append-only：重跑生成新的时间戳目录，绝不改写历史日志——现场出问题时，

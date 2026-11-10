@@ -117,9 +117,9 @@ docker compose exec api sha256sum \
 
 | 一致性核对 | 结果（每次压测重填） | 本次终跑实测（2026-11-07，示例，复制模板请清空） |
 |---|---|---|
-| 宿主 `git status --short` 为空（源码 == HEAD） | ☐ | ☑ QA 独立复算 3 个 source 锚与通报值一致，工作区 clean（QA-REPORT §联调实录第 5 项） |
+| 宿主 `git status --short` 为空（源码 == HEAD） | ☐ | ☑ QA 独立复算 3 个 source 锚与通报值一致，工作区 clean（QA验收报告 §联调实录第 5 项） |
 | 容器内镜像为本次重建产物（api 服务**无 bind mount**，真实风险是**整镜像过期**，不是「挂载了旧文件」） | ☐ | ☑ 容器内 source hash == 宿主 HEAD（镜像新鲜度佐证，见下） |
-| 本次 `docker compose build` 无缓存命中提示「CACHED」（否则可能沿用旧层） | ☐ | — **未单独留存 build 日志的 CACHED 判定**；以「容器内源码 hash == 宿主 HEAD」这一更强证据替代（QA-REPORT 如实声明），不勾选以免伪造证据 |
+| 本次 `docker compose build` 无缓存命中提示「CACHED」（否则可能沿用旧层） | ☐ | — **未单独留存 build 日志的 CACHED 判定**；以「容器内源码 hash == 宿主 HEAD」这一更强证据替代（QA验收报告 如实声明），不勾选以免伪造证据 |
 
 > **本次终跑实测回填**（`danghao-200x10-PASS-20261107-173726.log`，`IS_PASS: YES`；
 > 复制本模板生成新报告时请清空本块并重新采集，勿沿用旧值）：
@@ -137,7 +137,7 @@ docker compose exec api sha256sum \
 > 三点口径如实说明：①`perf:danghao` 实为 `ts-node src/scripts/...`，压测侧跑的是 **TS 源码**，
 > dist 锚是防御锚（证明镜像内编译产物与源码同源），不是「被执行的那份」；
 > ②source/dist 两层锚定强度不同，报告须分开表述，不可合并成一句「版本已锚定」；
-> ③容器内 dist 值本地无法重算，属通报值，复核深度按 QA-REPORT §联调实录声明。
+> ③容器内 dist 值本地无法重算，属通报值，复核深度按 QA验收报告 §联调实录声明。
 
 > **为什么必须双锚**：commit hash 只锚住「提交」，锚不住「实际执行的东西」。
 > 两类错配它都抓不出来——
@@ -353,7 +353,7 @@ IS_PASS: ________（YES / NO）
 | 取号失败 | 异常类型与消息（`23505` / 锁超时 / 其它） |
 | 落库不一致 | 内存 N 条，落库 M 条，差值 |
 
-**排查顺序**（与 DEPLOY.md §5.4 一致）：
+**排查顺序**（与 部署与压测启动手册.md §5.4 一致）：
 
 1. `danghao_rule.next_value` 是否被进程外修改
 2. 是否走了 `UPDATE ... RETURNING next_value - 1` 原子自增，而非 `SELECT MAX()+1`

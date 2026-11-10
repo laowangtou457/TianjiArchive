@@ -3,7 +3,7 @@
 # 构建机脚本：抓取 docker-ce 的 .deb 依赖闭包（变体 A 载荷）
 #
 # 这是**唯一允许联网**的脚本之一，且只在构建机执行；服务器端安装器代码严禁出网
-# （见 docs/INSTALLER-DESIGN.md §5.3）。
+# （见 docs/安装器总体设计.md §5.3）。
 #
 # 为什么必须用 --download-only + Dir::Cache::archives：
 #   `apt download docker-ce` 只下指定包、不含传递依赖，现场 `dpkg -i` 会因缺

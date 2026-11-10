@@ -3,7 +3,7 @@
 /**
  * QA 独立验证脚本 —— P0 文件链路（SeaweedFS 方案 A / minio@8 → S3 Gateway）
  *
- * 规格与判据：docs/QA-FILE-PIPELINE-PLAN.md（唯一权威口径）
+ * 规格与判据：docs/QA-文件链路验证方案.md（唯一权威口径）
  * 入口：node scripts/qa-file-pipeline-verify.cjs --suite core
  *      node scripts/qa-file-pipeline-verify.cjs --self-test
  *      node scripts/qa-file-pipeline-verify.cjs --suite full --large-mb 2048
@@ -1067,7 +1067,7 @@ const IMPL = {
     // D-4 技术层：证明 SeaweedFS 侧 presignGet 下载 wire 链路可用。
     // 复现生产下载调用形态 file.service.ts:418-420（presignGet + response-content-disposition，300s）。
     // 纪律：只走 S3 wire，不经过 file.service.download() 鉴权、不构造带 DOWNLOAD 授权的用户快照、
-    //       不调用 /api 业务端点、不演示业务放行（docs/QA-FILE-PIPELINE-PLAN.md §2.5）。
+    //       不调用 /api 业务端点、不演示业务放行（docs/QA-文件链路验证方案.md §2.5）。
     if (!CTX.public) return { ok: false, cause: 'TOOL_ERROR', detail: 'publicClient 未构造' };
     const k = track(key('C18-download-source.pdf'));
     const src = Buffer.from('%PDF-1.4\nQA-D4-DOWNLOAD-WIRE-' + 'd'.repeat(8192) + '\n%%EOF\n', 'utf8');
@@ -1352,7 +1352,7 @@ function doSelfTest() {
 
 function printHeader() {
   out(`QA-FILE-PIPELINE-VERIFY | suite=${SUITE} | tag=${TAG} | runId=${RUN_ID}`);
-  out(`plan=docs/QA-FILE-PIPELINE-PLAN.md | log=${relLog()}`);
+  out(`plan=docs/QA-文件链路验证方案.md | log=${relLog()}`);
   out(`internal=${CFG.internalEndpoint}:${CFG.internalPort} | public=${CFG.publicEndpoint || '(未设置)'}:${CFG.publicPort} | origin=${CFG.origin}`);
   out(`buckets=${BUCKETS.join(',')} | checks=${checks.length} | timeoutMs=${TIMEOUT_MS}`);
   out('DISCIPLINE: contract spec 全绿不作 wire 证据；脚本存在 ≠ 验证通过；self-test 全绿 ≠ 服务兼容');

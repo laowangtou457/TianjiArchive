@@ -2,7 +2,7 @@
 
 > 版本 v1.1（实测更正 + 已裁定项补录）｜ 架构师：高见远 ｜ 基线：`E:\TianjiArchive` HEAD=`f111a7c`（`git rev-parse` 实测）｜ 状态：待评审
 > 变更记录：v1.0 初稿；v1.1 按主理人实测证据更正 §3.4 volume 预分配口径（保留原 wiki 误判与更正过程），§1.2 补录双端点已裁定方案。
-> 范围：**仅新增本文件**，不改代码、不改 `docs/ARCHITECTURE.md`（主架构文档仍以 MinIO 表述为准，待方案 A 验收后由主理人决定合并）。
+> 范围：**仅新增本文件**，不改代码、不改 `docs/系统架构设计.md`（主架构文档仍以 MinIO 表述为准，待方案 A 验收后由主理人决定合并）。
 > 目标：样品 demo 送封闭环境试用；8 项高敏参数走试用态默认值；真实书籍样本后续提供，试用阶段用模拟数据。
 > 行文口径：【事实】= 有本地文件行号或官方 wiki 出处；【假设】= 未实测的推断；【建议】= 架构侧落地建议，非既成事实。
 
@@ -12,9 +12,9 @@
 
 | # | 事实 | 出处 |
 |---|---|---|
-| E1 | MinIO 开源版 Server/Client/KES 归档停服：Docker Hub `minio/minio`、`minio/mc` 仓库级消失；`dl.min.io` 返回 HTTP 410 Gone | `docs/DEV-PROCESS.md:176-188`；`docker-compose.nominio.override.yml:4-14` |
-| E2 | `infra/backup/Dockerfile:9` 从 `dl.min.io` 下载 `mc` → 全量 build 阻断；备份脚本仍依赖 `mc alias/mirror/rm/cp` | `infra/backup/Dockerfile:7-11`；`infra/backup/backup.sh:34-36,65-80`；`docs/DEV-PROCESS.md:186` |
-| E3 | 联调临时覆盖 `docker-compose.nominio.override.yml` 用 profiles 禁用 minio/minio-init 并摘除 api/extractor/backup 的 depends_on；`/api/health` 因此 degraded | `docker-compose.nominio.override.yml:26-52`；`docs/DEV-PROCESS.md:186,199,203` |
+| E1 | MinIO 开源版 Server/Client/KES 归档停服：Docker Hub `minio/minio`、`minio/mc` 仓库级消失；`dl.min.io` 返回 HTTP 410 Gone | `docs/开发过程记录.md:176-188`；`docker-compose.nominio.override.yml:4-14` |
+| E2 | `infra/backup/Dockerfile:9` 从 `dl.min.io` 下载 `mc` → 全量 build 阻断；备份脚本仍依赖 `mc alias/mirror/rm/cp` | `infra/backup/Dockerfile:7-11`；`infra/backup/backup.sh:34-36,65-80`；`docs/开发过程记录.md:186` |
+| E3 | 联调临时覆盖 `docker-compose.nominio.override.yml` 用 profiles 禁用 minio/minio-init 并摘除 api/extractor/backup 的 depends_on；`/api/health` 因此 degraded | `docker-compose.nominio.override.yml:26-52`；`docs/开发过程记录.md:186,199,203` |
 | E4 | 主 compose 中四处依赖：`minio` 服务、`minio-init`、`api/extractor/backup` 的 `depends_on: minio` + `x-infra-env` | `docker-compose.yml:19-34,111-163,198-199,247-248,295-296,299-304` |
 | E5 | 应用侧固定使用 `minio` JS SDK：pathStyle、region `us-east-1`、端口/凭据/桶名全部来自 `MINIO_*` 环境变量 | `apps/api/src/infra/storage/storage.module.ts:32-49`；`apps/api/src/config/configuration.ts:107-119` |
 | E6 | 主理人实测 `chrislusf/seaweedfs:3.79` 可拉取，digest 前缀 `sha256:21425305…`（**完整 digest 需交付时回填**） | 主理人任务说明（非仓库文件） |
@@ -87,11 +87,11 @@ flowchart LR
 
 ### 1.3 数据卷与 NAS 挂载点【事实 + 建议】
 
-- **【事实】** 主 compose 用宿主机目录 bind mount（`./volumes/<service>:/...`），不是 named volume（`docs/DEPLOY.md:29-43`）；MinIO 为 `./volumes/minio:/data`（`docker-compose.yml:122-123`），备份产物在 `./volumes/backup:/backup`（`:308-309`）。
+- **【事实】** 主 compose 用宿主机目录 bind mount（`./volumes/<service>:/...`），不是 named volume（`docs/部署与压测启动手册.md:29-43`）；MinIO 为 `./volumes/minio:/data`（`docker-compose.yml:122-123`），备份产物在 `./volumes/backup:/backup`（`:308-309`）。
 - **【建议】** SeaweedFS 用 `./volumes/seaweedfs:/data` 并在 `weed server -dir=/data` 中显式指定（Getting Started §In production 示例 `-v /opt/weedfs/data:/data ... server -dir="/data"`）。`/data` 同时承载 master 元数据、volume 数据文件与 filer store（默认 filer store 类型**【假设】**，须用 `weed scaffold -config=filer` 或 `weed server -h` 在 3.79 上确认）。
-- **【事实】** 官方镜像默认以非 root `seaweed` 用户运行，bind mount 目录需可写 UID/GID `1000:1000`（Getting Started §In production）。这与 ES 目录需 uid 1000 的既有约束一致（`docs/DEPLOY.md:52-57`）。
+- **【事实】** 官方镜像默认以非 root `seaweed` 用户运行，bind mount 目录需可写 UID/GID `1000:1000`（Getting Started §In production）。这与 ES 目录需 uid 1000 的既有约束一致（`docs/部署与压测启动手册.md:52-57`）。
 - **【事实·v1.1 更正】** `/data` 的 volume 预分配口径以镜像内实测为准：1GB/volume、四桶约 28GB，**不是** v1.0 按 wiki 推断的 840GB；完整更正过程见 §3.4。
-- **【建议】** NAS 挂载点沿用 `volumes/` 单一父目录便于整目录拷贝；但 `/data`（对象数据）与 `volumes/backup`（备份）应落**不同物理盘**，否则不满足异盘备份语义（`docs/ARCHITECTURE.md:769`）。
+- **【建议】** NAS 挂载点沿用 `volumes/` 单一父目录便于整目录拷贝；但 `/data`（对象数据）与 `volumes/backup`（备份）应落**不同物理盘**，否则不满足异盘备份语义（`docs/系统架构设计.md:769`）。
 
 ---
 
@@ -129,7 +129,7 @@ flowchart LR
 ### 2.2 凭据注入与轮换边界【建议 + 事实】
 
 1. **注入**：真实凭据只放未入库的 `.env`（`.gitignore:11-15` 明确 `.env` 不入库、`.env.example` 必须入库为模板）；`.env.example:41-42` 的 `tianji_minio` / `tianji_minio_change_me` 是占位默认值，**不得写入交付物**。s3.json 由部署脚本/entrypoint 从环境变量在容器内生成，绝不落盘到仓库、绝不写进镜像层【建议】。
-2. **轮换**：静态配置文件不自动重载，需 `SIGHUP` 或重启；环境变量方式不自动重载且优先级最低，变更必须重启（S3-Credentials §Configuration Reloading）。轮换动作 = 改 `.env` → 重新生成 s3.json → 重启/SIGHUP SeaweedFS → 同步更新 api/extractor/backup/cli-migrator 的凭据并 **重建容器**（`docs/DEPLOY.md:378,486` 明确 `restart` 不重读 `.env`，须 `up -d`）【事实+建议】。
+2. **轮换**：静态配置文件不自动重载，需 `SIGHUP` 或重启；环境变量方式不自动重载且优先级最低，变更必须重启（S3-Credentials §Configuration Reloading）。轮换动作 = 改 `.env` → 重新生成 s3.json → 重启/SIGHUP SeaweedFS → 同步更新 api/extractor/backup/cli-migrator 的凭据并 **重建容器**（`docs/部署与压测启动手册.md:378,486` 明确 `restart` 不重读 `.env`，须 `up -d`）【事实+建议】。
 3. **轮换边界【假设】**：轮换会使旧密钥签发的未过期预签名 URL 失效（`storage.module.ts:49` 默认 3600s 有效期，`file.service.ts:329,364,376,418` 预览/下载 300~900s）。需在维护窗口执行并提示在途上传任务重试；是否即时失效须实测。
 4. **【建议】** 生产按最小权限拆分：应用用一个 RW identity；备份任务单独 identity 且对 `archive-backup` 限定桶级写权限；禁止所有身份共享同一密钥。
 
@@ -255,27 +255,27 @@ docker run --rm --entrypoint sh chrislusf/seaweedfs:3.79 -c "sed -n '30,90p' /en
 | 基础镜像 | `docker.elastic.co/elasticsearch/elasticsearch:8.13.4` | `infra/elasticsearch/Dockerfile:8` | 同上 |
 | 产物镜像 | `tianji-elasticsearch-ik:8.13.4` | `docker-compose.yml:76-82` | 构建环境产出后打包，现场不 build |
 | 产物镜像 | `tianji-archive-api:1.0.0` / `extractor:1.0.0` / `web:1.0.0` / `backup:1.0.0` | `docker-compose.yml:190,239,268,289` | 同上 |
-| 离线文件 | `elasticsearch-analysis-ik-8.13.4.zip` | `infra/elasticsearch/Dockerfile:15-27`；`docs/DEPLOY.md:96-112`；`docs/DELIVERY-CHECKLIST.md:234` | 预置到 `infra/elasticsearch/ik/`，否则构建期联网 |
+| 离线文件 | `elasticsearch-analysis-ik-8.13.4.zip` | `infra/elasticsearch/Dockerfile:15-27`；`docs/部署与压测启动手册.md:96-112`；`docs/交付核对清单.md:234` | 预置到 `infra/elasticsearch/ik/`，否则构建期联网 |
 | 离线文件 | 备份侧 S3 客户端二进制 | `infra/backup/Dockerfile:9` 的 `mc` 来源已 410（E2） | **必须在构建环境预置替代二进制并烤进镜像**；`backup.sh` 的 `mc mirror/rm/cp` 调用点（`:34-36,65-80`）需同步改造，属工程师范围 |
 
 ### 5.2 信任边界【事实 + 建议】
 
 - **【事实】** 当前 compose 有 5 处 `build:`（elasticsearch `:76-82`、api `:187-190`、extractor `:236-239`、web `:263-268`、backup `:286-289`），且 Dockerfile 内含联网动作：`pnpm install`（`apps/api/Dockerfile:8`）、`apt-get install`（`apps/api/Dockerfile:20-22`、`apps/extractor/Dockerfile:18-24`）、`apk add`（`infra/backup/Dockerfile:7-9`）、IK 插件下载（`infra/elasticsearch/Dockerfile:22-25`）。**封闭环境无公网、无现场 build、无外部下载** → 现场 compose 必须是 **build-free**（只保留 `image:` + digest），全部产物镜像在构建环境产出后用 `docker save`/`docker load` 迁移【建议，工程师并行改造】。
-- **【建议】** 交付物为：镜像 tar 包 + 每包 SHA-256 清单 + digest 清单 + compose/`.env.example`/`s3.json` 生成脚本 + 离线 IK zip + 模拟数据种子。现场只执行 `docker load` / `docker compose up -d` / 迁移与 seed（`docs/DEV-PROCESS.md:200-201` 记录过 5/5 迁移 + seed 成功的既有流程）。
-- **【建议】** 凭据不进任何镜像与入库文件：`.env` 单独介质交付并现场生成（`.gitignore:11-15`）；`s3.json` 运行时生成；日志/报告不输出密钥（`docs/DEV-PROCESS.md:172` 已有"凭证 helper 输出禁止进入日志"纪律）。
+- **【建议】** 交付物为：镜像 tar 包 + 每包 SHA-256 清单 + digest 清单 + compose/`.env.example`/`s3.json` 生成脚本 + 离线 IK zip + 模拟数据种子。现场只执行 `docker load` / `docker compose up -d` / 迁移与 seed（`docs/开发过程记录.md:200-201` 记录过 5/5 迁移 + seed 成功的既有流程）。
+- **【建议】** 凭据不进任何镜像与入库文件：`.env` 单独介质交付并现场生成（`.gitignore:11-15`）；`s3.json` 运行时生成；日志/报告不输出密钥（`docs/开发过程记录.md:172` 已有"凭证 helper 输出禁止进入日志"纪律）。
 - **【建议】** 网络边界：SeaweedFS 9333/8888/8080/18080/19333 只在 `tianji-net` 内可达；8333 **按 §1.2 已裁定双端点方案须向宿主发布**（浏览器直连、不经反代），发布时限定来源 IP 或由现场网络策略控制；不得暴露 Allow-All 模式（E9）。
 
 ### 5.3 升级与回滚粒度【建议】
 
 | 层级 | 变更内容 | 粒度 | 回滚 |
 |---|---|---|---|
-| L0 配置 | `.env`（端口/凭据/桶名）、`s3.json` 重新生成、`autoCreateBucket`/volumeSizeLimit 等 flag | 重建受影响容器（`docs/DEPLOY.md:378,486`：`restart` 不重读 `.env`，须 `up -d`） | 保留上一版 `.env` 与 s3.json 模板，重建即回滚 |
+| L0 配置 | `.env`（端口/凭据/桶名）、`s3.json` 重新生成、`autoCreateBucket`/volumeSizeLimit 等 flag | 重建受影响容器（`docs/部署与压测启动手册.md:378,486`：`restart` 不重读 `.env`，须 `up -d`） | 保留上一版 `.env` 与 s3.json 模板，重建即回滚 |
 | L1 应用 | api / web / extractor / backup 单个镜像 digest | 单服务替换，其他服务不动 | 切回上一 digest |
 | L2 对象存储 | SeaweedFS 镜像版本号 | 单容器重启，**`/data` 卷不动** | 切回旧 digest；跨大版本回滚前须验证卷格式兼容性【假设】 |
 | L3 数据 | PG schema migration / seed | 全量备份后执行；无自动降级 | 由 `pg_dump` 备份恢复（`infra/backup/backup.sh:48-61`），对象桶按 L2 保留 |
 | L4 凭据轮换 | 见 §2.2 | SeaweedFS + 四个消费方同时切换 | 需维护窗口；旧预签名 URL 失效【假设】 |
 
-> **【建议】** 每个镜像以 digest 而非 tag 固定；升级前先对 `volumes/seaweedfs` 与 `volumes/postgres` 做快照（异地/异盘），这是 RPO/RTO 口径的基础（`docs/ARCHITECTURE.md:769`）。
+> **【建议】** 每个镜像以 digest 而非 tag 固定；升级前先对 `volumes/seaweedfs` 与 `volumes/postgres` 做快照（异地/异盘），这是 RPO/RTO 口径的基础（`docs/系统架构设计.md:769`）。
 
 ---
 
@@ -297,7 +297,7 @@ docker run --rm --entrypoint sh chrislusf/seaweedfs:3.79 -c "sed -n '30,90p' /en
 | `log.retention_years` | 3 | `params.ts:383-390` | retention，`editable: false`（PR-P7） |
 
 - **【事实】** 参数体系是 `PARAM_DEFS` 单一定义源（`params.ts:1-12,131`），改口径只需改参数值/定义，不改业务代码；`editable=false` 项管理端禁改（`:390`）。
-- **【事实】** 这些默认值当前是**产品建议值、未经使用单位确认**（`docs/QA-REPORT.md:236` 亦记录 `MAX_TOTAL_DAYS=90 / MAX_RENEWAL_COUNT=1` 为产品默认值未经单位正式确认）。
+- **【事实】** 这些默认值当前是**产品建议值、未经使用单位确认**（`docs/QA验收报告.md:236` 亦记录 `MAX_TOTAL_DAYS=90 / MAX_RENEWAL_COUNT=1` 为产品默认值未经单位正式确认）。
 - **【架构影响·建议】** ①demo 用模拟数据，不承担涉密数据，试用态默认值可接受；②正式上线前须由**保密部门 + 档案部门**逐项确认 8 项并出具确认值，尤其水印开关/模板、下载模式、会话超时、日志保留年限；③确认动作只更新 `sys_param`（或 `PARAM_DEFS` 默认值需同步 PRD/架构两份文档），**不改代码、不重发镜像**；④demo 凭据为占位默认值（`.env.example:41-42,62-63`），正式上线前必须全部轮换；⑤`log.retention_years` 为 `editable=false`，若单位要求更长年限需走代码/文档变更而非管理端配置。
 - **【建议】** 在 demo 交付清单中显式标注"8 项参数为试用态默认值，不构成本单位制度口径"，避免试用报告被误读为已确认。
 
@@ -319,7 +319,7 @@ flowchart LR
 - **【事实】** 迁移工具用 minio SDK 直连：`apps/cli-migrator/src/cli.ts:129-150`（`MinioClient` + `MINIO_*` 环境变量）、`apps/cli-migrator/src/migrator.ts:137-158`（本地逐文件 SHA-256 → `putObject` → 写 `electronic_file`）、断点状态 SQLite `apps/cli-migrator/src/checkpoint.ts:45-56,113-175`、`--batch-max-rows` 承接 `import.batch_max_rows`（`cli.ts:51-59,161-169`）。
 - **【事实】** 抽取侧 `apps/extractor/src/object.fetcher.ts:14-23` 直接 `new MinioClient`，并读 `MINIO_BUCKET_ORIGINAL`（`:22`）；因此**端点/端口/凭据改造必须覆盖 cli-migrator 与 extractor 两处独立客户端**，不能只改 api 的 `configuration.ts`。
 - **【事实】** 上传链路另有浏览器分片直传：`file.service.ts:150-185`（5MB 分片，`packages/shared/src/enums.ts:572-574` 定义 `MAX_FILE_SIZE=2GB`、`CHUNK_SIZE=5MB`），`FileUploader.tsx:99-134`。
-- **【建议·容量｜v1.1 已更正】** 原"每桶 7×30GB、四桶≈840GB 预分配会在 100GB 导入中途 No free volumes left"推断已被 E11 证伪（完整更正过程见 §3.4）：本镜像为 **1GB/volume、四桶约 28GB**，且已内置 `-master.volumeSizeLimitMB=1024`，**不再要求为 840GB 预设调优**。100GB 真实样本接入前仍需完成：①起栈实测 `-master.volumePreallocate` 的真实磁盘占用与 `-volume.max=0` 语义；②按 1GB/volume 估算约 100+ 个 volume 的增长与磁盘余量；③`docs/ARCHITECTURE.md` 在线 150GB + 备份区 1TB 的基线按实测值复核【假设】。
+- **【建议·容量｜v1.1 已更正】** 原"每桶 7×30GB、四桶≈840GB 预分配会在 100GB 导入中途 No free volumes left"推断已被 E11 证伪（完整更正过程见 §3.4）：本镜像为 **1GB/volume、四桶约 28GB**，且已内置 `-master.volumeSizeLimitMB=1024`，**不再要求为 840GB 预设调优**。100GB 真实样本接入前仍需完成：①起栈实测 `-master.volumePreallocate` 的真实磁盘占用与 `-volume.max=0` 语义；②按 1GB/volume 估算约 100+ 个 volume 的增长与磁盘余量；③`docs/系统架构设计.md` 在线 150GB + 备份区 1TB 的基线按实测值复核【假设】。
 - **【建议·管线】** 100GB 导入走 cli-migrator 批量通道（断点续传 + 校验报告），不走浏览器分片；每批完成后校验 `electronic_file.sha256` 与源文件一致；抽取队列并发由 `EXTRACT_CONCURRENCY`（`docker-compose.yml:253`，默认 4）控制，避免同时压满 S3 与 LibreOffice/ffmpeg。
 - **【建议·验证】** 真实样本到位前，用模拟数据跑通 §4 的 14 项兼容用例 + 一次 1~5GB 的连续导入，作为"100GB 接入"的预演门槛。
 
@@ -333,7 +333,7 @@ flowchart LR
 4. **【待决策】** 建桶责任单点归属（init sidecar vs 应用 `ensureBuckets`）与 `autoCreateBucket=false` 的取舍（§3.2）。
 5. **【待确认】** 8 项高敏参数的单位确认值、demo 凭据轮换责任人与时间窗（§6.1）。
 6. **【待确认】** 真实书籍样本的文件类型分布与总量，用于 volume 上限、分片数与抽取并发的最终取值。
-7. **【待确认】** 主架构文档 `docs/ARCHITECTURE.md` 中 MinIO 表述（`:4,40,57,66,68,69,86,90,641,686,769,801,803,805,819`）何时合并为本方案；本文件不改主文档。
+7. **【待确认】** 主架构文档 `docs/系统架构设计.md` 中 MinIO 表述（`:4,40,57,66,68,69,86,90,641,686,769,801,803,805,819`）何时合并为本方案；本文件不改主文档。
 8. **【假设待实测｜v1.1 新增】** `-master.volumePreallocate` 的实际磁盘占用（稀疏 or 真实预分配）与 `-volume.max=0` 在 3.79 的语义；由工程师起栈实测回填 §3.4 ④。
 
 ---

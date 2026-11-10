@@ -2,7 +2,7 @@ package preflight
 
 // 变体 B（麒麟 Kylin V10 / 统信 UOS 20）的六项 OS 基线预检。
 //
-// 依据：docs/VARIANT-B-OS-BASELINE.md §4.1–§4.6（含 2026-11-09 麒麟真机的实测校正）。
+// 依据：docs/变体B-系统基线实测.md §4.1–§4.6（含 2026-11-09 麒麟真机的实测校正）。
 // 边界（裁定过，别越线）：
 //   - **只探测与报告，不做任何自动处置**。setstatus -t / setenforce 0 / systemctl disable
 //     firewalld / 加 trusted zone 一概不写进代码——这些要现场签认，由安装步骤按报告决定，
@@ -392,7 +392,7 @@ func checkOverlay2Prereq(ctx context.Context, opts VariantBOptions, rep *Report)
 
 // checkFirewalld 是 §4.4。
 //
-// 判据以「第二版实测校正」为准（docs/VARIANT-B-OS-BASELINE.md §4.4）：
+// 判据以「第二版实测校正」为准（docs/变体B-系统基线实测.md §4.4）：
 //   - 真正成立的 OS 级证据来自统信：firewalld 会把 docker0 绑进自己的 zone，dockerd 再绑
 //     一次就冲突 → 重启系统后再起 dockerd 直接失败
 //     `Failed to program NAT chain: ZONE_CONFLICT: 'docker0' already bound to a zone`。

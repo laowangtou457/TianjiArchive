@@ -526,7 +526,7 @@ expect(err?.message).toContain('第 2 级');
 
 ### R1 结案更新（2026-11-09 · 阶段二独立验证完成 · MinIO 行升级为「**A 部分解除（限定范围）**」）
 
-> **裁定**：主理人采纳 QA §8 三档 **A 档**意见（`docs/QA-FILE-PIPELINE-PLAN.md` §8）。判据演进 v1.2→v1.3 全程经主理人逐项裁定授权并留痕（`a83437d`→`4f5b1eb`），无静默、fail-closed 未破；self-test `PASS (30/30)`；core **20/20 `IS_PASS: YES`**（`SCOPE: CORE`）。
+> **裁定**：主理人采纳 QA §8 三档 **A 档**意见（`docs/QA-文件链路验证方案.md` §8）。判据演进 v1.2→v1.3 全程经主理人逐项裁定授权并留痕（`a83437d`→`4f5b1eb`），无静默、fail-closed 未破；self-test `PASS (30/30)`；core **20/20 `IS_PASS: YES`**（`SCOPE: CORE`）。
 
 **证据绑定与三链路依据**（全部可追溯）：
 - **测试对象与栈**：HEAD `5a0fbc2` + 离线栈 `docker-compose.offline.yml` 8/8 healthy（api `objectStorage.ok=true`）+ 镜像包 `offline/tianji-offline-images.tar`（SHA256SUMS sha256 `50fde9a8…`，SAVE_EXIT=0，L0 锚 4/4，BUILD-INFO HEAD `aa7a248`）；
@@ -771,14 +771,14 @@ Round 3 前：`PARAM_KEY` 硬编码 5 个 key 与架构 §4.3 不一致。
 | PRD v1.3 参数化能力 | ✅ 22 项参数单一源 + 三层生效分类（D-1 结构性保证）+ 跨参数校验 C-1~C-5（blocking 已验证）+ `verify:params` **107/107 断言**（QA 独立实跑） |
 | 权限变更入口完整性 | ✅ `PERMISSION_MUTATIONS` 单一源（8+1 排除）+ 测试级一致性守卫 20 条 + **独立 CI 静态脚本**（R1 正向/R2 反向/R3 自证，`pnpm ci:check` EXIT=0，反向变异可抓漏） |
 | 更名（泰坦→天玑） | ✅ QA 五点验收通过：路径/包名/零残留/全量复跑/shared 恢复文件抽查 + build/typecheck 独立复跑 |
-| 版本控制 | ✅ git 基线 `902f114` 可用，工作区仅有本报告与 TESTING-GUIDELINES 的文档改动 |
+| 版本控制 | ✅ git 基线 `902f114` 可用，工作区仅有本报告与 测试方法学规范 的文档改动 |
 | 真实中间件联调 | ✅ **完成（限定范围）** —— 五服务 healthy（minio 红为预期，degraded 如实记录）；迁移 5/5；seed 成功；IK 分词实测通过；**终跑 200×10 档号压测七项判据全绿**（`IS_PASS: YES`，日志 `docs/perf/runs/danghao-200x10-PASS-20261107-173726.log` 已入库）；双轨锚定已采。现场共修复并回归 9 个缺陷（#6~#14）。**两项如实排除**：MinIO 文件链路、多容器 pub/sub 跨进程 |
 
 ### **最终判定：PASS（限定范围）** —— 2026-11-07 联调轮终判复核后升级
 
 **升级依据（三档评估框架全部满足，逐项证据见下「联调现场实录」）**：①压测原始数据落盘且七项判据全绿（QA 独立复算）；②迁移/seed/IK/health 证据链交叉复核无矛盾；③现场缺陷 #1–#14 全部有关闭证据（修复 + 防回归 + 变异验证）。
 
-**可以签字的部分**：业务逻辑、权限模型、状态机、档号引擎、完整性校验、审批并发安全、参数化体系、权限撤权机制（单实例）、更名完整性、**真实 PG 行锁下的 200×10 并发发号（零重号/零断号/零解析失败）**、ES 容器与 IK 分词、Redis 单机运行时、容器启动装配层、迁移与 seed 链路——有 **436 个通过用例** + 107 项参数行为断言 + CI 静态门禁 + 终跑压测日志兜底，**#1–#14 十四个缺陷全部关闭**。DELIVERY-CHECKLIST 46 项抽查 14 项全部属实。
+**可以签字的部分**：业务逻辑、权限模型、状态机、档号引擎、完整性校验、审批并发安全、参数化体系、权限撤权机制（单实例）、更名完整性、**真实 PG 行锁下的 200×10 并发发号（零重号/零断号/零解析失败）**、ES 容器与 IK 分词、Redis 单机运行时、容器启动装配层、迁移与 seed 链路——有 **436 个通过用例** + 107 项参数行为断言 + CI 静态门禁 + 终跑压测日志兜底，**#1–#14 十四个缺陷全部关闭**。交付核对清单 46 项抽查 14 项全部属实。
 
 **仍不能签字的部分（如实保留，不因升级 PASS 消失）**：
 1. **MinIO 文件存储真实链路**（R1）—— 官方镜像归档停服（Docker Hub 仓库消失、dl.min.io 410 Gone），`docker-compose.nominio.override.yml` 仅为联调摘除、主 compose 未改；替代对象存储选型待拍板（工程师方案集推荐 SeaweedFS 方案 A），P0 文件入库/下载/四性检测链路未验证；
@@ -793,7 +793,7 @@ cp .env.example .env   # 改 5 个口令
 docker compose build && docker compose up -d
 docker compose exec api pnpm migration:run && docker compose exec api pnpm seed
 docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api pnpm --filter @tianji/api perf:danghao
-# 另需：IK 分词冒烟（详见 docs/DEPLOY.md）；多实例 C-5 用例已启封为单测 T 类 3 条，无需容器侧操作
+# 另需：IK 分词冒烟（详见 docs/部署与压测启动手册.md）；多实例 C-5 用例已启封为单测 T 类 3 条，无需容器侧操作
 ```
 
 > **压测证据的锚定强度须分两层表述**（`apps/api/package.json` `perf:danghao` 实为 `ts-node src/scripts/danghao-concurrency-bench.ts`，压测侧跑 TS 源码；`.dockerignore` 已由 `b26ab71` 补齐，宿主 dist 与容器 dist 仍是独立文件）：
@@ -821,10 +821,10 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api pnpm --filter @tianji/ap
 
 | 项 | 通报内容 | QA 独立复核方式 | 结论 |
 |---|---|---|---|
-| 1 | 五服务 healthy（api/web/es/pg/redis），minio 红为预期、degraded | 与 DEV-PROCESS §7.4 记录及压测日志启动横幅交叉核对 | ✅ 一致，无矛盾 |
+| 1 | 五服务 healthy（api/web/es/pg/redis），minio 红为预期、degraded | 与 开发过程记录 §7.4 记录及压测日志启动横幅交叉核对 | ✅ 一致，无矛盾 |
 | 2 | 迁移 5/5 成功（InitSchema/AddParamMetaColumns/MigrateParamKeys/SeedBaseline/AddBorrowDate） | 静态核对 `apps/api/src/infra/database/migrations/` 恰 5 个 `[0-9]*.ts` 迁移文件 + `seed-data.ts` 被 `[0-9]*` 排除（#10 守卫已钉）；执行态结果依通报记录 | ✅ 静态证据与通报一致（**未独立重跑容器**） |
 | 3 | seed 成功，档号模板实输 `[目录号]-[年度(4)]-[保管期限]-[卷号(4)]-[件号(4)]` | 静态核对 `seed.ts:48-56` `buildDefaultSegments` 末段 `ITEM(pad 4)`，与终跑日志「档号末段类型：ITEM」一致 | ✅ 双证一致；第 7 项判据在正常 seed 数据下不误报的预判成立（终跑解析失败 0） |
-| 4 | IK 分词实测通过（"中华人民共和国档案管理系统"正确切分） | 依 DEV-PROCESS §7.4 `_analyze` 实测记录；本地无 ES 执行权限 | ✅ 通报记录，未独立重跑（不影响压测结论支点） |
+| 4 | IK 分词实测通过（"中华人民共和国档案管理系统"正确切分） | 依 开发过程记录 §7.4 `_analyze` 实测记录；本地无 ES 执行权限 | ✅ 通报记录，未独立重跑（不影响压测结论支点） |
 | 5 | 双轨锚定已采 | QA 本地 `sha256sum` 独立复算 3 个 source 锚（bench/judge/sequence.service）与通报值全部一致；`git status --short` 为空；dist 锚为容器内取值本地不可重算 | ✅ 见上方锚定表，两层表述分开 |
 | 6 | 终跑 200×10 压测全绿 | 读 `docs/perf/runs/danghao-200x10-PASS-20261107-173726.log` 全文（35 行）；以日志统计量实跑 `evaluatePass` 纯函数返回 `pass:true, reasons:[]`；读判据源码确认第 7 项先于第 6 项、NaN 逐条计数不静默过滤 | ✅ **七项判据逐项对上，见下「七项判据复核」** |
 
@@ -846,7 +846,7 @@ docker compose exec -e CONCURRENCY=200 -e ROUNDS=10 api pnpm --filter @tianji/ap
 
 #### 证据可得性（显式检查项，team-lead 新增要求）
 
-- **检查项定义**：**干净克隆必须能取到所有被本报告/DEV-PROCESS 引用的证据文件**。
+- **检查项定义**：**干净克隆必须能取到所有被本报告/开发过程记录 引用的证据文件**。
 - **实证**：`git ls-tree -r --name-only HEAD docs/perf/runs/` 返回四份日志全在树内（首跑挂起、二跑全失败、2×2 复验、终跑全绿）；`wc -l` 本地合计 4134 行（通报 4139，计数口径差异，不影响结论）；四份日志 LF 行尾，QA 抽查 `password|secret|token|api_key|口令` 零命中（与通报「无口令/密钥/令牌」一致）；终跑日志可直接读到 `IS_PASS: YES` 与全部汇总数字。
 - **背景**：全局 `*.log` 曾把四份现场日志吞掉（与 #7 gitignore 无锚点炸弹同族：「文档写了、仓库里没有」），`833802e` 开白名单并补录，按**仓库完整性问题**处置、不占缺陷编号（与 team-lead 口径一致）。
 - **结论**：✅ 通过。报告中所有引用（`docs/perf/runs/*.log`、`docs/perf/PERF-TEMPLATE.md`、§六锚定表）在干净克隆均可取得。
@@ -893,7 +893,7 @@ MinIO 官方镜像归档停服，compose 以 `3e6c5a6` 临时覆盖摘除 minio 
 
 > 判读口径：PASS 针对「已验证且证据闭合的范围」，两项残余是**明确声明的范围排除**，不是被忽略的风险；终判效力与 §五 R1、§六开头表格、§七缺陷累计三处同源一致。
 
-**升级影响须知**：本次更名含运行时标识变更（DB 用户、MinIO 别名、localStorage key、默认口令），存量环境不能原地升级，须按 `docs/DELIVERY-CHECKLIST.md` §10A 执行（QA 已核对该节与代码实际一致）。
+**升级影响须知**：本次更名含运行时标识变更（DB 用户、MinIO 别名、localStorage key、默认口令），存量环境不能原地升级，须按 `docs/交付核对清单.md` §10A 执行（QA 已核对该节与代码实际一致）。
 
 ---
 
@@ -1004,7 +1004,7 @@ MinIO 官方镜像归档停服，compose 以 `3e6c5a6` 临时覆盖摘除 minio 
 
 ## 九、方法学沉淀（摘要）
 
-> **本节为摘要。权威版本与后续修订以 [`docs/TESTING-GUIDELINES.md`](./TESTING-GUIDELINES.md) 为准。**
+> **本节为摘要。权威版本与后续修订以 [`docs/测试方法学规范.md`](./测试方法学规范.md) 为准。**
 
 本轮沉淀出五条可执行规则，已抽成独立团队规范：
 
@@ -1016,7 +1016,7 @@ MinIO 官方镜像归档停服，compose 以 `3e6c5a6` 临时覆盖摘除 minio 
 
 ---
 
-## 十、DELIVERY-CHECKLIST 独立性抽查记录（最终回归，14/46 抽样，全部属实）
+## 十、交付核对清单 独立性抽查记录（最终回归，14/46 抽样，全部属实）
 
 > 方法：不读清单结论，直接按清单给出的位置/命令独立验证。抽中项覆盖 C-5、D 包、CI、git、更名、参数化六个域。
 

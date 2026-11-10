@@ -3,7 +3,7 @@
 // 与变体 A 的根本差别：不经过任何包管理器。系统里没有 rpm/dpkg 的归属数据库可用，
 // 所以「装了哪些文件」必须自己记账（internal/installed），卸载只删这份账。
 //
-// 三条硬约束（docs/VARIANT-B-OS-BASELINE.md §6）：
+// 三条硬约束（docs/变体B-系统基线实测.md §6）：
 //   - 二进制落 /usr/local/lib/tianji/docker-static，**不进 PATH**；
 //   - compose 插件落 /usr/local/lib/docker/cli-plugins；
 //   - unit 用绝对路径，且 ExecStartPost 做一次就绪等待。

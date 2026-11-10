@@ -5,7 +5,7 @@
 静态二进制、全程不出网）。
 
 > 上层说明见 [`../README.md`](../README.md)，设计依据见
-> [`../../docs/INSTALLER-DESIGN.md`](../../docs/INSTALLER-DESIGN.md)。
+> [`../../docs/安装器总体设计.md`](../../docs/安装器总体设计.md)。
 > 本文件只写「这个目录里有什么、生成物为什么这样放、踩过哪些坑」。
 
 ## 目录内容

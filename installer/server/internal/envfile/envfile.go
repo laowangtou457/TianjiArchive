@@ -1,4 +1,4 @@
-// Package envfile 渲染 /opt/tianji/.env。设计依据：docs/INSTALLER-DESIGN.md §3.4 ④。
+// Package envfile 渲染 /opt/tianji/.env。设计依据：docs/安装器总体设计.md §3.4 ④。
 //
 // 最关键的一条纪律来自风险 R8：**已存在的 .env 绝不静默覆盖**。
 // 覆盖会丢凭据与端口配置，现场表现为「重跑安装器后登录不了/上传失败」，

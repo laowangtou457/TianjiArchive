@@ -1,9 +1,9 @@
 # 变体 B 真机验证：容器化 QEMU 装 麒麟 V10 SP3 / 统信 UOS 20
 
-目的：把 `docs/VARIANT-B-OS-BASELINE.md` §7 里六项「未验证」变成**有命令有输出**的实测结论。
+目的：把 `docs/变体B-系统基线实测.md` §7 里六项「未验证」变成**有命令有输出**的实测结论。
 不是读包列表，是真的装进虚拟盘、开机、跑 `getenforce` / `getstatus` / `xfs_info`。
 
-结论汇总见 **`docs/VARIANT-B-VM-RESULT.md`**；本文件只讲怎么复现。
+结论汇总见 **`docs/变体B-真机实测结果.md`**；本文件只讲怎么复现。
 
 ---
 
@@ -122,7 +122,7 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
    本次就丢过一整份实验脚本（`/root/exp3.sh` 写完 3 分钟后消失，白跑一轮）。
 8. **SSH 一断，ssh 会话里的远程脚本会被 SIGHUP 带走**。要在 guest 里做「可能断网」的实验，
    必须用 systemd 单元（`systemctl start --no-block`）或 `setsid` 启动 + 每步写盘 + `sync`，
-   否则断网那一刻证据全丢。本仓库的取证脚本就是这么做的（见 `docs/VARIANT-B-VM-RESULT.md` §2.6）。
+   否则断网那一刻证据全丢。本仓库的取证脚本就是这么做的（见 `docs/变体B-真机实测结果.md` §2.6）。
 9. **QEMU user 网络（slirp）不能验证「guest 内跑 docker 之后的管理面可达性」**。
    guest 一旦建出网桥接口（dockerd 默认行为，或手工 `ip link add docker0 type bridge`），
    宿主经 `hostfwd` 的 SSH 就再也连不进去：sshd 还在监听、loopback:22 可连、
@@ -173,8 +173,8 @@ qemu-system-x86_64 -machine q35,accel=<kvm|tcg> \
 
 ## 6. 装完之后的实测结果
 
-六项基线值、证据原文、与 `docs/VARIANT-B-OS-BASELINE.md` 的冲突点，全部在
-**`docs/VARIANT-B-VM-RESULT.md`**。这里只留两条最要紧的，注意它们是**不同性质**的两件事：
+六项基线值、证据原文、与 `docs/变体B-系统基线实测.md` 的冲突点，全部在
+**`docs/变体B-真机实测结果.md`**。这里只留两条最要紧的，注意它们是**不同性质**的两件事：
 
 > **(A) 真·OS 级冲突（需要安装器处置）**：firewalld 已经把 `docker0` 绑进 zone，dockerd 再绑
 > 就冲突 —— 同一系统**二次启动 dockerd 直接失败**：
@@ -305,7 +305,7 @@ git add -f installer/vmtest/logs/kylin-e2e-*.log   # *.log 被 .gitignore 排除
 ### 7.7 真机三阶段执行记录摘要（2026-11-10，全部完成）
 
 三阶段递进的实际执行记录（证据 `kylin-e2e-*` / `uos-e2e-*`，见
-`docs/VARIANT-B-VM-RESULT.md` §7 全账）：
+`docs/变体B-真机实测结果.md` §7 全账）：
 
 | 阶段 | 范围 | 结果 |
 |---|---|---|

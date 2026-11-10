@@ -2,7 +2,7 @@
 # =============================================================================
 # 构建机脚本：组装服务器端安装包（.run）
 #
-# 产物布局（见 docs/INSTALLER-DESIGN.md §2.2）：
+# 产物布局（见 docs/安装器总体设计.md §2.2）：
 #   tianji-server-setup-<variant>-amd64-<version>.run
 #   ├── [自解压头] POSIX sh：自校验 sha256 → 释放到 /opt/tianji-installer → exec
 #   └── payload.tar.gz

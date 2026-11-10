@@ -603,7 +603,7 @@ func (s *session) stepPreflight(ctx context.Context, w io.Writer) error {
 	// 变体 B 额外做 §4.1–§4.6 六项 OS 基线探测（cgroup / SELinux / kysec / iptables 后端 /
 	// overlay2 前置 / firewalld）。**只探测与报告，不做任何自动处置**：setstatus -t、
 	// setenforce 0、停 firewalld 都要现场签认，不能由一个体检函数偷偷改系统状态。
-	// 判据与实测校正见 docs/VARIANT-B-OS-BASELINE.md §4（麒麟 V10 SP3 真机实测：
+	// 判据与实测校正见 docs/变体B-系统基线实测.md §4（麒麟 V10 SP3 真机实测：
 	// 最小化安装下 kysec 未启用、SELinux 的 /etc/selinux/config 会骗人）。
 	if s.manifest.Variant == "kylin-uos" {
 		vb := preflight.CheckVariantB(ctx, preflight.VariantBOptions{

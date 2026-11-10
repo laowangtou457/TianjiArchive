@@ -9,7 +9,7 @@
 
 ## 〇、现场必读（演示前必看）
 
-> 本节为现场部署与演示前的**强制勾验清单**，来源于 PM 的 `docs/DEMO-ACCEPTANCE.md` §1.4 / §2 / §4.3
+> 本节为现场部署与演示前的**强制勾验清单**，来源于 PM 的 `docs/样品Demo验收清单.md` §1.4 / §2 / §4.3
 > 与架构规格 §1.2 / §7。**8 条 S0 未勾验不得开始演示**；未勾验导致的失败按「前置未就绪」记录，
 > 不计产品功能缺陷。
 
@@ -20,9 +20,9 @@
 | 浏览器与 Docker 同机 | 保持默认 `127.0.0.1:8333`，无需修改 |
 | 应用在服务器、浏览器在局域网其他机器（封闭环境常见） | 在 `.env` 把 `S3_PUBLIC_ENDPOINT` 改为**宿主机局域网 IP**（如 `192.168.10.50`），并确认 `S3_PUBLIC_PORT=8333` 与 `SEAWEEDFS_S3_EXPOSED_PORT` 一致、`S3_PUBLIC_USE_SSL=false` |
 
-- 依据：`.env.example` 的 R-1 注释、`docs/ARCHITECTURE-SEAWEEDFS.md` §1.2 双端点裁定。**具体 IP 属 R-10 现场确认项，包内只放占位符，不代拍板**。
+- 依据：`.env.example` 的 R-1 注释、`docs/SeaweedFS架构规格.md` §1.2 双端点裁定。**具体 IP 属 R-10 现场确认项，包内只放占位符，不代拍板**。
 - **不改的后果**：预签名 URL 的 host 仍是 `127.0.0.1`，浏览器无法解析 → 上传 / 预览直连失败，S0-3 前置不通过；启动检查亦会告警（`apps/api/src/config/configuration.ts` 的回环地址告警）。
-- **前置依赖（交付前必须确认，可机械核对）**：`S3_PUBLIC_*` 三项必须由 compose 注入 `api` 容器才生效。已核实两份 compose 原先均无该项注入，且镜像内不含 `.env`、`ConfigModule.envFilePath` 在容器内无对应文件；该项已列入本次交付的收口清单。现场起栈后执行 `docker compose -f docker-compose.offline.yml exec api env | grep S3_PUBLIC`，**预期**：三项齐全（`S3_PUBLIC_ENDPOINT` / `S3_PUBLIC_PORT` / `S3_PUBLIC_USE_SSL`）、取值与 `.env` 一致；`S3_PUBLIC_ENDPOINT` 在**封闭环境多机访问**时必须是宿主机局域网 IP（**非 `127.0.0.1`、非容器 DNS `seaweedfs`**），在**浏览器与 Docker 同机的本机 demo** 时可保持 `127.0.0.1`。不满足时按 `docs/DEMO-ACCEPTANCE.md` §1.4 / §5.1「前置未就绪」记录，**不计产品功能缺陷**；只改 compose 文件而不实测容器内取值，不构成闭环。
+- **前置依赖（交付前必须确认，可机械核对）**：`S3_PUBLIC_*` 三项必须由 compose 注入 `api` 容器才生效。已核实两份 compose 原先均无该项注入，且镜像内不含 `.env`、`ConfigModule.envFilePath` 在容器内无对应文件；该项已列入本次交付的收口清单。现场起栈后执行 `docker compose -f docker-compose.offline.yml exec api env | grep S3_PUBLIC`，**预期**：三项齐全（`S3_PUBLIC_ENDPOINT` / `S3_PUBLIC_PORT` / `S3_PUBLIC_USE_SSL`）、取值与 `.env` 一致；`S3_PUBLIC_ENDPOINT` 在**封闭环境多机访问**时必须是宿主机局域网 IP（**非 `127.0.0.1`、非容器 DNS `seaweedfs`**），在**浏览器与 Docker 同机的本机 demo** 时可保持 `127.0.0.1`。不满足时按 `docs/样品Demo验收清单.md` §1.4 / §5.1「前置未就绪」记录，**不计产品功能缺陷**；只改 compose 文件而不实测容器内取值，不构成闭环。
 - **默认值陷阱（证据强度边界，必须如实登记）**：`apps/api/src/config/configuration.ts` 给 `S3_PUBLIC_*` 带代码默认值 `127.0.0.1` / `8333` / `false`，compose 又用 `${S3_PUBLIC_ENDPOINT:-127.0.0.1}` 兜底 ⇒ **本机 demo 场景下「预签名 URL host 正确」与「配置注入生效」不可区分**：即便三项完全没注入，API 也会签出 `127.0.0.1:8333`，看起来全绿。故：
   - env 勾验**不能只查「三项齐全」**，必须逐项与现场实际生效的 `.env` 原值比对；「容器内 env 原值 + `.env` 原值 + 预签名 URL host」三者须并列留痕，缺一不可；
   - 最强对照（起栈自验必做）：临时把 `.env` 的 `S3_PUBLIC_ENDPOINT` 改为局域网 IP → 重建 / 重启 `api` → 复验 `PRESIGN_HOST` 随之变化 → 改回；**临时值不得留在正式 `.env` / `.env.example`**；
@@ -43,9 +43,9 @@
 
 - 字符集限 `A-Za-z0-9_+/=-`；含特殊字符会**显式拒绝启动**（见 §六）。
 - 轮换动作：改 `.env` → 重新渲染 `s3.json` → 重启 / SIGHUP SeaweedFS → 同步五个消费方凭据 → `up -d` 重建容器；须在维护窗口执行，旧密钥签发的未过期预签名 URL 会失效。
-- **交付前待确认（当前未定，不得写成已定）**：**凭据轮换责任人与时间窗尚未指定到具体岗位 / 人**。`docs/ARCHITECTURE-SEAWEEDFS.md` §7 与 `docs/DEMO-ACCEPTANCE.md` 均只写「封闭试用收尾」，未落实到岗。**未落实不得转入正式启用**。本项不阻塞封闭试用（demo 用默认值），但交付时必须由用户侧明确回答；此处不写「由管理员处理」这类泛称。
+- **交付前待确认（当前未定，不得写成已定）**：**凭据轮换责任人与时间窗尚未指定到具体岗位 / 人**。`docs/SeaweedFS架构规格.md` §7 与 `docs/样品Demo验收清单.md` 均只写「封闭试用收尾」，未落实到岗。**未落实不得转入正式启用**。本项不阻塞封闭试用（demo 用默认值），但交付时必须由用户侧明确回答；此处不写「由管理员处理」这类泛称。
 
-### 0.3 演示前勾验 8 条（S0，来源 `docs/DEMO-ACCEPTANCE.md` §1.4）
+### 0.3 演示前勾验 8 条（S0，来源 `docs/样品Demo验收清单.md` §1.4）
 
 | # | 勾验项 | 现场判据 |
 |---|---|---|
@@ -55,13 +55,13 @@
 | S0-4 | 迁移 + seed 幂等 | `migration:run` 5/5；重复 seed 不产生重复全宗 / 角色 |
 | S0-5 | **多角色账号已建** | 至少 R1（著录 / 审批）、R3（借阅申请）、R0（日志 / 备份 / 参数）；演秘密级双级审批再加 R4 |
 | S0-6 | 模拟样本导入幂等 | 重复导入后条目数、档号集合、sha256 完全一致 |
-| S0-7 | 8 项高敏参数为出厂默认值**并截图留证** | 参数页显示值 = `docs/DEMO-ACCEPTANCE.md` §4 表，无一条被改 |
+| S0-7 | 8 项高敏参数为出厂默认值**并截图留证** | 参数页显示值 = `docs/样品Demo验收清单.md` §4 表，无一条被改 |
 | S0-8 | 构建门禁全绿 | `build` / `typecheck` / `lint` / `test` / `ci:check` 通过 |
 
 ### 0.4 三条防误读口径（随包必附）
 
 1. 本次为**封闭环境样品 demo 功能验证**；8 项高敏参数走产品建议默认值、未经本单位及保密部门确认，**不构成管理制度口径，也不构成保密合规结论**；演示数据为模拟书籍，非真实档案。
-2. **试用账号必须多角色**：`seed` 只建 `admin`(R0)，而 R0 在案卷级 / 件级著录、电子文件、在线预览、借阅申请等功能域均为 `✖`。用 admin 单账号走全流程会在 S2 直接 403 —— 这是权限矩阵生效，**不是功能缺陷**（`docs/PRD.md` §3.1 / §3.2）。
+2. **试用账号必须多角色**：`seed` 只建 `admin`(R0)，而 R0 在案卷级 / 件级著录、电子文件、在线预览、借阅申请等功能域均为 `✖`。用 admin 单账号走全流程会在 S2 直接 403 —— 这是权限矩阵生效，**不是功能缺陷**（`docs/产品需求文档.md` §3.1 / §3.2）。
 3. **下载放行链路未演示**。`approval` 模式授权写入链路未实现（上线前闭环项 L2），本次仅验预览可用与下载 fail-closed 拒绝正确，**不构成下载功能已验证的结论**。`demo-books-seed.ts` 输出的 `PRESIGNED_DOWNLOADS_OK` / `PREVIEW_DOWNLOADS_OK` 为 **S3 wire 层自检，非业务放行验证**（既不能当下载可用证据，也不能当违规证据）。
 
 ---
@@ -449,8 +449,8 @@ docker restart tianji-elasticsearch
 
 - 本离线包为**单实例**部署，未验证多容器 `pub/sub` 跨进程与多实例并发取号；
 - 真实书籍样本尚未提供，当前 `demo:books` 使用确定性生成的模拟数据（可重复执行、不污染正式数据）；
-- `docs/ARCHITECTURE-SEAWEEDFS.md`（架构师）与 `docs/DEMO-ACCEPTANCE.md`（PM）为配套验收文档；
-- 主仓 `docs/DEPLOY.md` / `DELIVERY-CHECKLIST.md` / `DEV-PROCESS.md` / `QA-REPORT.md` 由主理人/QA 后续同步，本包不改。
+- `docs/SeaweedFS架构规格.md`（架构师）与 `docs/样品Demo验收清单.md`（PM）为配套验收文档；
+- 主仓 `docs/部署与压测启动手册.md` / `交付核对清单.md` / `开发过程记录.md` / `QA验收报告.md` 由主理人/QA 后续同步，本包不改。
 - **凭据轮换责任人与时间窗尚未指定到具体岗位 / 人**（见 §0.2）；未落实不得转入正式启用。本项不阻塞封闭试用。
 - S3 层 CORS 与 API 层 `CORS_ORIGINS` 是两回事（见 §0.1）：3.79 内置且**零配置**返回 `Allow-Origin: *` / `Allow-Credentials: true` / `Expose-Headers: *`（`*` 通配覆盖 `ETag`）；其结论以 QA 阶段二独立复核为准，`s3:probe` 全绿不等同于该项已验证。
 - **`Allow-Origin: *` 与 `Expose-Headers: *` 在 3.79 上无法收紧**（flag 无效、`PutBucketCors` 501、`s3.json` cors 段被忽略），会向浏览器暴露 `X-Amz-Request-Id`、`Server` 等全部响应头。样品 demo 封闭内网阶段接受并如实登记；正式启用前若单位要求收紧到具体 origin 或精确暴露头，只有三条替代路径：①前置反代改写响应头（与「浏览器直连 8333」冲突，且同域后无 Origin 连 `*` 也会消失）；②服务端 `listParts` / HEAD 回传 part ETag（改契约、每分片多一次往返）；③分片改走 API 代理（2GB 全量过 API，性能不可接受）。**三条代价都高，本轮不启用，须重新裁定架构**。

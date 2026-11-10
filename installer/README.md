@@ -1,6 +1,6 @@
 # installer/ · 服务器端安装包构建手册
 
-本目录是 `docs/INSTALLER-DESIGN.md` 的实现落点。**只放构建机侧代码与载荷模板**，
+本目录是 `docs/安装器总体设计.md` 的实现落点。**只放构建机侧代码与载荷模板**，
 服务器端运行期逻辑在 `server/`（Go 静态二进制），用户端在 `client-lite/`。
 
 > 状态（本轮）：`build/` 与 `server/` 两侧均已打通，**真载荷、真签名、真体积的包已经出来了**。
@@ -396,7 +396,7 @@ tar 本体 1.51GB。**按 30 倍留盘**。详见 `installer/e2e/README.md`「�
 
 ### 5. 变体 B 六项 OS 基线探测（`internal/preflight/variantb.go`）
 
-`docs/VARIANT-B-OS-BASELINE.md` §4.1–§4.6 写成了代码：`preflight.CheckVariantB`，
+`docs/变体B-系统基线实测.md` §4.1–§4.6 写成了代码：`preflight.CheckVariantB`，
 在 `S1_PREFLIGHT` 里**仅当变体为 `kylin-uos`** 时追加执行（变体 A 的检查项一项不动）。
 
 | 项 | 探测 | 归一化判定 |
@@ -423,7 +423,7 @@ kysec 探测失败不当放行、enforcing+exectl on 判 FAIL、命令不存在�
 
 ### 6. 变体 B 安装流程（`kylin-uos`，本轮实现）
 
-`docs/VARIANT-B-OS-BASELINE.md` §6 的六条实现要求落到了代码里。与变体 A 的根本差别：
+`docs/变体B-系统基线实测.md` §6 的六条实现要求落到了代码里。与变体 A 的根本差别：
 **不经过任何包管理器**，系统里没有 rpm/dpkg 的归属数据库可查，所以「装了哪些文件」由安装器自己记账。
 
 | 项 | 落点 | 为什么 |
@@ -492,7 +492,7 @@ firewalld 的真实 `is-active` 输出形态、kysec 对静态目录的 exectl �
 3. **变体 B（static）端到端**：载荷已抓到并验过静态性（`ldd` 全部 not a dynamic executable）、
    二进制在容器里能起 27.5.1 + compose v2.29.7，但 `installStatic` 的 `systemctl` 分支
    没有 systemd 可用，**未在麒麟/UOS 上装过**。基线已从 ISO 离线取证，见
-   `docs/VARIANT-B-OS-BASELINE.md`。
+   `docs/变体B-系统基线实测.md`。
    六项预检已写成 Go（见上一节第 5 小节）并有 10 条单测，但**这 10 条跑的是 fake 输出，
    不是真机**：vm-harness 用 shell 在麒麟 V10 SP3 真机上实测过这六项（结论已回写基线文档），
    Go 侧需要在真机上再复跑一次，才能说「代码与实测一致」。
