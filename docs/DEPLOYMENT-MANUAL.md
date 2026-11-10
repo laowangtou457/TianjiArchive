@@ -1,0 +1,877 @@
+# 天玑档案管理系统 · 离线部署手册
+
+| 项 | 值 |
+|---|---|
+| 文档编号 | DEPLOYMENT-MANUAL v1.0 |
+| 适用产品 | 天玑档案管理系统 1.0.0（服务器端离线安装包 + client-lite 客户端） |
+| 部署形态 | **封闭内网、全程无公网**、单机单实例、x86_64 服务器 |
+| 读者 | 现场实施人员、单位运维、交付验收人 |
+| 依据 | `docs/INSTALLER-DESIGN.md`（安装器设计权威源）、`docs/VARIANT-B-VM-RESULT.md` §7（真机验证全账）、`installer/README.md`、`installer/vmtest/README.md` §8、`offline/README.md` |
+
+---
+
+## 0. 先读这一节：本手册的适用边界
+
+### 0.1 不要拿错手册
+
+仓库里有两份「部署」文档，**口径完全不同**，现场拿错会浪费一整轮时间：
+
+| 文档 | 适用环境 | 前置条件 | 用在什么时候 |
+|---|---|---|---|
+| **本手册**（`docs/DEPLOYMENT-MANUAL.md`） | **离线生产部署**：封闭内网，目标机无 Docker、无桌面 | 只有交付介质（U 盘/光盘），**无公网、无 apt/yum 源** | 给用户单位装正式环境 |
+| `docs/DEPLOY.md` | **开发/联调环境**：Docker Desktop（WSL2 后端）单机试点 | 有公网、可 `docker compose build`、可拉基础镜像 | 开发机自测、演示、压测 |
+| `offline/README.md` §三 | **手工兜底部署**（6 步人肉复制粘贴） | 已有 Docker、手工拷 compose 与 tar | **仅当安装器报「系统与变体不匹配」时**，作为显式降级通道 |
+
+判据只有一句：**目标机上有没有 Docker、能不能联网**。目标机什么都没有、也不许联网 → 用本手册。
+
+### 0.2 本手册的标注约定
+
+沿用本项目纪律，全文结论分三类：
+
+- **【实测】** 在真机或真栈上跑过、有命令输出可查（麒麟 V10 SP3 / 统信 UOS 20 最小化安装 + QEMU KVM）；
+- **【口径】** 安装器代码即判据，读代码可核对（附文件路径）；
+- **【边界】** 明确**没有**验证的事，写在第 9 章，不打包成「已通过」。
+
+### 0.3 一句话流程
+
+```text
+介质导入  →  sudo sh *.run  →  浏览器打开 127.0.0.1:18080 向导  →  S1…S10 全 DONE  →  三步验收  →  分发客户端
+```
+
+安装器是**自解压 .run + 本机临时 Web 向导**：服务器侧只跑一个 HTTP 服务（默认只绑回环），
+图形界面由管理员自己的浏览器渲染，**服务器不需要装桌面环境**（设计 §3.1）。
+
+---
+
+## 1. 交付介质清单与完整性校验
+
+### 1.1 介质清单
+
+单变体介质合计约 1.7 GB（不含客户端）。两个变体的 `.run` **只发其中一个**，`images.tar` 两变体共用。
+
+| # | 文件 | 字节数 | sha256 | 用途 |
+|---|---|---|---|---|
+| 1 | `tianji-server-setup-kylin-uos-amd64-1.0.0.run` | 99,967,481 | `75621cca17fcb8e1ac5169c3d5f5983d61dff760a2c48f4103b68747fa028b8b` | 变体 B：麒麟 V10 / 统信 UOS |
+| 2 | `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run` | ≈150 MB（deb 闭包占 147.5 MB） | **以交付时 `SHA256SUMS.txt` 为准** | 变体 A：Ubuntu 22.04/24.04、Debian 12 |
+| 3 | `tianji-offline-images.tar` | 1,512,404,992 | `50fde9a8a99c5cac03f4f394083da4887637f03b65f8c8c9a3901dcde2ad1372` | 8 个镜像，两变体共用 |
+| 4 | `SHA256SUMS.txt` | < 5 KB | 由 #1/#2/#3 + 全部载荷文件逐行生成 | 逐文件校验清单 |
+| 5 | `SHA256SUMS.asc` | < 1 KB | 构建机 `tianji-build` 私钥分离签名 | 来源真实性（L-b 层） |
+| 6 | `tianji-client-lite.zip` | 13,600 | 以其自身登记值为准 | 档案员客户端配置器 |
+| 7 | 本手册 | < 1 MB | — | 现场作业依据 |
+
+**变体 B 终版三重校验值【实测，team-lead 2026-11-10 独立复核】**：
+
+| 层级 | 值 |
+|---|---|
+| 整体 sha256 | `75621cca17fcb8e1ac5169c3d5f5983d61dff760a2c48f4103b68747fa028b8b` |
+| payload 段 sha256（按 offset 6527 切出） | `00519149d8a3c0eb898afa7fd629bd7393dcfeafdf2e9520ddf512c8c3afafee` |
+| 安装器二进制 sha256（9,350,223 B，GOOS=linux CGO=0 -trimpath） | `67d0bae0f4df7b6e571359db1071c1460b212a38db657a45a2e3242781b9cae7` |
+
+> **sha256 不是可复现常数。** 包内 `manifest.json` 带 `built_at` 与 `builder`（含 hostname），
+> 任何重打包都会换 sha（实测同一输入两次构建：`c7fe6a11…` → `fdf4b4cf…`）。上表标识的是
+> **这一份交付件**，核对时以随包 `SHA256SUMS.txt` 为唯一依据；`docs/INSTALLER-DESIGN.md` §14.2
+> 里的 `150,107,053 / c7fe6a11…` 是更早一轮变体 A 的产物，**不能当交付承诺值用**。
+
+**签名状态（必须说清楚）**：截至本手册成稿，审定版是**未签名基线**——`--sign` 属**交付时步骤**，
+不参与验证语义。正式对外交付前必须用 `--sign --gpg-key tianji-build` 重建签名版，届时 digest 会变，
+签名版 digest 在交付时另行登记。**开箱即用的未签名包不要向外宣称「已验签」。**
+
+### 1.2 介质导入（U 盘 / 光盘）
+
+1. U 盘建议 **exFAT 或 NTFS**（FAT32 单文件 4 GB 上限，1.5 GB 的 tar 已逼近，无余量）。
+2. `*.run` 与 `tianji-offline-images.tar` **必须放同一目录**：安装器按「显式 `--images-tar` → 安装器目录 → 可执行文件同目录 → 当前目录」顺序查找，同目录是零歧义摆法。
+3. 拷到目标机后**必须重新算一次 sha256**（U 盘静默损坏是最常见的现场事故，`docs/INSTALLER-DESIGN.md` §7.3）：
+
+```bash
+# 在目标机上，介质所在目录
+sha256sum -c SHA256SUMS.txt
+# 期望逐行 OK；出现 FAILED 就重拷，不要「先装上试试」
+```
+
+4. 校验签名（**仅在拿到签名版时**做）：
+
+```bash
+gpg --import pubkeys/tianji-build.asc
+gpg --fingerprint 0A038555B153ACC9
+# 指纹必须逐字为：0AD2 912C F8FE 57E2 02C2 75F2 0A03 8555 B153 ACC9
+# 不一致即停：说明公钥本身被换过
+gpg --verify SHA256SUMS.asc SHA256SUMS.txt
+# 期望：Good signature from "tianji-build (Tianji Archive build key)"
+sha256sum -c SHA256SUMS.txt
+```
+
+> `gpg` 会提示 `This key is not certified with a trusted signature`——裸公钥的正常提示，
+> 正确做法是**比对指纹**，不是忽略它。密钥 `tianji-build` 为 RSA4096，有效期至 2027-11-09。
+
+### 1.3 装前的只读体检（不动系统）
+
+```bash
+sudo sh tianji-server-setup-kylin-uos-amd64-1.0.0.run --verify-only
+# 期望末行：IS_PASS: YES —— 载荷与镜像 tar 校验全部通过
+```
+
+`--verify-only` 分两层：非 root 只做壳层 payload sha256（**不代表可安装**）；root 才解包做
+逐文件深度校验 + 镜像 tar 溯源。它**不消耗状态机**——先校验再正式安装，不会让 S2 被跳过。
+
+---
+
+## 2. 硬件与操作系统门槛
+
+### 2.1 门槛表
+
+| 项 | 必需 | 建议 | 不满足的后果 |
+|---|---|---|---|
+| CPU 架构 | `x86_64`（amd64） | — | 镜像架构不符，`docker load` 后容器起不来（K2 FAIL，硬阻断） |
+| 内存 | **≥ 8 GB（MemTotal）** | **≥ 16 GB** | ES 1g heap + PG `shared_buffers=512MB` + 8 个容器必然 OOM（K10 FAIL，硬阻断） |
+| 磁盘（`/var` 可用） | **≥ 30 GB** | **≥ 60 GB** | 解压 + `docker load` 中途失败；跑几天后 ES/PG 写满（K9：<30 FAIL，<60 WARN） |
+| 内核 | ≥ 4.19（最低 3.10） | 4.19+ | overlay2 不可用 / cgroup 异常（K1） |
+| 发行版 | 麒麟 V10 SP3、统信 UOS Server 20；变体 A 对应 Ubuntu 22.04/24.04、Debian 12 | — | 异族/架构不符：**fail-closed 拒绝安装**，不做「猜一个试试」 |
+| 桌面环境 | **不需要** | — | 装 Xorg 会新增攻击面并可能触发安全审查（设计 §3.1 已否决） |
+| 已有 Docker | 无亦可（安装器自带离线 Docker） | — | 已有 Docker → 跳过安装，仅校验 compose ≥ 2.20 |
+
+【实测】真机验收规格：KVM，`--disk 60G --mem 10240 --smp 4`（`installer/vmtest/README.md` §2）。
+内存必须给到 10 GB 量级，原因见 2.2。
+
+### 2.2 内存判据与麒麟 `crashkernel`（最容易吵起来的一条）
+
+判据按**十进制 GB** 换算（`/proc/meminfo` 的 `MemTotal` ÷ 10^6），**不按 GiB**——16 GB 机器
+`MemTotal` 常为 16384000 kB，按 GiB 除得 15，会把足量机器误判成 WARN。
+
+麒麟 V10 默认内核参数带 **`crashkernel=1024M,high`，凭空吃掉约 1 GB**：
+
+| 物理内存 | 麒麟上 MemTotal 实测 | K10 判定 | 现场含义 |
+|---|---|---|---|
+| 8 GB | ≈ 6.5 GB | **FAIL（阻断）** | 判据不放宽：内存确实不够，ES 会 OOM |
+| 10 GB | ≈ 8.5 GB | WARN（可继续） | 真机验收就是这个规格 |
+| 16 GB | ≈ 15 GB | PASS | 建议配置 |
+
+**「8 GB 机器被判 FAIL」是正确行为，不是误判。** 两条出路（安装器提示文案即此二选一）：
+
+1. **加内存**到 8 GB 以上（推荐，最省事）；
+2. 确认本单位**不需要 kdump** 后，从内核参数中去掉 `crashkernel`（改 grub 配置并重启）。
+   这属于变更宿主安全/运维策略，**必须由现场负责人签认**，安装器不会替人改。
+
+### 2.3 磁盘与镜像放大倍数
+
+`tianji-offline-images.tar` 是 `docker save` 的**未压缩** tar，1.51 GB。落盘占用取决于存储驱动：
+
+| 路径 | 8 镜像展开占用 | 说明 |
+|---|---|---|
+| **真机 overlay2**（正常路径） | **约 5–6 GB**【实测口径，`installer/vmtest/README.md` §7.4】 | 麒麟/统信 xfs `ftype=1` + overlay2 正常工作 |
+| 容器内 vfs（降级验证路径） | **22 GB（7/8 镜像，14.6 倍）→ 40 GB（8/8 镜像，约 26 倍）** | 特权容器里只能 vfs，属**验证手段的代价**，不是产品行为 |
+
+**预留规则**：
+
+- 按 **30 倍 tar 体积**（≈ 45 GB）留盘是 vfs 路径的经验值，仅用于理解「为什么 ≥30 GB 是硬门槛」；
+- 生产按判据走：**必需 ≥ 30 GB、建议 ≥ 60 GB**——余量不是留给镜像，是留给 ES 段文件、PG WAL、
+  备份产物（`volumes/backup`）和日志的自然增长；
+- tar 本体建议**装完保留**（重装/补装要复用它），别装完就删。
+
+### 2.4 端口
+
+| 端口 | 服务 | 谁访问 | 是否需要放通 |
+|---|---|---|---|
+| **18080** | 安装向导（仅安装期，装完退出即释放） | 管理员浏览器 | 默认只绑 `127.0.0.1`，**不对外**；被占时自动用 18081/18082，实际地址终端大字打印 |
+| **8080** | Web（SPA + `/api` 反代） | 全体用户浏览器 | **是**（业务入口） |
+| **8333** | SeaweedFS S3 Gateway（预签名直传） | 用户浏览器**直连** | **是**，且是项目特有硬要求，见下 |
+| 3000 / 9200 / 5432 / 6379 | api / ES / PG / Redis | 仅运维排障 | 默认也发布到宿主；封闭环境建议删映射或改成 `127.0.0.1:端口:端口` |
+| 9333 / 8888 / 8081 | seaweedfs master / filer / volume | 仅 `tianji-net` 内网 | **否**，任何额外映射都是应摘除项 |
+
+> **8333 是「一上传就失败」的唯一根因位**：浏览器要直连该端口做预签名直传。
+> 表现为「能登录、能检索、一上传就失败」，极易误判成后端 bug（设计风险 R9，红色）。
+> `8080` 通而 `8333` 不通 = 上传必失败。客户端自检把这一条前置暴露，就是为了这个。
+>
+> 变体 B 安装时会 `systemctl disable --now firewalld`（见 7.3），因此**服务器本机不额外配端口**；
+> 跨网段/跨安全域的可达性由单位网络策略决定，**不在本项目已验证范围**（第 9 章）。
+
+### 2.5 已实测可直接使用的组合
+
+| OS | 版本 | 变体 | 状态 |
+|---|---|---|---|
+| 麒麟 Kylin V10 | SP3（2403） | B（static docker 27.5.1） | **真机整链 S1→S10 全绿，冒烟 4/4**【实测】 |
+| 统信 UOS Server | 20（1020e） | B | **真机整链一次全绿（零重跑）**【实测】 |
+| Ubuntu | 22.04 LTS | A | 仅容器内十步闭环（vfs 降级路径），**真机未验**【边界】 |
+| Ubuntu 24.04 / Debian 12 | — | A | 载荷已备，**未验**【边界】 |
+
+「同族但版本未登记」的组合，安装器会 WARN 并要求在向导里**勾选「我已确认该组合未经验证，风险自担」**
+才放行（麒麟 V10 首跑就被这道确认门拦过，属产品行为，不是故障）。
+
+---
+
+## 3. 部署前检查（约 10 分钟）
+
+```bash
+# 1) 身份与系统
+id -u                                   # 必须是 0（root）
+uname -m                                # x86_64
+uname -r                                # ≥ 4.19
+cat /etc/os-release | head -5           # ID / VERSION_ID
+
+# 2) 资源
+free -g                                 # MemTotal ≥ 8（注意麒麟 crashkernel 吃 1GB）
+df -h /var                              # 可用 ≥ 30G，建议 ≥ 60G
+
+# 3) 内核能力
+grep -w overlay /proc/filesystems || modprobe overlay
+stat -fc %T /sys/fs/cgroup              # cgroup2fs 或 tmpfs（v1）
+sysctl -n vm.max_map_count              # 当前值；S3 会写成 262144 并回读
+
+# 4) 端口占用（只告警，安装器不抢占业务端口）
+ss -lntp | grep -E ':(8080|8333|18080)\b' || echo "业务端口空闲"
+
+# 5) 介质齐不齐
+ls -l *.run tianji-offline-images.tar SHA256SUMS.txt
+```
+
+**清理现场遗留（重装场景才需要）**：
+
+```bash
+# 18080 上有旧安装器实例时，先确认再杀
+pgrep -af "[/]opt/tianji-installer/bin/tianji-installer"
+```
+
+> ⚠️ `pkill -x tianji-installer` **杀不掉它**——进程名被内核截断成 `tianji-installe`，`pgrep -x` 同样匹配不到。
+> 旧实例还活着时，`POST /api/run-all` 会打到**旧进程**上，它拿着内存里的旧状态、看到全部 DONE，
+> 于是只跑 S10 就返回成功——看起来「复跑通过」，实际一步都没重跑（`installer/README.md` 踩过）。
+> **复跑前必须确认端口上没有别的实例。**
+
+---
+
+## 4. 分步部署流程
+
+### 4.1 总览
+
+| 阶段 | 动作 | 在哪做 | 成功的样子 |
+|---|---|---|---|
+| ① | 导入介质并校验 | 目标机 shell | `sha256sum -c` 全 OK |
+| ② | `sudo sh *.run` | 目标机 shell（root） | 终端大字打印 `http://127.0.0.1:18080/`（`--listen` 时带 `?t=`） |
+| ③ | 打开向导 | 管理员浏览器（或本机 curl） | 页面显示十步清单与「环境体检」按钮 |
+| ④ | S1→S10 | 向导 | 十步全 DONE，完成页给出访问地址 |
+| ⑤ | 三步验收 | 服务器 + 用户机 | docker active、浏览器能登录、客户端自检 3/3 |
+| ⑥ | 分发客户端 | 用户机 | 双击 bat → 自检 `IS_PASS: YES` |
+
+### 4.2 步骤 ②：执行安装包
+
+```bash
+cd /path/to/介质目录                  # *.run 与 tar 同目录
+sudo sh tianji-server-setup-kylin-uos-amd64-1.0.0.run
+```
+
+终端会发生这些事（**全程无出网调用**）：
+
+1. 只对 payload 段算 sha256 并与构建时记录比对，不匹配直接 `FAIL` 退出（防 U 盘损坏）；
+2. 解包到 `/opt/tianji-installer`（**装完保留**，供重跑与卸载；不自动删）；
+3. 校验 `bin/tianji-installer` 存在且可执行；
+4. 校验 `manifest.json` 存在；
+5. `exec` 安装器，进入 Web 向导（默认 `--web`）。
+
+终端随后大字打印访问地址。两种形态，**以你看到的为准**：
+
+```text
+# 形态 1：默认（只绑回环，无令牌）
+  请在浏览器打开：
+      http://127.0.0.1:18080/
+  当前仅监听回环地址。若要从别的机器访问，请加 --listen 0.0.0.0:18080
+  （那样会强制启用一次性令牌），或在本机执行：
+      ssh -L 18080:127.0.0.1:18080 <本机用户>@<服务器IP>
+
+# 形态 2：--listen 到非回环地址（强制令牌）
+  请在浏览器打开：
+      http://<IP>:18080/?t=<32 字节 hex>
+  一次性访问令牌（30m0s 内有效）：
+      <32 字节 hex>
+  提示：绑定非回环地址时必须带令牌，否则任何人都能替你装 Docker、改 sysctl。
+```
+
+底部还会打印日志目录与状态文件路径——**装完请把这两个路径抄进交付记录**。
+
+**常用参数**（原样透传给安装器）：
+
+| 参数 | 用途 |
+|---|---|
+| （无） | 启动本机 Web 向导，默认 `127.0.0.1:18080` |
+| `--tui` | 终端向导。**无第二台机器且有本地终端**时可用，但**没有表单输入界面**，S5 之前仍需回 Web 填 8 项凭据 |
+| `--resume` | 断点重入：从第一个未 DONE 的步骤继续跑到完成（无人值守） |
+| `--verify-only` | 只校验包，不安装 |
+| `--overwrite` | 允许覆盖已存在的 `.env`（旧文件先备份到日志目录） |
+| `--uninstall` | 卸载容器与单元，**保留业务数据** |
+| `--listen 0.0.0.0:18080` | 允许局域网访问向导（**强制**一次性生成的 token + Origin 校验） |
+| `--images-tar <path>` | 镜像 tar 放在别处时显式指定 |
+
+### 4.3 步骤 ③：打开向导——注意「唯一入口」
+
+**默认路径（推荐）**：在**这台服务器本机**打开浏览器访问终端打印的地址。
+
+**没有桌面/没有浏览器的服务器**，三种可行做法，按优先级：
+
+| 方式 | 命令 | 前提 |
+|---|---|---|
+| 本机 curl 驱动 API | `curl -s http://127.0.0.1:18080/api/status`，再逐个 `POST /api/step` | 与本机浏览器等价，最稳 |
+| 局域网笔记本访问 | `sudo sh *.run --listen 0.0.0.0:18080`，用打印出的 `?t=<token>` 打开 | 需放通 18080 **且必须带 token**；令牌在安装器进程存活期间有效（终端标注 30 分钟），装完进程退出即失效 |
+| SSH 端口转发 | `ssh -L 18080:127.0.0.1:18080 用户@服务器IP` | **麒麟默认不可用**，见下 |
+
+> **【实测】麒麟 sshd 默认 `AllowTcpForwarding no`**：SSH 隧道（端口转发到本地浏览器）**不可用**，
+> 强行配只会得到「转发被拒绝」。麒麟现场的 Web 安装器唯一入口就是**机器本机**
+> （本机浏览器，或 `curl 127.0.0.1:18080` 驱动 `/api/step`）。这条来自真机验证，不是推断。
+>
+> 安全边界：默认只绑回环。`--listen` 到非回环时**强制**生成 32 字节随机 token（每次启动重新生成，
+> 终端标注 30 分钟有效期）、校验 `Origin`/`Host` 同源，无 token 一律 403——安装器能装 Docker、
+> 能改 sysctl，等价 root 远程执行，不允许存在「无 token 的局域网可写向导」。
+
+向导首屏会显示：产品/版本/变体/架构、识别到的 OS 与匹配结论、镜像包路径、十步清单、日志目录、状态文件路径。
+
+### 4.4 步骤 ④：S1→S10 十步
+
+**总纪律**（`installer/server/internal/state`）：
+
+- **只有 PASS 才写 `DONE`**；FAIL 写 `FAIL + 原始输出摘要`，不写 DONE，**不自动跳过、不静默降级**；
+- **步骤不可跳步**：顺序门会拒绝「当前应执行 S6_UP」这类请求；已 DONE 的步骤不重跑（S5 例外，`.env` 变更后强制重渲）；
+- 每步独立日志、独立超时；超时会明确说「卡在哪一步」，而不是无限转圈。
+
+#### S1_PREFLIGHT · 环境体检
+
+做什么：逐条**实测** K0~K13（发行版识别、内核、架构、overlay2、cgroup、`vm.max_map_count`、memlock、
+nofile、iptables/nft、磁盘、内存、dpkg 锁、已有 Docker、SELinux/AppArmor）。变体 B 额外做六项 OS 基线探测
+（cgroup 版本、SELinux、麒麟 kysec、iptables 后端、overlay2 前置、firewalld）。
+
+成功判据：**无任何 FAIL**，日志末尾打出 `系统识别: ID=… VERSION_ID=…` 与匹配结论。
+WARN 允许通过（例如 K5 `vm.max_map_count` 低于 262144 是 WARN，由 S3 修正并回读；K13 AppArmor 告警）。
+
+常见阻断：
+
+| 现象 | 处置 |
+|---|---|
+| K10 内存 FAIL（8 GB 麒麟 ≈6.5 GB） | 见 2.2 两条出路 |
+| K9 磁盘 FAIL | 扩容或清理到 ≥30 GB |
+| K2 架构不符 | 换 amd64 机器；不做跨架构尝试 |
+| K11 dpkg 锁（变体 A） | 有 `unattended-upgrades` 在跑；等它结束或停该服务 |
+| 麒麟 V10 报「未验证组合」 | **不是故障**：勾选「我已确认该组合未经验证，风险自担」继续【实测，首跑即被此门拦截】 |
+
+#### S2_VERIFY · 包完整性
+
+做什么：按 `manifest.json` 逐文件复核 sha256，并单独对镜像 tar 算 sha256 与构建机记录**双源交叉**。
+
+成功判据：`载荷文件 N/N 全部匹配` + `镜像 tar 校验通过: <sha256>`。
+
+常见阻断：U 盘传输损坏（重拷）、tar 不在同目录（向导里可改路径或 `--images-tar`）。
+此处**硬停，不提供「跳过」**——缺失即停，不降级成 WARN。
+
+#### S3_DOCKER · 安装 Docker
+
+做什么：
+
+- **变体 A**：`dpkg -i` 离线 deb 闭包（85 个包，**不调 apt、全程不出网**）；失败则 `dpkg --configure -a` 后补装第二轮，两轮都失败才判错（**不自动 `--force-depends`**）。
+- **变体 B**：解 static 包到 `/usr/local/lib/tianji/docker-static/`（**刻意不放 PATH**），compose 单二进制落
+  `/usr/local/lib/docker/cli-plugins/docker-compose`，自写 `/etc/systemd/system/docker.service`
+  （绝对 `ExecStart`、`Environment=PATH=` 把静态目录放最前、`--userland-proxy-path=`、
+  `Restart=on-failure` + `StartLimitIntervalSec=120/Burst=5`、幂等建 `docker` 组）。
+- 两种变体都：写 `/etc/sysctl.d/99-tianji.conf`（`vm.max_map_count=262144`、`fs.file-max=655360`、
+  `vm.swappiness=1`）与 `/etc/security/limits.d/99-tianji-limits.conf`，`sysctl --system` 后**回读**；
+  最后校验 `docker compose ≥ 2.20`。
+- 变体 B 还会在起 dockerd **之前**处置 firewalld（见 7.3），`Before/After/Action` 三项进日志与汇总。
+
+成功判据（终端原文样式）：
+
+```text
+vm.max_map_count: 65530 → 262144（要求 ≥ 262144，已回读确认）
+firewalld: tool=systemctl before="active" after="inactive" —— 已 disable --now
+方式=static docker=/usr/local/lib/tianji/docker-static/docker dockerd=27.5.1 compose=v2.x
+```
+
+**「写了但没生效」是这类操作最常见的失败方式**，所以必须有那句「已回读确认」；只看到写了文件不算过。
+
+#### S4_IMAGES · 导入镜像
+
+做什么：先算 tar sha256（与 manifest 同源）→ `docker load` → 按 `images.txt` **逐个** `docker inspect`。
+
+成功判据：**8/8 镜像**在（`postgres:16-alpine`、`redis:7-alpine`、`tianji-elasticsearch-ik:8.13.4`、
+`chrislusf/seaweedfs:3.79`、`tianji-archive-{api,web,extractor,backup}:1.0.0`）。
+
+少一个就停：允许「少两个也起栈」等于把失败推迟到用户第一次上传文件时才暴露，那时排障成本高一个数量级。
+
+#### S5_ENV · 渲染配置
+
+做什么：准备部署根 `/opt/tianji`（复制 compose、`seaweedfs/entrypoint.sh`、`seaweedfs/s3.json.tpl`、
+建 6 个卷目录）→ 渲染 `.env`（8 项高敏参数来自向导表单）→ 按容器内 uid 设卷属主。
+
+成功判据：`.env 已写入 /opt/tianji/.env`，日志里凭据**打码**（只留 key 与前 4 后 4），
+并打出卷属主两行：
+
+```text
+卷属主 /opt/tianji/volumes/esdata → 1000:1000（elasticsearch 镜像以 uid=1000 运行，entrypoint 不做 chown）
+卷属主 /opt/tianji/volumes/wal_archive → 70:70（postgres 以 uid=70 写 WAL 归档）
+```
+
+**向导表单 8 项（必填，安装器不替你随机生成口令——无人值守场景随机口令等于把自己锁在门外）**：
+
+| 字段 | 最低要求 | 说明 |
+|---|---|---|
+| 局域网地址 `S3_PUBLIC_ENDPOINT` | 必填，**不能是 `127.0.0.1`/`localhost`，不带端口** | 填错 = 上传必失败（R9） |
+| PostgreSQL 密码 | ≥ 12 字符 | |
+| MinIO 访问密钥 | ≥ 6 字符 | 字符集限 `A-Za-z0-9_+/=-` |
+| MinIO 私钥 | ≥ 12 字符 | 同上，含特殊字符会**显式拒绝启动** |
+| JWT 访问令牌密钥 | ≥ 32 字符 | 两个 JWT 密钥**不能相同** |
+| JWT 刷新令牌密钥 | ≥ 32 字符 | |
+| Redis 密码 | ≥ 8 字符 | |
+| CORS 白名单 | 可留空 | 留空自动设为 `http://<局域网地址>:8080,http://localhost:8080` |
+
+`.env` 已存在时**拒绝覆盖**（防静默丢弃现场配置）；确需重写用 `--overwrite` 重启安装器，
+旧文件会**自动备份到日志目录**再覆盖。
+
+#### S6_UP · 启动服务栈
+
+做什么：`docker compose up -d` 后轮询 `compose ps`，直到服务 running 且 healthcheck 通过（上限 8 分钟）。
+
+成功判据：**8 个容器 running，6 个带 healthcheck 的全部 healthy**（`backup`/`extractor` 按 compose 设计
+无 healthcheck）。
+
+```text
+postgres       state=running    health=healthy
+elasticsearch  state=running    health=healthy
+seaweedfs      state=running    health=healthy
+redis          state=running    health=healthy
+api            state=running    health=healthy
+web            state=running    health=healthy
+extractor      state=running    health=-
+backup         state=running    health=-
+```
+
+ES 有 `start_period 60s`，`web` 有 starting→healthy 过程——**别急着判死**。
+若 ES 无限重启且日志是 `failed to obtain node locks … AccessDeniedException: node.lock`，
+九成是卷属主不对（本步已自动处理；手工 `compose up` 的现场才需要自己 `chown`）。
+
+#### S7_MIGRATE · 数据库迁移
+
+做什么：在 `api` 容器内执行 `pnpm --filter @tianji/api migration:run`（幂等）。
+
+成功判据：`typeorm_migrations` 逐条 `executed successfully`，无异常退出。
+
+#### S8_SEED · 初始化数据
+
+做什么：`pnpm --filter @tianji/api seed`，建示例机构、档号规则、管理员 `admin`（初始口令 `Tianji@2024`，
+**首次登录必须改密**）。
+
+成功判据：命令退出 0；重复执行报 `duplicate key` 属**正常**（数据已在），不必重跑。
+
+#### S9_SMOKE · 四项冒烟
+
+四项**逐一真跑**，只认字面量判据，不认「看起来正常」：
+
+| # | 项 | 判据 |
+|---|---|---|
+| 1/4 | `/api/health` | `status":"ok"` 且 `objectStorage.ok=true`（四依赖有 latency 输出） |
+| 2/4 | S3 兼容性探针 | 输出含 `IS_PASS: YES`（真机 13/13 项，含分片上传全链） |
+| 3/4 | 样品书籍全链路 | 输出含 `IS_PASS: YES`（6 册 / 12 文件 / 抽取 / 检索命中 6 / 预签名下载 sha256 全对） |
+| 4/4 | IK 中文分词 | `_analyze` 切出「中华人民共和国」 |
+
+**4/4 全 PASS 才写 DONE。** 任一失败即停并把该步原始输出折叠展示。
+
+#### S10_DONE · 完成
+
+做什么：写 `99-summary.txt`（每步状态与耗时、访问地址、S3 端点、部署根、日志路径、卸载命令）。
+
+成功判据：终端/页面打出
+
+```text
+访问地址: http://<你的局域网IP>:8080
+S3 端点 : http://<你的局域网IP>:8333
+部署根  : /opt/tianji
+日志    : /var/log/tianji-install/<UTC时间戳>
+卸载    : sh <包名>.run --uninstall （保留业务数据）
+```
+
+之后安装器进入 60 秒倒计时，然后**释放 18080 端口并退出**（`Ctrl-C` 也走同一条清理路径）。
+
+#### 耗时参考（判断「卡住还是正常慢」）
+
+| 步 | 内部超时上限 | 实测参考 |
+|---|---|---|
+| S1 | 3 min | 麒麟 162 ms / 统信 291 ms（纯探测） |
+| S2 | 30 min | 真 1.5 GB tar 深度校验 18.5 s（容器） |
+| S3 | 15 min | 变体 B 真机 3.4–3.7 s；变体 A 装 85 个 deb 更久 |
+| S4 | 40 min | 8 镜像 1 m 30 s（容器 vfs） |
+| S5 | 2 min | 秒级 |
+| S6 | 12 min | 容器冷启动 21.2 s；真机 47.9–48.2 s |
+| S7 / S8 | 各 10 min | 2.7 s / 1.8 s |
+| S9 | 15 min | 真机 4/4，整链 S5→S10 约 46 s（容器）/ 真机分钟级 |
+
+慢盘、机械盘、QEMU TCG（无 KVM）环境整体慢 5–10 倍是正常的，**以日志里的起止时间为准**，
+不要用「几分钟没输出」当失败。
+
+### 4.5 断点重入与重装
+
+```bash
+# 装到第 7 步断电 / SSH 断连 / 某步修好后继续
+sudo sh tianji-server-setup-kylin-uos-amd64-1.0.0.run --resume
+```
+
+- 从**第一个非 DONE** 的步骤继续，已 DONE 的**不重跑**（S5 在 `.env` 变更时例外）；
+- `--resume` 会从 `/opt/tianji/.env` **读回** 8 项表单值（要求 8 个键全部非空），不必重抄口令；
+- 报「需要先填写部署表单」时改用 `--web` 填表（**凭据不要写进命令行历史**）；
+- 重装同一台机器要覆盖旧 `.env` 时加 `--overwrite`。
+
+### 4.6 装完之后文件在哪
+
+| 路径 | 内容 | 生命周期 |
+|---|---|---|
+| `/opt/tianji-installer/` | 安装器 + payload（含 deb/static 载荷、compose 模板） | 安装完成后**保留**，供重跑/卸载，不自动删 |
+| `/var/log/tianji-install/<UTC>/` | `00-manifest.json`、`01-preflight.log` … `09-smoke.log`、`99-summary.txt` | **永久保留**（审计），append-only，重跑生成新目录 |
+| `/var/lib/tianji-install/state.json` | 十步状态机与断点 | 装完保留 |
+| `/var/lib/tianji-install/installed-files.json` | 变体 B 的「安装器亲手写了哪些文件」清单 | 卸载时按它删 |
+| `/opt/tianji/` | `docker-compose.offline.yml`、`.env`、`seaweedfs/`、`volumes/` | **业务数据，永不自动删除** |
+| `/etc/sysctl.d/99-tianji.conf`、`/etc/security/limits.d/99-tianji-limits.conf` | 内核与句柄参数 | 前缀固定，卸载可精确移除，不动同目录其他文件 |
+| `/etc/systemd/system/docker.service` | 变体 B 自写 unit | 卸载时 disable + 按清单删 |
+
+> 现场出问题时，`/var/log/tianji-install/<UTC>/` **整体打包发回**是唯一可远程索取的证据；
+> 不要只截一张报错图。
+
+---
+
+## 5. 安装后验收（三步，缺一不可）
+
+### 验收 1 · Docker 引擎活着
+
+```bash
+systemctl is-active docker
+# 期望：active
+```
+
+> **为什么不是 `docker ps`**：变体 B 的 docker 刻意**不进 PATH**（`/usr/local/lib/tianji/docker-static/docker`），
+> 直接敲 `docker ps` 会 `command not found`，容易被误判成「没装好」。`is-active` 才是跨变体统一的判据。
+>
+> `is-active` 有**四态**：`active` / `inactive` / `failed` / 单元不存在；其中 `inactive` 与「单元不存在」
+> **都返回 rc=3**——不能拿退出码当「探测失败」。看到 `failed` 就去 `journalctl -u docker`（见 7.4）。
+
+变体 B 要直接操作 docker 时用绝对路径：
+
+```bash
+/usr/local/lib/tianji/docker-static/docker ps
+```
+
+可选深核：`docker images` 应 8/8；`docker compose -f /opt/tianji/docker-compose.offline.yml ps`
+应 8 running / 6 healthy。
+
+### 验收 2 · 浏览器能登录
+
+1. 在**服务器本机**浏览器先访问 `http://127.0.0.1:8080`（先自证服务本身没问题）；
+2. 再到用户机访问 `http://<服务器IP>:8080`；
+3. 用 `admin` 登录（初始口令 `Tianji@2024`），**立即改密**；
+4. 顺手确认一次：`http://<服务器IP>:8333` **能建立连接**（不是要看页面，是看端口通不通）。
+   浏览器打开 8333 通常返回 **403**，那是鉴权生效的正常形态——**能看到 403 就说明端口通**；
+   连不上（超时/拒绝）才是问题，见 7.1。
+
+> 首次只建 `admin`(R0) 一个账号。R0 在案卷/件级著录、电子文件、在线预览、借阅申请等域**没有权限**，
+> 用 admin 单账号走全流程会在第二步吃 403——那是**权限矩阵生效，不是功能缺陷**。
+> 正式使用前按单位角色分配建号（R1 著录/审批、R3 借阅、R0 系统管理）。
+
+### 验收 3 · 用户机跑 client-lite 自检
+
+见第 6 章。三项全 PASS、显示 `IS_PASS: YES`，才算「用户真的能用」。
+
+---
+
+## 6. 客户端分发与自检（client-lite）
+
+### 6.1 交付物与定位
+
+`tianji-client-lite.zip`（≈13 KB，纯静态）：**不改系统设置、不装软件、不联网、不需要管理员权限**，
+卸载就是删文件夹和桌面快捷方式。它解决三件事：不用记 IP、双击就进系统、连不上能自证是网络问题。
+
+选它而不是 Electron 安装包，是因为封闭内网里一个未经安全审查的可执行程序往往要走软件白名单流程，
+而 zip 可能只需解压（阶段二 Electron 包另立项）。
+
+### 6.2 分发动作（三步）
+
+1. 把 zip 发给档案员，**整包解压**到任意目录（例如 `D:\天玑档案\`）。4 个文件必须同目录：
+   `config.json`、`配置天玑客户端.bat`、`自检.ps1`、`说明.txt`。
+   > 不要把 bat 单独拖出来；解压后文件名乱码请改用 7-Zip/WinRAR（Windows 自带解压工具对部分 zip 的中文名处理不一致）。
+2. 双击 **「配置天玑客户端.bat」** → 输入**服务器 IP**（例如 `192.168.20.51`，直接回车用默认值）。
+   它会：写 `config.json` → 在桌面建「天玑档案管理系统」快捷方式（标准 `.url`，指向 `http://<IP>:8080`）→
+   **自动跑三项连通性自检**。
+3. 看到 `[OK] config.json 已写入` + 桌面快捷方式 + 自检三项 PASS 即完成。
+
+### 6.3 自检三项（判据与服务器端同一口径）
+
+| 项 | 判据 | 失败含义 |
+|---|---|---|
+| 1/3 网站服务 | `http://<IP>:8080/healthz` 返回 200 且正文 `ok` | 网站没起来或 IP 写错 |
+| 2/3 后端接口 | `http://<IP>:8080/api/health` 的 `status=ok` 且 `objectStorage.ok=true` | 后端未就绪或仍 degraded |
+| 3/3 对象存储 | `<IP>:8333` **TCP 直连**成功 | 分片上传会失败 |
+
+**三项全 PASS 才显示 `IS_PASS: YES`。**
+
+### 6.4 自检不过怎么读
+
+| 现象 | 判断 | 处置 |
+|---|---|---|
+| 只有 3/3 红，1/3 与 2/3 绿 | 登录、检索正常，**一上传就失败** | 8333 没放通或被防火墙拦；确认 `tianji-seaweedfs` 为 healthy |
+| 1/3 红 | 网站服务没起，或 IP 写错 | 服务器上确认 `tianji-web` healthy |
+| 2/3 红且 `status=degraded` | 看输出里逐行依赖，标 FAIL 的那项没就绪 | 若是 `objectStorage` FAIL，先查 seaweedfs 与 8333 |
+| 三项全红 | 十有八九 IP 写错，或本机与服务器不在同一内网 | 重跑 bat 改 IP |
+| 三项全绿但打不开系统 | 前端/浏览器侧问题 | 把自检窗口内容**整段**复制给运维，别只截一句 |
+
+**换地址/换端口/只复查**：
+
+- 换 IP：重跑「配置天玑客户端.bat」，填新 IP（配置被覆盖）；
+- 换端口（运维改过 `.env` 的 `WEB_PORT` / `SEAWEEDFS_S3_EXPOSED_PORT`）：记事本改 `config.json` 的
+  `webPort` / `s3Port`，再单独跑一次「自检.ps1」；
+- 只复查：直接双击「自检.ps1」，它不改任何配置。
+
+**受限电脑（不允许运行 bat）**：记事本改 `config.json` 的 `serverAddr` → 浏览器访问
+`http://<服务器IP>:8080` → 手工自检 `powershell -ExecutionPolicy Bypass -File .\自检.ps1`。
+
+---
+
+## 7. 故障排查
+
+### 7.1 快速定位表
+
+| 症状 | 先查什么 | 说明 |
+|---|---|---|
+| `--verify-only` 报 payload sha 不匹配 | 重新拷贝介质 | U 盘静默损坏最常见；不要「先装上试试」 |
+| 向导打不开（18080） | `pgrep -af "[/]opt/tianji-installer/bin/tianji-installer"` | 端口被旧实例占用；也可能落在 18081/18082，看终端打印 |
+| 页面「一键执行」秒回成功、但日志时间戳没变 | 同上看是否有旧实例 | 旧进程拿着旧 state 只跑 S10，属**假成功** |
+| 麒麟上 SSH 转发到 18080 失败 | `sshd_config` 的 `AllowTcpForwarding` | 麒麟默认 `no`，隧道不可用；改走本机浏览器/本机 curl |
+| 步骤被拒「当前应执行 S<N>」 | 顺序门 | 不可跳步；`.env` 改了要重提交表单再跑 S5 |
+| S5 报「已存在且未指定覆盖」 | 现场旧 `.env` | 加 `--overwrite`（先自动备份），不要手工删 |
+| S3 报 `invalid userland-proxy-path` / `containerd not found in $PATH` | 变体 B unit 与静态落点 | 已在交付包里修好；手工装 docker 的现场才会遇到 |
+| 变体 A `dpkg` 报 `python3.10-minimal is not installed` | Pre-Depends 按参数顺序检查 | 安装器会自动 `dpkg --configure -a` + 补装第二轮；仍失败才真失败 |
+| ES 无限重启 `failed to obtain node locks` | 卷属主 | 见 7.6 |
+| S6 卡在 `health=starting` | ES `start_period 60s` | 等；再用 `docker compose logs elasticsearch` |
+| 分片 PUT 成功、`completeMultipart` 失败 | 浏览器是否带 `Origin`、是否直连 8333 | 3.79 零配置返回 `Expose-Headers: *`；**别去配 CORS、别改签名逻辑** |
+| 上传全失败、其余正常 | 8333 | 见 7.1 首行与第 6 章 |
+| `docker: command not found`（变体 B） | 落点协议 | 用 `/usr/local/lib/tianji/docker-static/docker`，不是没装好 |
+
+### 7.2 overlay 与 `vm.max_map_count`
+
+**overlay 判据的时序坑（已在 `aacecbc` 修掉，现场若见自相矛盾日志以此判断）**：
+若日志同时出现 `modprobe overlay ok` 与「`/proc/filesystems` 含 overlay = false」，那是
+**先读文件系统列表、后 modprobe** 的旧顺序造成的——首次装载前读到当然没有。正确顺序是先 `modprobe` 再判定。
+
+**`vm.max_map_count` 是 ES 8 的硬门槛**：默认 65530，低于 262144 时 ES 在日志量稍大时直接
+`max virtual memory areas ... too low` 然后退出；本项目还开了 `bootstrap.memory_lock: true`，会连锁失败。
+
+处置链条【实测】：
+
+1. S1 只判 **WARN**，不改判据；
+2. S3 写 `/etc/sysctl.d/99-tianji.conf`（`vm.max_map_count=262144`、`fs.file-max=655360`、`vm.swappiness=1`），
+   写 `/etc/security/limits.d/99-tianji-limits.conf`（memlock unlimited、nofile 65535），执行 `sysctl --system`；
+3. **回读确认**并留痕：`vm.max_map_count: 65530 → 262144（要求 ≥ 262144，已回读确认）`；
+4. 回读读不到（`sysctl` 不可用且 `/proc` 也读不到）**必须报错**，不允许「写了就当生效」——
+   `sysctl --system` 被 SELinux 拒绝时表面是成功的。
+
+手工核对：
+
+```bash
+sysctl -n vm.max_map_count          # 期望 262144
+cat /etc/sysctl.d/99-tianji.conf
+```
+
+`limits.d` 只对**登录会话**生效，容器内限制由 dockerd 传递，因此 unit 里另有
+`LimitMEMLOCK=infinity` / `LimitNOFILE=65535`——两处缺一不可。
+
+### 7.3 firewalld：先禁用，再起 dockerd（顺序不能反）
+
+【实测，统信】同一系统**第二次**起 dockerd 直接失败：
+
+```text
+failed to start daemon: Error initializing network controller:
+  error creating default "bridge" network: Failed to program NAT chain:
+  ZONE_CONFLICT: 'docker0' already bound to a zone
+```
+
+注意这不是「端口不通」，是 **daemon 起不来**。处置只有两个：`systemctl disable --now firewalld`
+或给 dockerd 加 `--iptables=false`（后者会失去端口映射）。安装器采用前者，并且**这是安装步骤、必须留痕**：
+
+1. 起 dockerd **之前**读 `systemctl is-active firewalld`（`is-active` 对 inactive 返回 3，**不能拿退出码判「探测失败」**）；
+2. 是 `active` 就 `disable --now`，再读一次；
+3. `Before` / `After` / `Action` 三项一起进 S3 日志与 `99-summary.txt`。
+
+**处置失败不阻断**：真失败会在起 dockerd 时以 `ZONE_CONFLICT` 暴露，那个报错更具体——但结论里会明确写
+「处置失败/处置无效」，不会假装成功。没有 systemctl（或 `--no-systemd`）时写「跳过」。
+
+两条实测校正（别照旧文档做）：
+
+- `firewall-cmd --reload` **不会**清掉 DOCKER 链（实测 nat 表 DOCKER 计数 4 → 4），reload 本身是安全的；
+- **不要加 trusted zone**：那批实验（含 restart 后 SSH 失联）已被二分实验证伪为 QEMU slirp 环境假象，
+  写进话术只会让人去试一个从未证实的动作。
+
+SELinux / kysec **不做任何处置**，只探测记录：麒麟最小化安装实测 `SELinux=Disabled`
+（注意 `/etc/selinux/config` 写着 `enforcing`，**只认 `getenforce`**）、`KYSEC: Disabled` 且无用户态工具
+（判 `N/A`，**不写成「已关闭」**）。
+
+### 7.4 `journalctl -u docker` 与 StartLimit 语义
+
+变体 B 的 unit 带 `Restart=on-failure` 与 `StartLimitIntervalSec=120` / `StartLimitBurst=5`：
+dockerd 启动失败会在 120 秒内重试 5 次，然后**停在 `failed` 态**（而不是无限重启刷日志）。
+
+```bash
+systemctl is-active docker            # active / inactive / failed / 单元不存在（后两者都 rc=3）
+systemctl status docker --no-pager
+journalctl -u docker -n 200 --no-pager     # 一次看全失败原因
+```
+
+**「停在 failed」是设计，不是缺陷**：它把「无限重启」变成「一次可以读懂的失败」。
+看到 `failed` 不要反复 `restart`，先读日志；修好后再 `systemctl start docker`。
+
+### 7.5 18080 实例残留（最隐蔽的一个）
+
+```bash
+pgrep -af "[/]opt/tianji-installer/bin/tianji-installer"    # 方括号防止匹配到自己
+```
+
+`pkill -x tianji-installer` **无效**（进程名被截断成 `tianji-installe`，`pgrep -x` 也匹配不到）。
+确认没有旧实例后，再 `sudo sh *.run` 重新起向导；已经是旧实例在跑就直接 `kill <pid>` 后重开。
+
+端口回退顺序 18080 → 18081 → 18082，实际地址**只以终端打印为准**（页面上不会告诉你它落在哪个端口）。
+
+### 7.6 其它已验证的坑（报错文案都不指向真因）
+
+| 现象 | 真因 | 处置 |
+|---|---|---|
+| ES `failed to obtain node locks` + `NoSuchFile` 与 `AccessDenied` 同现 | bind mount 不改宿主目录属主；ES 以 uid=1000 跑且 entrypoint 不 chown | 安装器已按 `volumeOwners` 自动 `chown 1000:1000`；手工 compose 的现场自己 `chown 1000:1000 /opt/tianji/volumes/esdata` |
+| `wal_archive` 属主错 | 同上，postgres uid=70 | 容器照样 healthy，但 WAL 归档**静默失败**——「healthy ≠ 归档正常」，查 `docker compose logs postgres \| grep -i archive` |
+| seaweedfs 拒绝启动「S3 凭据含非法字符」 | 凭据字符白名单 `A-Za-z0-9_+/=-`，属**防注入设计** | 改凭据；不要改 entrypoint |
+| S5 已 DONE 后再推 S5 被拒 | 顺序门 | 正常；改 `.env` 需重提交表单 |
+| `docker compose restart` 后配置没变 | restart 不重读 `.env` | 用 `up -d` 重建容器 |
+| 装完 `docker compose ps` 里 `backup`/`extractor` 无 health | compose 设计里这两者没有 healthcheck | 不是故障，看 `state=running` |
+
+---
+
+## 8. 日常运维速查
+
+```bash
+# 变体 B 的 docker 不在 PATH，先定一个别名（写进 root 的 shell 初始化）
+D=/usr/local/lib/tianji/docker-static/docker
+C="$D compose -f /opt/tianji/docker-compose.offline.yml"
+
+$C ps                                   # 8 running / 6 healthy
+$C logs -f api                          # 跟日志
+$C down                                 # 停栈，保留 volumes
+$C up -d                                # 起栈（改过 .env 必须用这个，不能用 restart）
+
+# 备份（PostgreSQL 逻辑备份到卷目录）
+$C exec -T postgres pg_dump -U tianji -Fc tianji_archive \
+  > /opt/tianji/volumes/backup/pre-maint-$(date +%Y%m%d-%H%M).dump
+
+# 卸载：保留业务数据
+sudo sh /path/to/tianji-server-setup-kylin-uos-amd64-1.0.0.run --uninstall
+# 卸载并删数据（不可恢复，需手打 tianji-archive 确认）
+sudo sh ...run --uninstall --purge-volumes
+```
+
+- 卸载顺序固定：`compose down` → 按 `/var/lib/tianji-install/installed-files.json` 清单删文件 →
+  可选删 `volumes/`。**清单缺失时什么都不删**（按约定路径猜着删比报错更糟）。
+- `volumes/` **永不在卸载清单里**，另有前缀保护，防止「路径相近」误删。
+- 备份 sidecar（`tianji-backup`）按 `BACKUP_CRON`（默认 `0 2 * * *`）触发，保留 30 天。
+- 本节只给「装完立刻能用起来」的最小命令集。**巡检、备份恢复演练、日志轮转、容量增长、版本升级、
+  运行期故障速查**归《系统维护手册》（`docs/MAINTENANCE-MANUAL.md`）：交付期（装不上/装到一半失败/
+  验收不通过）看本手册第 7 章，运营期看维护手册，两处口径已对齐，不要平行抄两份。
+
+---
+
+## 9. 诚实边界（哪些话现在还不能说）
+
+本节的每一条都是**明确没验证**的事，交付答疑时照此口径回答，不要外推。
+
+1. **真硬件未验。** 全部真机结论来自**容器化 QEMU/KVM 虚拟机 + 最小化安装**
+   （麒麟 V10 SP3、统信 UOS 20，`--disk 60G --mem 10240 --smp 4`）。物理服务器、带 GUI 的完整安装、
+   启用 kysec 的形态**均未测**。
+2. **外部端口可达性未用 tap/bridge 验证。** QEMU user 网络（slirp）在 guest 出现网桥后 hostfwd 失效，
+   因此「dockerd 在跑 + 从**另一台机器**访问 8080/8333」**没有干净证据**。冒烟里的预签名下载是
+   **S3 wire 层自检**，不构成「外部下载功能已验证」。现场跨机访问请按本文第 5 章三步自行确认。
+3. **firewalld 处于 active 时的首次安装未测。** 真机验收全程 firewalld 处于 inactive/被禁用态
+   （风险已由 `ZONE_CONFLICT` 实测 + `disable --now` 处置覆盖，但「firewalld 在跑时完整栈起停」没有直接证据）。
+4. **变体 A（Ubuntu/Debian）真机未验。** 只有「特权 systemd 容器 + 嵌套 dockerd（vfs）」的十步闭环，
+   与真机有三处硬差异：真 systemd 语义、cgroup v1 hybrid、AppArmor 真生效；且容器里只能 vfs（非 overlay2）。
+5. **签名版尚未交付。** 当前审定版是未签名基线；第 1.2 节的验签流程只在构建机上跑过，
+   没有第二个人照文档独立走过一遍。正式交付前必须重建签名版并重新登记 digest。
+6. **单实例单机。** 未验证多实例并发、跨机 HA、多容器 `pub/sub` 跨进程取号；
+   ES 单节点 `yellow` 属正常。
+7. **凭据轮换责任人与时间窗未指定到岗到人。** 封闭试用可用默认值，**未落实不得转入正式启用**。
+8. **客户端只承诺 Windows 10/11 x64。** 麒麟桌面版/统信桌面版是 Linux，不是 Windows；
+   国产 Windows 兼容版未实测。
+
+另需随包说明的三条口径（避免误读）：
+
+- 8 项高敏参数走产品建议默认值，**不构成本单位管理制度口径，也不构成保密合规结论**；
+- 演示/试用数据为模拟书籍，非真实档案；
+- 下载放行链路（`approval` 模式）未实现，`demo:books` 输出的 `PRESIGNED_DOWNLOADS_OK` 是 S3 wire 层自检，
+  **既不能当下载可用证据，也不能当违规证据**。
+
+---
+
+## 附录 A · 引用来源核对表
+
+| 本手册章节 | 事实来源 |
+|---|---|
+| 0.1 手册边界 | `docs/DEPLOY.md` 全篇（开发环境口径）；`offline/README.md` §三（手工 6 步兜底）；`docs/INSTALLER-DESIGN.md` §9.2 |
+| 1.1 介质清单与体积 | `docs/INSTALLER-DESIGN.md` §9.1；`offline/SHA256SUMS`（tar 1,512,404,992 / `50fde9a8…`）；`installer/client-lite/`（zip 13,600 B） |
+| 1.1 变体 B 终版 digest | `docs/INSTALLER-DESIGN.md` §14.6（整体 / payload / 安装器二进制三重核验） |
+| 1.1 变体 A 历史 digest | `docs/INSTALLER-DESIGN.md` §14.2（150,107,053 / `c7fe6a11…`，明确「只标识当时那份产物」） |
+| 1.1 签名状态与密钥 | `docs/INSTALLER-DESIGN.md` §14.2、§14.6「签名裁定」；`installer/README.md` §2 签名段；指纹与有效期 2027-11-09 |
+| 1.2 介质与 U 盘建议 | `docs/INSTALLER-DESIGN.md` §7.3 |
+| 1.3 `--verify-only` 两层语义 | `installer/build/selfextract/header.sh.in`（非 root 只做壳层 / root 继续深校）；`installer/README.md` 实现决定 8、9 |
+| 2.1 门槛（K1/K2/K9/K10） | `installer/server/internal/preflight/preflight.go`（K9 ≥30/建议 60、K10 ≥8/建议 16，十进制 GB 换算） |
+| 2.2 crashkernel 与 8/10 GB 实测 | `docs/VARIANT-B-VM-RESULT.md` §7.3；`installer/vmtest/README.md` §2；K10 提示文案在同文件 |
+| 2.3 vfs 放大 26 倍 / 30 倍预留 | `installer/README.md` §4「磁盘限额与放大倍数」；`offline/README.md` §8.3；真机 5–6 GB 见 `installer/vmtest/README.md` §7.4 |
+| 2.4 端口表 | `offline/README.md` §四；`installer/build/payload/common/compose/docker-compose.offline.yml`（`ports` 各段）；8333 的关键性见 `docs/INSTALLER-DESIGN.md` §8.2 |
+| 2.5 OS 组合状态 | `docs/VARIANT-B-VM-RESULT.md` §7.1（双机全绿）；`docs/INSTALLER-DESIGN.md` §14.3（容器内闭环）；§5.1 矩阵 |
+| 3 部署前检查 / pkill 坑 | `installer/README.md` §「仍然没验证的事」第 4 条（`pkill -x` 杀不掉、旧实例假成功） |
+| 4.2 自解压头行为 | `installer/build/selfextract/header.sh.in`（校验→解包 `/opt/tianji-installer`→exec）；参数表同文件 usage |
+| 4.2 参数表 | `installer/server/cmd/tianji-installer/main.go` `usage()` |
+| 4.3 唯一入口 / AllowTcpForwarding | `installer/vmtest/README.md` §8 第 1 条；`docs/VARIANT-B-VM-RESULT.md` §7.3 末条 |
+| 4.3 token 与 18080 回退 | `installer/server/cmd/tianji-installer/main.go`（非回环强制 token）；`web.go`（18080→18081→18082、banner、60s 倒计时） |
+| 4.4 十步语义与判据 | `installer/server/web/app.js` `STEP_META`；`installer/server/cmd/tianji-installer/flow.go` 各 `stepXxx`；`internal/state` 顺序门与「只有 PASS 才 DONE」 |
+| 4.4 S1 麒麟确认门 | `docs/VARIANT-B-VM-RESULT.md` §7.1 阶段 A（麒麟首跑被风险确认门拦截） |
+| 4.4 S3 变体 B 落点与 unit 四要素 | `installer/README.md` §6；`docs/VARIANT-B-VM-RESULT.md` §7.2-②（`c4aa7f8`） |
+| 4.4 S3 sysctl 回读 | `installer/server/internal/dockerinstall/kernel.go`（写→`sysctl --system`→回读）；`docs/VARIANT-B-VM-RESULT.md` §7.3（65530→262144 双机实锤） |
+| 4.4 S3 firewalld 处置 | `installer/README.md` §6「firewalld 处置是安装步骤」；`docs/VARIANT-B-VM-RESULT.md` §2.6(A) |
+| 4.4 S4 8/8 | `installer/build/payload/common/scripts/images.txt`；`installer/server/internal/images` |
+| 4.4 S5 表单 8 项与校验规则 | `installer/server/cmd/tianji-installer/flow.go` `envValues.validate()`；`requiredEnvKeys` |
+| 4.4 S5 卷属主 | `flow.go` `volumeOwners`；`offline/README.md` §8.4 |
+| 4.4 S6/S9 判据与实测耗时 | `installer/server/internal/stack/stack.go` `Smoke`；`docs/VARIANT-B-VM-RESULT.md` §7.1（8 镜像 / 8 容器 6 healthy / 冒烟 4/4 / S6 47.9–48.2s）；`installer/README.md` §4（容器 21.2s、S5→S10 46s） |
+| 4.4 各步超时上限 | `flow.go` `stepTimeout()` |
+| 4.4 S8 admin 初始口令 | `docs/DEPLOY.md` §四「首次启动后必做」（`admin` / `Tianji@2024`，首次改密） |
+| 4.5 `--resume` 读回 `.env` | `installer/README.md` 实现决定 13；`flow.go` `loadEnvValues` |
+| 4.6 落盘位置与生命周期 | `docs/INSTALLER-DESIGN.md` §2.3、§6.3 |
+| 5.1 `is-active` 四态 | `installer/README.md` §6；`docs/VARIANT-B-VM-RESULT.md` §7.3 |
+| 5.2 初始只有 admin(R0) | `offline/README.md` §0.4 第 2 条（R0 无著录/预览/借阅权限，403 是权限矩阵生效） |
+| 6 客户端三步与自检判据 | `installer/client-lite/说明.txt` §二/§三/§四/§五；`docs/INSTALLER-DESIGN.md` §8.2（自检三项判据表） |
+| 7.1 / 7.5 / 7.6 排障条目 | `installer/vmtest/README.md` §8（六条 + 一条配套）；`installer/README.md` §「仍然没验证的事」第 4 条；`offline/README.md` §七、§8.4 |
+| 7.2 overlay 时序 | `docs/VARIANT-B-VM-RESULT.md` §7.2-①（`aacecbc`：先 modprobe 再判定） |
+| 7.3 firewalld 实测与两条校正 | `docs/VARIANT-B-VM-RESULT.md` §2.6（A 冲突 / B reload 不清链 / C slirp 假象）；§4 第 3–4 条 |
+| 7.4 StartLimit 语义 | `installer/vmtest/README.md` §8 第 5 条；`docs/VARIANT-B-VM-RESULT.md` §7.2-② |
+| 8 卸载三序与清单纪律 | `flow.go` `Uninstall()`；`installer/README.md` §6「卸载：只删自己写下的清单」 |
+| 9 诚实边界 | `docs/VARIANT-B-VM-RESULT.md` §7.5、§5；`docs/INSTALLER-DESIGN.md` §14.3「仍未覆盖」；`offline/README.md` §0.2、§0.4、§九 |
+
+## 附录 B · 一页纸命令速查
+
+```bash
+# ---------- 介质 ----------
+sha256sum -c SHA256SUMS.txt                      # 逐文件校验
+gpg --verify SHA256SUMS.asc SHA256SUMS.txt       # 仅签名版
+
+# ---------- 装前 ----------
+sudo sh <pkg>.run --verify-only                  # 只校验（root 才做深度校验）
+ss -lntp | grep -E ':(8080|8333|18080)\b'
+pgrep -af "[/]opt/tianji-installer/bin/tianji-installer"
+
+# ---------- 安装 ----------
+sudo sh <pkg>.run                                # Web 向导，默认 127.0.0.1:18080
+sudo sh <pkg>.run --listen 0.0.0.0:18080         # 局域网访问（强制 token）
+sudo sh <pkg>.run --resume                       # 断点续装
+sudo sh <pkg>.run --overwrite                    # 覆盖已有 .env（先备份）
+
+# ---------- 装后 ----------
+systemctl is-active docker                       # active
+/usr/local/lib/tianji/docker-static/docker ps    # 变体 B 的 docker 绝对路径
+/usr/local/lib/tianji/docker-static/docker compose \
+  -f /opt/tianji/docker-compose.offline.yml ps
+curl -s http://127.0.0.1:8080/api/health         # status=ok 且 objectStorage.ok=true
+sysctl -n vm.max_map_count                       # 262144
+
+# ---------- 卸载 ----------
+sudo sh <pkg>.run --uninstall                    # 保留 volumes
+sudo sh <pkg>.run --uninstall --purge-volumes    # 需手打 tianji-archive 确认
+```

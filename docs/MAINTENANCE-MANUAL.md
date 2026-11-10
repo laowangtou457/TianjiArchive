@@ -1,0 +1,285 @@
+# 系统维护手册 —— 天玑档案管理系统（封闭内网部署）
+
+> 适用形态：变体 B（麒麟 / 统信 UOS）离线安装包交付的单机 Docker Compose 栈
+> 服务端：Docker Compose 8 服务（api / extractor / web / backup / elasticsearch-ik 8.13.4 / redis / postgres / seaweedfs 3.79）
+> Docker：安装器静态安装 docker 27.5.1（不进系统 PATH）
+> 部署根：`/opt/tianji`（compose + .env + volumes）
+> 本文所有口径均以仓库实际代码与脚本为准，未实现的能力明确标注「没有」。
+
+---
+
+## 一、系统形态与关键落点
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 部署根 | `/opt/tianji` | compose（`docker-compose.offline.yml`）、`.env`、`volumes/`、`seaweedfs/` 入口脚本 |
+| 安装器释放点 | `/opt/tianji-installer` | 安装完成即可结束进程（释放 18080 端口） |
+| docker 静态二进制 | `/usr/local/lib/tianji/docker-static/` | docker / dockerd / containerd / runc；**刻意不进系统 PATH**，docker 命令一律走绝对路径 `/usr/local/lib/tianji/docker-static/docker` |
+| compose v2 插件 | `/usr/local/lib/docker/cli-plugins/docker-compose` | docker CLI 自动发现 |
+| docker.service | `/etc/systemd/system/docker.service` | 安装器自写 unit，非发行版包 |
+| 安装清单 | `/var/lib/tianji-install/installed-files.json` | 卸载**只删这份清单里的**文件 |
+| 安装状态机 | `/var/lib/tianji-install/state.json` | S1~S10 步骤进度，`--resume` 断点续装 |
+| 安装日志 | `/var/log/tianji-install/<时间戳>/` | 含 `99-summary.txt` |
+
+docker.service unit 四要素（排障时先核对）：
+
+1. `Environment=PATH=/usr/local/lib/tianji/docker-static:...`（静态目录在最前：dockerd 27.5.1 经 PATH 查找 docker-proxy 与 containerd）；
+2. `ExecStart=... --userland-proxy-path=/usr/local/lib/tianji/docker-static/docker-proxy`（绝对路径）；
+3. `ExecStartPost=<静态目录>/wait-ready.sh`（只等待不判定，退出码恒 0）+ 幂等创建的 `docker` 系统组（dockerd 要 chown `/var/run/docker.sock`）；
+4. `Restart=on-failure` + `StartLimitIntervalSec=120 / StartLimitBurst=5`（失败 120 秒内重试 5 次后**停在 failed 态**，可查 journal，而不是无限 auto-restart 转圈）。
+
+另有 `LimitMEMLOCK=infinity`、`LimitNOFILE=65535`（Elasticsearch 的 memlock / nofile 要求）。
+
+## 二、服务与端口清单
+
+| 服务 | 容器名 | 镜像 | 宿主端口 | healthcheck | 卷 |
+|---|---|---|---|---|---|
+| postgres | tianji-postgres | postgres:16-alpine | 5432 | pg_isready | `volumes/postgres`、`volumes/wal_archive` |
+| elasticsearch | tianji-elasticsearch | tianji-elasticsearch-ik:8.13.4 | 9200 | curl 集群健康 | `volumes/esdata` |
+| seaweedfs | tianji-seaweedfs | chrislusf/seaweedfs:3.79 | 8333（仅此一条对外） | wget 探测 8333（200/403 均视为健康） | `volumes/seaweedfs` |
+| redis | tianji-redis | redis:7-alpine | 6379 | redis-cli ping | `volumes/redis` |
+| api | tianji-api | tianji-archive-api:1.0.0 | 3000 | /api/health 自检 | 无持久卷 |
+| extractor | tianji-extractor | tianji-archive-extractor:1.0.0 | 无 | **无 healthcheck（设计如此）** | 无持久卷 |
+| web | tianji-web | tianji-archive-web:1.0.0 | 8080 | wget /healthz | 无持久卷 |
+| backup | tianji-backup | tianji-archive-backup:1.0.0 | 无 | **无 healthcheck（设计如此）** | `volumes/backup` |
+
+- Redis 参数：`--appendonly yes --maxmemory 512mb --maxmemory-policy noeviction`（noeviction 是裁定口径：内存压力显式报错而非 LRU 静默驱逐，档案系统 fail-closed）。
+- PostgreSQL：`wal_level=replica`、`archive_mode=on`，WAL 归档到 `volumes/wal_archive`（支撑 RPO<=24h 的原始材料）。
+- SeaweedFS：宿主只发布 8333（浏览器预签名直传，不经 nginx 反代）；master 9333 / filer 8888 / volume 8081 / gRPC 端口只在容器网络内。桶由 API 启动时幂等创建（archive-original / archive-preview / archive-thumb / archive-backup），S3 桶级授权关闭了自动建桶。
+
+## 三、日常巡检清单
+
+### 3.1 容器六 healthy 判据
+
+```bash
+/usr/local/lib/tianji/docker-static/docker ps
+```
+
+期望：8 个容器全 `running`，其中 **6 个 `Up ... (healthy)`**：api、web、seaweedfs、elasticsearch、postgres、redis。
+backup 与 extractor 没有 healthcheck 定义（compose 设计如此），`running` 即正常，不要当故障。
+
+### 3.2 /api/health 四依赖
+
+```bash
+curl -fsS http://127.0.0.1:3000/api/health
+```
+
+期望 `"status":"ok"`，且四个依赖各自 `"ok":true`：**postgres / elasticsearch / objectStorage / redis**（objectStorage 即 SeaweedFS 的 HeadBucket 检查）。任一 `ok:false` → status 变 `degraded`，按第四/九节排查。
+
+### 3.3 磁盘水位
+
+```bash
+df -h /opt/tianji /var/lib/docker
+```
+
+关注两点：
+- `/var/lib/docker`（镜像与容器层）：镜像 tar 载入放大倍数实测约 26 倍（1.5GB tar → ~40GB），初始就占约 40GB，按 30 倍留盘口径监控；
+- `/opt/tianji`（数据卷）：主要增长来自 `volumes/seaweedfs`（对象存储）、`volumes/wal_archive`（WAL 归档持续累积，见 3.4）、`volumes/backup`（保留 30 天）。
+
+### 3.4 备份产物是否按期生成
+
+```bash
+ls -lh /opt/tianji/volumes/backup/pg/
+tail -50 /opt/tianji/volumes/backup/backup.log
+```
+
+- 每日 02:00（`BACKUP_CRON` 默认）生成一个 `pg/tianji_archive_<时间戳>.dump`；backup 容器启动时会先跑一次（避免首日空白）。
+- 每小时第 15 分钟跑一次超期清理（`--purge-only`）。
+- 备份结果同时写入数据库 `backup_record` 表（`status` / `db_status` / `minio_status` 列；`minio_status` 是历史列名，值来源现为 S3 同步结果）。
+- 任何一步失败都会在 backup.log 显式打 `ERROR` 并退出码 1，**没有静默跳过**；backup 容器本身仍保持 running，等下轮 cron 重试。巡检以看日志与 dump 文件时间为准。
+
+## 四、日志地图
+
+| 日志 | 位置 | 用途 |
+|---|---|---|
+| 安装器日志 | `/var/log/tianji-install/<时间戳>/` | **append-only 十份日志**（00-manifest … 09-smoke、99-summary.txt，文件名带序号）；现场出问题时整个时间戳目录**整体打包回传**是唯一可远程索取的证据 |
+| 安装状态 | `/var/lib/tianji-install/state.json` | 步骤进度（DONE/FAIL），判断「真跑过还是假成功」 |
+| 安装清单 | `/var/lib/tianji-install/installed-files.json` | 卸载依据；重装时增量合并，不丢上一轮 |
+| dockerd / 静态 docker | `journalctl -u docker.service` | dockerd 起不来、ZONE_CONFLICT、userland-proxy/containerd 缺失等根因都在这里 |
+| 各容器日志 | `/usr/local/lib/tianji/docker-static/docker logs <容器名>`（或 `docker compose -f /opt/tianji/docker-compose.offline.yml logs <服务>`） | ES node locks、pg 归档失败、seaweedfs 凭据拒绝、api 异常等 |
+| 备份日志 | `/opt/tianji/volumes/backup/backup.log` | 每日备份与每时清理的完整输出 |
+| 冒烟复核 | 安装器内置 Go 冒烟（S9）为权威；`<安装器目录>/common/scripts/smoke.sh` 为人工独立复核（四判据：health、S3 探针、样品全链路、IK 分词） | 验收 / 复装后抽查 |
+
+注意：麒麟 sshd 默认 `AllowTcpForwarding no`，SSH 隧道不可用；Web 安装器与各 HTTP 排查入口都在服务器本机（`curl 127.0.0.1:18080` / `127.0.0.1:3000`）。
+
+## 五、备份与恢复
+
+### 5.1 备份产物构成（backup.sh 实际能力）
+
+一次成功的备份产生三部分：
+
+1. **数据库全量**：`/opt/tianji/volumes/backup/pg/tianji_archive_<TS>.dump`（`pg_dump -Fc` custom 格式，可 `pg_restore`），记录 sha256 与大小；
+2. **对象桶镜像**：`archive-original` 桶经本地暂存目录（`volumes/backup/mirror/original`）两步法同步到备份桶 `archive-backup/original/`（增量 sync，等价 mc mirror）；
+3. **dump 异地副本**：dump 文件再上传一份到 `archive-backup/pg/`（异盘/异地语义由对象存储承担）。
+
+保留策略：`BACKUP_RETENTION_DAYS`（默认 30 天），本地 dump 与备份桶超期对象都会被清理。默认 RPO<=24h（每日全量）。
+
+### 5.2 如何验证备份可用
+
+- 看最近一次 `backup_record`：`db_status='OK'` 且 `minio_status='OK'`（列名历史遗留，见「已知限制」）；
+- dump 可读性校验：`pg_restore -l <dump 文件>` 能列出目录（不需恢复即可证明文件结构完整）；
+- 抽查备份桶对象计数与 original 桶是否一致（`aws s3 ls` 或应用侧备份列表页，F-11）。
+
+### 5.3 恢复步骤（如实：脚本只提供备份，没有恢复脚本）
+
+仓库只交付了备份脚本，**没有自动恢复脚本**。恢复为手工操作：
+
+```bash
+# 1) 数据库恢复（custom 格式）
+pg_restore -h 127.0.0.1 -U tianji -d tianji_archive --clean --if-exists \
+  /opt/tianji/volumes/backup/pg/tianji_archive_<TS>.dump
+# 2) 对象恢复：从 archive-backup 桶把 /original/ 前缀同步回 archive-original
+#    （aws-cli 在 backup 容器内可用；应用对象逐个 GET/PUT 或从 mirror 暂存目录回拷）
+```
+
+### 5.4 PITR / wal_archive 的如实口径
+
+PostgreSQL 已开启 `archive_mode=on`，`volumes/wal_archive` 在持续累积 WAL 段（**巡检别忽略它的磁盘水位**）。但仓库中**没有任何 PITR 恢复脚本、recovery 配置模板或基线备份（pg_basebackup）编排**——也就是说：WAL 归档材料在攒，但当前版本不具备开箱即用的 PITR 能力。实际可用的恢复手段就是 5.3 的「最近一次 dump + 对象镜像」，RPO 以每日备份间隔为准（<=24h）。需要 PITR 请另行立项实现恢复流程。
+
+## 六、数据卷属主与权限陷阱
+
+安装器建卷时按容器内 uid 分派属主（S5_ENV 步骤）：
+
+| 目录 | 属主 | 为什么 |
+|---|---|---|
+| `volumes/esdata` | **1000:1000** | elasticsearch:8.13.4 以 uid=1000 运行且 entrypoint 不做 chown |
+| `volumes/wal_archive` | **70:70** | postgres:16-alpine 以 uid=70(postgres) 执行 archive_command 写 /wal_archive |
+| 其余卷 | root 即可 | 容器内以 root 或自动适配 |
+
+症状对照：
+
+- **esdata 属主错**：ES 无限重启，日志 `failed to obtain node locks ... AccessDeniedException: .../node.lock`——报错文案不提属主。处置：`chown -R 1000:1000 /opt/tianji/volumes/esdata`（容器内方式：`docker compose run --rm --user root elasticsearch chown -R 1000:0 /usr/share/elasticsearch/data`）。
+- **wal_archive 属主错**：**postgres 不会起不来**（这个陷阱更隐蔽）——只是 WAL 归档在容器日志里静默失败，`volumes/wal_archive` 不再增长。处置：`chown -R 70:70 /opt/tianji/volumes/wal_archive`，并检查归档是否恢复（目录时间戳更新）。
+
+重装/迁移数据卷时，恢复出来的目录属主可能变化，这两项必须重新核对。
+
+## 七、服务运维
+
+### 7.1 单服务重启
+
+```bash
+cd /opt/tianji
+/usr/local/lib/tianji/docker-static/docker compose -f docker-compose.offline.yml --env-file .env restart <服务>
+```
+
+注意：`restart` **不会重读 `.env`**。改了 `.env` 之后必须 `up -d` 重建受影响容器（依赖该变量的容器全部一起重建）。
+
+### 7.2 整机停启与数据安全
+
+```bash
+# 停（容器停止，数据卷、网络定义保留）
+docker compose stop
+# 启
+docker compose up -d
+# 彻底下线（删容器与网络；volumes/ 是宿主机目录，不会被动到）
+docker compose down
+```
+
+- **`stop` / `down` 都不动数据**：所有持久数据都在宿主机 bind mount（`/opt/tianji/volumes/`）里，容器随时可重建。
+- 禁止用 `docker rm -f` 当关机手段：SIGKILL 有丢数据风险（实测曾把 state.json 截成 0 字节）。主机关机用 `shutdown` / `poweroff` 正常停机路径，systemd 会停 docker → 停容器。
+- api/extractor/backup 有 depends_on 健康条件，`up -d` 会按 postgres → es → seaweedfs → redis → api → extractor/web 的顺序拉起，冷启动 S6 实测约 48 秒，属正常。
+
+### 7.3 SeaweedFS 凭据修改的正确姿势
+
+凭据字符白名单是**防注入设计**：S3 凭据仅允许 `A-Za-z0-9_+/=-`，桶名仅允许 `A-Za-z0-9._-`，含非法字符或为空时 seaweedfs entrypoint **拒绝启动**（日志 `S3 凭据含非法字符`）。现场改 `.env` 时先过这个字符集再保存。
+
+换凭据的完整步骤（四消费方同步，缺一会导致 403）：
+
+```bash
+cd /opt/tianji
+vi .env                     # 改 MINIO_ACCESS_KEY / MINIO_SECRET_KEY
+docker compose up -d seaweedfs api extractor backup   # 重建容器（restart 不重读 .env）
+```
+
+s3.json 是 entrypoint 启动时由环境变量渲染到容器 `/tmp` 的（不落镜像、不落卷），所以只要重建 seaweedfs 容器即可生效，不需要手改任何 json。注意 api 侧 S3_PUBLIC_* 是浏览器直传端点，与凭据无关，不用跟着改。轮换会使旧密钥签发的未过期预签名 URL 失效，选维护窗口执行。
+
+## 八、卸载与重装
+
+```bash
+tianji-installer --uninstall            # 按 manifest 清单卸载
+tianji-installer --uninstall --purge-volumes   # 连数据卷一起删（危险，确认后再用）
+```
+
+卸载行为（以 installed.go 实际实现为准）：
+
+1. 先 `compose down`（需要 dockerd 还活着）；
+2. **只删清单里登记的**：静态 docker 目录、compose 插件、wait-ready.sh、docker.service 等（文件先删、目录后删，深的先删）；
+3. `volumes/`（业务数据）**永远不在清单里**，不 `--purge-volumes` 就一定保留；清单删除时受保护前缀二次校验；
+4. **清单文件缺失时什么都不删**，报错说明「没装过/由包管理器管」——不存在按约定路径猜着删；
+5. 清单自身在卸载完成后删除。
+
+保留 vs 删除速查：
+
+| 保留 | 删除 |
+|---|---|
+| `/opt/tianji/volumes/`（除非 --purge-volumes）、`/opt/tianji/.env`、安装日志、系统 PATH 及运维自放文件 | `/usr/local/lib/tianji/docker-static/`、compose 插件、docker.service、清单文件 |
+
+重装：重新执行 `.run` 安装器即可；S5 拒绝覆盖已存在 `.env`（防静默丢配置），需要覆盖时按产品口径 `--overwrite`——旧 `.env` 会**自动备份到日志目录**再覆盖。安装清单增量合并，上一轮登记不会丢。
+
+## 九、升级流程（如实）
+
+当前版本**没有在线升级机制**（仓库中无升级编排、无镜像滚动脚本）。升级口径为：
+
+**升级 = 重新安装 + 数据卷迁移。**
+
+1. 备份：确认最近一次备份 OK（backup_record 双 OK + dump 文件存在），有条件再做一份 dump 手工异地保存；
+2. 记录现网 `.env`（非默认项）；
+3. 用新版本安装包执行安装（或卸载后重装）；
+4. 数据迁移：停旧栈，把 `/opt/tianji/volumes/`（至少 postgres、seaweedfs、redis）迁移/恢复到新部署根，**核对第六节两项属主**，再起栈；
+5. 数据库 schema 变化由新包的 migration 步骤承接（S7_MIGRATE），对象数据无需转换；
+6. 跑冒烟复核（四判据）确认。
+
+跨大版本回滚前须验证数据卷格式兼容性（尤其 SeaweedFS /data），无自动降级路径。
+
+## 十、常见故障速查表
+
+> 本节只覆盖**装好之后的运行期故障**。交付期排障（装不上 / 装到一半失败 / 验收不通过：verify-only 不符、18080 打不开、旧实例假成功、S 顺序门拒绝、overlay 判据、`vm.max_map_count` 回读、firewalld/SELinux/kysec、dpkg Pre-Depends、S6 health=starting、分片合并失败等）见《部署手册》`docs/DEPLOYMENT-MANUAL.md` §7，两处口径已对齐。
+>
+> 另一条巡检/脚本纪律：`systemctl is-active docker` 的四态里，**`inactive` 与「单元不存在」都返回退出码 3**——不要拿退出码单独判「异常」，否则会把「从没装过」和「装了但停了」混成一类；判态要看输出原文（active / inactive / failed / 单元不存在）。
+
+| 症状 | 原因 | 处置 |
+|---|---|---|
+| ES 无限重启，`docker logs tianji-elasticsearch` 见 `failed to obtain node locks ... AccessDeniedException` | `volumes/esdata` 属主不是 1000:1000 | `chown -R 1000:1000 /opt/tianji/volumes/esdata`，20 秒内应转 healthy |
+| WAL 归档停止增长（postgres 本身 healthy） | `volumes/wal_archive` 属主不是 70:70 | `chown -R 70:70 .../wal_archive`，看容器日志归档是否恢复 |
+| 浏览器上传失败 / 预签名下载不通 | 宿主 8333 不通（SeaweedFS 没起、防火墙、或 S3_PUBLIC_ENDPOINT 配的不是浏览器可达 IP） | 先 `docker ps` 看 seaweedfs healthy；再本机 `curl -sI http://127.0.0.1:8333/`（403 也算通）；再核对 `.env` 的 S3_PUBLIC_ENDPOINT 为宿主机局域网 IP；8333 必须浏览器直连，不经 nginx |
+| dockerd 起不来 / docker 命令全部 connection refused | 看 journalctl 而不是瞎猜 | `journalctl -u docker.service` 一次看全失败原因；常见：firewalld active（ZONE_CONFLICT，装的时候安装器会 disable 并留痕）、docker 组缺失、静态二进制不完整 |
+| docker 服务 `activating (auto-restart)` 转圈后停住 | StartLimit 上限（120s 内 5 次）触发，systemd 放弃进 failed 态——这是设计行为，让根因可见 | `systemctl status docker` + `journalctl -u docker` 看最后一次失败原因；修完 `systemctl reset-failed docker && systemctl start docker` |
+| `docker: command not found` | 变体 B 静态 docker 不进 PATH，这是设计 | 用绝对路径 `/usr/local/lib/tianji/docker-static/docker`（或配 alias，勿把二进制链进 /usr/local/bin 争 PATH） |
+| seaweedfs 容器秒退，日志 `S3 凭据含非法字符` | `.env` 凭据超出白名单 `A-Za-z0-9_+/=-` | 换符合白名单的凭据（防注入设计，不是 bug），改后 `up -d` 重建 |
+| api/health `objectStorage ok:false` | SeaweedFS 未就绪或凭据与 s3.json 不一致 | 看 seaweedfs 日志；若刚换过凭据，确认 api/extractor/backup 是否一并重建了 |
+| redis 报 OOM error / 写入失败 | maxmemory 512mb + noeviction（显式报错而非静默驱逐，设计行为） | 排查是否有异常增长的任务数据；确需扩容改 `.env`/compose 参数重建 |
+| web 一直 starting 不转 healthy | 通常在等 api 起来（S6 依赖顺序） | 冷启动等 1 分钟再看；api 不 healthy 就回头查 api 日志 |
+| 备份 dump 不再生成 | backup cron 未跑或依赖不健康 | `docker logs tianji-backup` + `tail /opt/tianji/volumes/backup/backup.log`（失败必显式 ERROR，不静默） |
+
+## 十一、已知限制（如实）
+
+1. **无在线升级机制**：升级 = 重装 + 数据卷迁移（见第九节）。
+2. **无 PITR 能力**：wal_archive 在攒 WAL，但没有任何恢复脚本/基线备份编排；可用恢复手段仅「最近 dump + 对象镜像」，RPO<=24h。
+3. **无自动恢复脚本**：备份脚本只有 backup 与 purge 两个入口，恢复是手工操作。
+4. **`minio_status` 列名与 `MINIO_*` 变量名是历史遗留**：对象存储实际已是 SeaweedFS，为兼容不改名；文档检索时按同义理解。
+5. **backup / extractor 两个容器无 healthcheck**：compose 设计如此，「六 healthy」不是八。
+6. **SeaweedFS 3.79 CORS 不可收紧**：S3 网关对带 Origin 的请求恒返回 `Access-Control-Allow-Origin: *`、`Expose-Headers: *`，无法按桶配置；8333 必须浏览器直连（不经反代），这是 CORS 生效的前提，也是既定架构裁定。
+7. **redis noeviction**：内存满时写入显式报错（fail-closed），不会 LRU 静默驱逐。
+8. **外部端口可达性未在真机网络拓扑下验证**：真机端到端验证止于容器/loopback 层（QEMU 环境限制）；「外部浏览器访问 8080/8333」以现场验收为准。
+9. **firewalld active 状态下的完整栈起停未实测**：安装时安装器会停用 firewalld 并留痕；如现场必须启用 firewalld，需自行验证 dockerd 兼容性（已知 ZONE_CONFLICT 案例）。
+10. **ES xpack.security 关闭、SeaweedFS 无传输加密**：安全边界依赖内网封闭性与网络策略，属试用态口径。
+11. **麒麟 kysec 启用形态、SELinux Enforcing 形态未验证**（真机均为 Disabled/未生效）；若现场启用，先在测试机验证静态 docker 目录是否落进文件保护范围。
+12. **冒烟两套并存**：安装器内置 Go 冒烟（S9，权威判据，13 项 S3 探针）与 `smoke.sh`（人工复核，9 项 S3 探针），结果以 Go 冒烟为准。
+
+---
+
+## 附：引用来源核对表
+
+| 手册口径 | 仓库来源 |
+|---|---|
+| 服务/端口/卷/healthcheck/redis 参数 | `docker-compose.yml`、`installer/build/payload/common/compose/docker-compose.offline.yml` |
+| 卷属主 1000:1000 / 70:70 及症状 | `installer/server/cmd/tianji-installer/flow.go`（volumeDirs）、`installer/README.md` §缺陷表 |
+| 静态落点常量 | `installer/server/internal/buildplan/static_paths.go`、`buildplan.go`（DefaultDeployRoot=/opt/tianji） |
+| unit 四要素、StartLimit、docker 组 | `installer/server/internal/dockerinstall/variantb.go` |
+| 卸载按 manifest、volumes 保护、清单缺失不删 | `installer/server/internal/installed/installed.go`、`installer/README.md` §6 |
+| 冒烟四判据 | `installer/build/payload/common/scripts/smoke.sh`、`docs/VARIANT-B-VM-RESULT.md` §7.1 |
+| 备份产物/清理/无恢复脚本 | `infra/backup/backup.sh`、`infra/backup/entrypoint.sh` |
+| 凭据白名单 A-Za-z0-9_+/=- | `infra/seaweedfs/entrypoint.sh` |
+| 日志位置、排障口径、SSH 隧道不可用 | `docs/VARIANT-B-VM-RESULT.md` §7、`installer/vmtest/README.md` §8、`installer/README.md` |
+| 8333 直连/CORS/端口矩阵/卷容量 | `docs/ARCHITECTURE-SEAWEEDFS.md` |
+| state.json / installed-files.json / 安装日志路径 | `installer/server/internal/state/state.go`、`internal/audit/audit.go`、`static_paths.go` |
