@@ -69,6 +69,8 @@ apps/cli-migrator/*.db
 
 # ---------------------------------------------------------------- 本地真机验证脚本与样本（不入库）
 /.wb-e2e/
+# Windows 变体离线资产（WSL MSI 235MB + Ubuntu rootfs 326MB，由 fetch-wsl-assets.sh 重建）
+/installer/build/assets/wsl/
 
 # ---------------------------------------------------------------- 日志与系统文件
 *.log

@@ -24,12 +24,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUT_DIR="${SCRIPT_DIR}/assets/wsl"
 
 # 固定版本（升级须真机重验后变更，见文件头注释）
-WSL_MSI_VERSION="2.6.1"
-WSL_MSI_URL="https://github.com/microsoft/WSL/releases/download/${WSL_MSI_VERSION}/wsl.${WSL_MSI_VERSION}.x64.msi"
+WSL_MSI_VERSION="2.6.1.0"
+WSL_MSI_URL="https://github.com/microsoft/WSL/releases/download/2.6.1/wsl.2.6.1.0.x64.msi"
 WSL_MSI_EXPECT_NAME="wsl.msi"
-UBUNTU_ROOTFS_VERSION="20250415"   # ubuntu-jammy-wsl-amd64-wsl.rootfs.tar.gz 的发布日期
-UBUNTU_ROOTFS_PRIMARY="https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cloud-images/wsl/jammy/current/ubuntu-jammy-wsl-amd64-wsl.rootfs.tar.gz"
-UBUNTU_ROOTFS_FALLBACK="https://cloud-images.ubuntu.com/wsl/jammy/current/ubuntu-jammy-wsl-amd64-wsl.rootfs.tar.gz"
+# ⚠️ 实测：TUNA 的 ubuntu-cloud-images 对脚本类 UA 返回 403 反爬页（换浏览器 UA
+# 也不稳定），因此官方 cloud-images 为主源、TUNA 为备源。jammy current 的
+# rootfs 文件名带版本后缀 ubuntu22.04lts（2026-11 实测），下载后统一改存为
+# ubuntu-jammy-wsl-rootfs.tar.gz（组包与编排器只认后者）。
+UBUNTU_ROOTFS_VERSION="20250415"   # current 快照日期，以 SHA256SUMS 对账为准
+UBUNTU_ROOTFS_PRIMARY="https://cloud-images.ubuntu.com/wsl/jammy/current/ubuntu-jammy-wsl-amd64-ubuntu22.04lts.rootfs.tar.gz"
+UBUNTU_ROOTFS_FALLBACK="https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cloud-images/wsl/jammy/current/ubuntu-jammy-wsl-amd64-ubuntu22.04lts.rootfs.tar.gz"
+UBUNTU_ROOTFS_SHA_URL="https://cloud-images.ubuntu.com/wsl/jammy/current/SHA256SUMS"
 
 log() { printf '[fetch-wsl] %s\n' "$*"; }
 die() { printf '[fetch-wsl] FAIL: %s\n' "$*" >&2; exit 1; }
