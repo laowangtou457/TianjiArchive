@@ -62,6 +62,14 @@ const MAGIC_NUMBERS: Array<{ mime: string; bytes: number[]; offset?: number }> =
   { mime: 'application/vnd.ms-excel', bytes: [0xd0, 0xcf, 0x11, 0xe0] },
   { mime: 'application/msword', bytes: [0xd0, 0xcf, 0x11, 0xe0] },
   { mime: 'application/vnd.ms-powerpoint', bytes: [0xd0, 0xcf, 0x11, 0xe0] },
+  // 电子书：EPUB = ZIP 容器（与 OOXML 同 magic，按声明的 mime 分开比对）；
+  // MOBI = PalmDB，'BOOKMOBI' 在文件偏移 60 —— 嗅探读取长度须 ≥ 64 字节
+  { mime: 'application/epub+zip', bytes: [0x50, 0x4b, 0x03, 0x04] },
+  {
+    mime: 'application/x-mobipocket-ebook',
+    bytes: [0x42, 0x4f, 0x4f, 0x4b, 0x4d, 0x4f, 0x42, 0x49], // BOOKMOBI
+    offset: 60,
+  },
 ];
 
 /**
@@ -567,6 +575,8 @@ export class FileService {
       return true;
     }
     try {
+      // 读取头部 128 字节：MOBI 的 'BOOKMOBI' 签名在偏移 60，16 字节不够
+      const HEAD_BYTES = 128;
       const stream = await this.minio.getObjectStream(bucket, objectKey);
       const head = await new Promise<Buffer>((resolve, reject) => {
         const chunks: Buffer[] = [];
@@ -574,14 +584,14 @@ export class FileService {
         const onData = (chunk: Buffer): void => {
           chunks.push(chunk);
           total += chunk.length;
-          if (total >= 16) {
+          if (total >= HEAD_BYTES) {
             stream.removeListener('data', onData);
             (stream as unknown as { destroy?: () => void }).destroy?.();
-            resolve(Buffer.concat(chunks).subarray(0, 16));
+            resolve(Buffer.concat(chunks).subarray(0, HEAD_BYTES));
           }
         };
         stream.on('data', onData);
-        stream.on('end', () => resolve(Buffer.concat(chunks).subarray(0, 16)));
+        stream.on('end', () => resolve(Buffer.concat(chunks).subarray(0, HEAD_BYTES)));
         stream.on('error', reject);
       });
       return candidates.some((c) => {

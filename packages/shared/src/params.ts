@@ -412,7 +412,9 @@ export const PARAM_DEFS: readonly ParamDef[] = [
   },
   {
     key: 'file.allowed_extensions',
-    default: 'pdf,jpg,jpeg,png,tif,tiff,mp4,mp3,wav,doc,docx,xls,xlsx,ofd',
+    // 2026-11-10 扩展电子书格式：txt/epub/mobi（书籍当档案入库的实测需求）。
+    // 存量库由迁移 1700000000006 仅在"值仍等于旧默认"时跟进，管理员自改的值不动。
+    default: 'pdf,jpg,jpeg,png,tif,tiff,mp4,mp3,wav,doc,docx,xls,xlsx,ofd,txt,epub,mobi',
     type: 'csv',
     grp: 'file',
     effectiveMode: 'retention',

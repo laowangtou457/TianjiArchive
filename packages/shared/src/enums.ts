@@ -589,6 +589,10 @@ export const ALLOWED_MIME_TYPES: readonly string[] = [
   'video/quicktime',
   'video/x-msvideo',
   'text/plain',
+  // 电子书（书籍入库实测需求）：EPUB 是 ZIP 容器，MOBI 是 PalmDB 容器，
+  // 魔数表（api 侧 MAGIC_NUMBERS）各有对应签名，嗅探可强校验
+  'application/epub+zip',
+  'application/x-mobipocket-ebook',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.ms-excel',

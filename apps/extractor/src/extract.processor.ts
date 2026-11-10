@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import * as path from 'node:path';
 import type { DataSource } from 'typeorm';
 import {
   ExtractStatus,
@@ -10,6 +11,9 @@ import { AudioVideoConverter } from './converters/av.converter';
 import { ImageConverter } from './converters/image.converter';
 import { OfficeConverter } from './converters/office.converter';
 import { PdfConverter } from './converters/pdf.converter';
+import { EpubConverter } from './converters/epub.converter';
+import { MobiConverter } from './converters/mobi.converter';
+import { decodeTextFile } from './converters/book.common';
 import type { ObjectFetcher } from './object.fetcher';
 import type { EsIndexer } from './es.indexer';
 
@@ -26,7 +30,7 @@ export interface ProcessResult {
  *
  * 步骤：
  *   1) 从 MinIO 读取原件；
- *   2) 按 MIME 路由到对应转换器（PDF / Office / Image / AV / Text）；
+ *   2) 按 MIME/扩展名路由到对应转换器（PDF / Office / Image / AV / Text / EPUB / MOBI）；
  *   3) 写 document_text（正文）、electronic_file（previewKey/thumbKey/extractStatus）；
  *   4) 同步 ES 的 fulltext。
  *
@@ -38,6 +42,8 @@ export class ExtractProcessor {
   private readonly officeConverter = new OfficeConverter();
   private readonly imageConverter = new ImageConverter();
   private readonly avConverter = new AudioVideoConverter();
+  private readonly epubConverter = new EpubConverter();
+  private readonly mobiConverter = new MobiConverter();
 
   public constructor(
     private readonly dataSource: DataSource,
@@ -119,8 +125,22 @@ export class ExtractProcessor {
     }
   }
 
-  /** 按 MIME 路由 */
-  private async route(buffer: Buffer, filename: string, mime: string): Promise<ConvertOutput> {
+  /**
+   * 按 MIME/扩展名路由。
+   * 可见性为 public：单测需要直接驱动分发决策（转换器实现另有独立单测）。
+   */
+  public async route(buffer: Buffer, filename: string, mime: string): Promise<ConvertOutput> {
+    // 电子书先于 kind 分发：resolvePreviewKind 对 epub/mobi 返回 NONE（预览走
+    // 下载-only），但它们是合法入库类型，抽取必须处理。扩展名兜底的原因：
+    // 浏览器/客户端上报的 mime 不总可靠，扩展名是更稳的本地事实。
+    const ext = path.extname(filename).toLowerCase().replace('.', '');
+    if (mime === 'application/epub+zip' || ext === 'epub') {
+      return this.epubConverter.convert(buffer, filename);
+    }
+    if (mime === 'application/x-mobipocket-ebook' || ext === 'mobi') {
+      return this.mobiConverter.convert(buffer, filename);
+    }
+
     const kind = resolvePreviewKind(mime);
 
     if (kind === 'PDF' || mime === 'application/ofd') {
@@ -144,8 +164,10 @@ export class ExtractProcessor {
     }
 
     if (kind === 'TEXT') {
-      const text = buffer.toString('utf8');
-      return { text, pdfBuffer: null, thumbBuffer: null, supported: true, meta: { chars: text.length } };
+      // TXT 编码现实分布：UTF-8 / GBK（中文）。原实现硬编码 utf8 会把 GBK
+      // 解成乱码——检索库被污染且不可逆（乱码入库后无法再正确解码）。
+      const { text, charset } = decodeTextFile(buffer);
+      return { text, pdfBuffer: null, thumbBuffer: null, supported: true, meta: { chars: text.length, charset } };
     }
 
     // 其它类型：可跳过（不计失败）
