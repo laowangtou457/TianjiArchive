@@ -97,7 +97,7 @@ describe('PR-P8 生效模式边界：borrow 类恒为 judgment，结构上不可
 });
 
 describe('assertParamDefs 拦截误配：把 borrow 改成直读必须抛错', () => {
-  // 断言形态统一为「类型 + 内容」双断言（TESTING-GUIDELINES §2）：
+  // 断言形态统一为「类型 + 内容」双断言（测试方法学规范 §2）：
   //   ① `toThrow(ParamDefConfigError)` 锁定错误**类型**——保证这不是偶发的
   //      TypeError / 运行时异常被误当成"自检生效"；
   //   ② `toThrow(/正则/)` 锁定错误**内容**——保证拦的是**这一类**误配，
