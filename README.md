@@ -32,9 +32,10 @@
 
 ### 3.1 离线部署（生产 / 交付口径）
 
-1. 取交付介质：`tianji-server-setup-kylin-uos-amd64-1.0.0.run`（99,968,027 B，sha256 `d1120fda71cfcdf6dfc8f90ab8522c96430f3c9e2985f497bb52fa8042ebac5f`，构建日志 `dist/installer/build-kylin-uos-final-2.log`）＋ `offline/tianji-offline-images.tar`（1.5 GB，sha256 见 `offline/SHA256SUMS`）＋ `installer/client-lite/tianji-client-lite.zip`。
-2. 目标机执行 `sudo sh <包>.run`，浏览器打开 `http://<服务器IP>:18080` 图形向导，S1→S10 十步全部 DONE。
-3. 三步验收：`systemctl is-active docker`、浏览器登录、用户机跑 client-lite 自检三项全 PASS。
+1. **（推荐）一次下载整合包**：`tianji-offline-bundle-1.0.0.zip`（1,765,044,444 B，sha256 `7332518f3cb594c329038c6ab4470f658d7d78a21e04c206ee402b03ca4320cf`）——内含两变体服务端 .run＋1.5GB 镜像 tar＋用户端 client-lite.zip＋SHA256SUMS.txt＋安装说明.txt，解压即可装，无需另取任何文件。
+2. 也可散件下载：`tianji-server-setup-kylin-uos-amd64-1.0.0.run`（99,968,027 B，sha256 `d1120fda71cfcdf6dfc8f90ab8522c96430f3c9e2985f497bb52fa8042ebac5f`）＋ `tianji-offline-images.tar`（1.5 GB，sha256 见 `offline/SHA256SUMS`）＋ `installer/client-lite/tianji-client-lite.zip`——三件必须在同一目录。
+3. 目标机先 `sha256sum -c SHA256SUMS.txt` 校验，再执行 `sudo sh <包>.run`，浏览器打开 `http://<服务器IP>:18080` 图形向导，S1→S10 十步全部 DONE。
+4. 三步验收：`systemctl is-active docker`、浏览器登录、用户机跑 client-lite 自检三项全 PASS。
 
 **详细步骤、门槛与排障见《离线部署手册》（`docs/离线部署手册.md`）。** 适用边界：目标机为麒麟 V10 SP3 / 统信 UOS 20 / Ubuntu 22.04+（amd64，真机验证覆盖麒麟与统信，Ubuntu 为变体 A 未真机验证）。
 
