@@ -624,7 +624,7 @@ Electron **只作为壳**，加载远程 SPA（`loadURL(config.baseUrl)`），**
 | 4 | `SHA256SUMS.txt` | < 5 KB | 含 1/2/3 + payload 全部文件 |
 | 5 | `SHA256SUMS.sig` | < 1 KB | 构建机签名 |
 | 6 | `现场部署手册.pdf`（或 .md） | < 1 MB | `offline/README.md` 节选 + 安装器截图 |
-| 7 | `tianji-client-lite.zip`（阶段一） | **≈ 5 MB** | 用户端一键配置器 |
+| 7 | `tianji-client-lite.zip`（阶段一） | **≈ 14 KB**【实测 13,686 B，1.0.0】 | 用户端一键配置器；构建脚本 `installer/build/build-client-lite.sh`（确定性打包 + UTF-8 文件名标志 + BOM 守卫 + G1/G2/G4 构建后验收）；判据与 `offline/smoke.sh` 同口径，成功/失败双路径已于 2026-11-10 在本机实测（IS_PASS: YES/NO，退出码 0/2） |
 | 8 | `tianji-desktop-setup-x64-1.0.0.exe`（阶段二） | **≈ 150 MB** | Electron |
 
 **单变体介质合计 ≈ 1.7 GB**（不含阶段二客户端）。
