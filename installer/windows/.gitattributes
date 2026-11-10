@@ -1,0 +1,6 @@
+# Windows 变体交付文件的换行约束（仅作用于本目录，口径与 client-lite 相同）
+#
+# .ps1 / .txt：Windows PowerShell 5.1 与记事本需要 CRLF；编码由文件自身 BOM 决定
+#       （.ps1 与 .txt 均为 UTF-8 with BOM，出包脚本另有 G2 前置守卫强制规范化）。
+*.ps1 text eol=crlf
+*.txt text eol=crlf

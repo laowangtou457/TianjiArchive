@@ -1,0 +1,93 @@
+天玑档案管理系统 · Windows 服务器部署包使用说明
+==================================================
+
+版本：windows 变体 1.0.0（对应服务端 1.0.0；2026-11-10 构建）
+设计文档：docs/Windows部署方案设计.md（仓库内）；本文件面向现场运维。
+
+一、这是什么
+  在 Windows 服务器上部署天玑档案管理系统服务端的离线安装包。
+  原理：用 Windows 自带的 WSL2（Windows Subsystem for Linux 2）跑一个
+  Ubuntu 22.04 发行版，服务端 8 个容器全部装在这个发行版里，与
+  Linux 版（ubuntu-debian / 麒麟统信）走完全相同的安装器与验收闸门。
+
+二、包内文件
+  tianji-windows-setup.ps1                 安装编排器（唯一要运行的脚本）
+  说明.txt                                 本文件
+  payload/SHA256SUMS.txt                   载荷校验清单（sha256）
+  payload/wsl.msi                          WSL2 离线安装包（微软官方）
+  payload/ubuntu-jammy-wsl-rootfs.tar.gz   Ubuntu 22.04 rootfs
+  payload/tianji-server-setup-ubuntu-debian-amd64-1.0.0.run  Linux 服务端安装器（原样复用）
+  （镜像 tar 不在本包内，分发口径与 Linux 变体一致——见离线交付整合包）
+
+三、支持的系统
+  Windows Server 2022（目标平台）/ Windows Server 2025 / Windows 11 /
+  Windows 10 21H2 及以后（build 19044+）。
+  不支持：Server 2019 / 2016、Win10 21H1 及更早。
+  硬性要求：BIOS 开启虚拟化（物理机 VT-x/AMD-V；虚拟机需嵌套虚拟化）、
+  内存 ≥ 8GB（建议 16GB）、系统盘剩余 ≥ 60GB。
+
+四、安装（三步）
+  1. 把整个 tianji-windows-setup 文件夹解压到【不含空格和中文】的路径，
+     例如 D:\tianji-setup\ 。
+  2. 以管理员身份打开 PowerShell：
+       右键开始菜单 → Windows PowerShell（管理员）
+  3. 执行：
+       cd D:\tianji-setup\tianji-windows-setup
+       powershell -ExecutionPolicy Bypass -File .\tianji-windows-setup.ps1
+
+  脚本会依次：载荷校验 → 预检 → 启用虚拟化组件 → 安装 WSL → 导入
+  Ubuntu → 启动服务端安装向导。走到「服务端安装」时，在【浏览器】打开：
+       http://localhost:18080
+  按向导完成安装（与 Linux 版界面完全相同，含断点续装）。
+
+  * 中途提示需要重启：重启电脑后重新运行同一条命令，安装自动从断点继续。
+  * 全程日志：C:\tianji\logs\ 。
+
+五、安装后
+  * 用户访问：http://<本机局域网IP>:8080 （8080 网页、8333 文件传输，
+    已由安装器配置端口转发与防火墙放行）。
+  * 开机自启：系统自动注册计划任务 TianjiArchive-Boot，开机后自动起栈
+    （含端口转发刷新），无需人工登录。
+  * 手工复查三项冒烟（与 Linux 版 smoke 同口径）：
+       浏览器开 http://localhost:8080/healthz          → 正文应为 ok
+       浏览器开 http://localhost:8080/api/health       → status=ok
+       命令行  Test-NetConnection 127.0.0.1 -Port 8333 → TcpTestSucceeded True
+
+六、常用运维命令
+  只跑预检（不动系统）：
+       powershell -ExecutionPolicy Bypass -File .\tianji-windows-setup.ps1 -PreflightOnly
+  刷新端口转发（WSL 重启后 IP 会变；计划任务每次开机自动做，一般不用手工）：
+       powershell -ExecutionPolicy Bypass -File .\tianji-windows-setup.ps1 -RefreshPortProxy
+  卸载（保留档案数据）：
+       powershell -ExecutionPolicy Bypass -File .\tianji-windows-setup.ps1 -Uninstall
+  卸载（连数据一起删，需输入 YES 确认，不可恢复）：
+       powershell -ExecutionPolicy Bypass -File .\tianji-windows-setup.ps1 -Uninstall -PurgeData
+  进入服务端容器层排障：
+       wsl -d TianjiArchive -u root
+       docker compose -f /opt/tianji/docker-compose.offline.yml --env-file /opt/tianji/.env ps
+
+七、常见问题
+  * 提示「不在支持矩阵」：你的 Windows 版本太旧（Server 2019/2016 或
+    Win10 21H1 以前），不支持 WSL2，请升级系统或改用 Linux 变体。
+  * 预检「虚拟化可用」FAIL：BIOS 里没开 VT-x/AMD-V（物理机），或虚拟机
+    没开嵌套虚拟化。开启后重跑。
+  * 提示找不到 wsl.exe：WSL 刚装完，PATH 未刷新。关掉 PowerShell 窗口
+    重新以管理员身份打开，重跑同一命令。
+  * 局域网其他机器打不开 8080：先在本机浏览器开
+    http://<本机IP>:8080/healthz 自测；本机通而别的机器不通，查网络
+    设备与域策略（防火墙规则名「TianjiArchive Web (8080)」）。
+  * 服务异常/起不来：看 C:\tianji\logs\boot-<日期>.log 与
+    wsl -d TianjiArchive -u root 内的 /opt/tianji/logs/boot.log。
+
+八、给运维的技术备注
+  * 为什么不是 Docker Desktop：DDE 对 250 人以上或年营收 1000 万美元
+    以上的单位需要付费授权，政企档案客户大概率命中；且 DDE 同样依赖
+    WSL2，本方案直接用 WSL2 + 开源 Docker（apt 闭包），零授权费。
+  * 端口转发原理：WSL2 默认 NAT 网络，本机 localhost 自动转发；
+    局域网访问靠 netsh portproxy（指向 WSL 动态 IP，开机自启任务会刷新）。
+    Windows 11 22H2+ 可选改用 mirrored 网络模式（见设计文档 §5.3）。
+  * 数据都在哪里：C:\tianji\wsl\ext4.vhdx 是发行版虚拟盘（含全部档案
+    数据、数据库、对象存储）。备份请按 Linux 版备份策略在系统内做，
+    另可整盘备份该 vhdx（停栈后拷贝）。
+  * 载荷校验：SHA256SUMS.txt 覆盖 payload 内全部文件，编排器 S0 逐项
+    重算，任何不一致直接拒绝安装（与 Linux 变体 G1 闸门同哲学）。
