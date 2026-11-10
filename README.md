@@ -67,6 +67,7 @@ pnpm -F api migration:run             # 建表
 | 文档 | 内容 |
 |---|---|
 | `产品需求文档.md` | 功能权威源（PRD v1.3-FINAL，含参数 5.5 封版） |
+| `代码索引.md` | 全部工程代码的模块级索引（apps/shared/installer 逐文件职责与查找路径） |
 | `系统架构设计.md` / `类图.mermaid` / `时序图.mermaid` | 架构、数据模型、关键流程 |
 | `SeaweedFS架构规格.md` | 对象存储方案 A（MinIO 替代）规格 |
 | `安装器总体设计.md` | 双安装包总体设计、S1~S10 语义、交付物表、审定 digest（§14.6） |
