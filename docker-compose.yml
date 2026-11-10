@@ -176,7 +176,9 @@ services:
     restart: unless-stopped
     command: >
       redis-server --appendonly yes
-      --maxmemory 512mb --maxmemory-policy allkeys-lru
+      --maxmemory 512mb --maxmemory-policy noeviction
+    # noeviction 是裁定口径（同 ccbebc2）：档案系统不许静默驱逐键，
+    # 内存压力显式报错 fail-closed；与离线交付 compose 保持一致。
     volumes:
       - ./volumes/redis:/data
     ports:

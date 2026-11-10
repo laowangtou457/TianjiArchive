@@ -628,8 +628,8 @@ export function BorrowPage(): ReactElement {
               InputLabelProps={{ shrink: true }}
             />
             <Alert severity="info">
-              秘密级档案需两级审批（档案管理员 → 系统管理员）；其余为一级审批。
-              申请人不得审批自己的单据。
+              秘密级档案需两级审批（档案管理员初审 → 领导/查档审批人终审）；其余为一级审批。
+              申请人不得审批自己的单据，两级须由不同审批人完成。
             </Alert>
             <Alert severity="info" icon={false}>
               {rules.hint ||
