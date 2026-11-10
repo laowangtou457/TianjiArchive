@@ -64,7 +64,7 @@ P0 阶段留下的不是空壳，是"两端实、中间空"。
 
 **A 档必须先补一个 chunker**：按段落/句号切 300~500 字、重叠 50 字，同时写入 `item_id` / `source_danghao` / `security_level`（从条目元数据带过来，**不能由 chunker 自己推断密级**）。触发点有两条：抽取完成事件（增量）、`/kb/reindex`（存量）。
 
-### D-2 向量空间不一致 —— **真缺陷，会导致排序完全无意义**
+### D-2 向量空间不一致 —— **真缺陷，会导致排序完全无意义** ✅ **已修（`0bbf744`）**
 
 | | 实现 | 哈希方式 | 贡献 | 归一化 |
 | --- | --- | --- | --- | --- |
@@ -81,7 +81,7 @@ score: this.cosine(vector, this.hashOf(r.chunk))
 
 > 这一条的处置有两条路：A 档里**删掉 `hashOf`，统一走 provider**（唯一正确解）；或者明确把 `retrieve()` 标 `@deprecated` 不接进主链路。推荐前者。
 
-### D-3 召回是"先取 500 条最新，再过滤权限" —— 逻辑错位 + 不可扩展
+### D-3 召回是"先取 500 条最新，再过滤权限" —— 逻辑错位 + 不可扩展 ✅ **已修（`0bbf744`）**
 
 `kb.service.ts:119`：
 
@@ -94,7 +94,9 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 1. **漏检**：若最近入库的 500 个 chunk 全属 SECRET，R2 用户的可访问片段根本进不了窗口 → **稳定返回 0 命中**，且前端会显示"无依据"，属于**假阴性**。
 2. **不可扩展**：全表扫 + 内存余弦，10 万 chunk 级别就顶不住；档案系统的正文量级远超此数。
 
-**正确形态**：权限条件下推为检索约束（ES kNN 的 `filter` 子句 / SQL `WHERE`），让"取 topK"发生在"已过滤集合"内 —— 顺序必须反过来。`AccessFilterBuilder` 已经能产出 ES filter（主检索在用），复用它即可。
+**修复处置（`0bbf744`）**：权限条件经 `applyAccessFilter` 下推为 SQL（与主检索同一入口，防漂移），逐页扫描（256/页）在"已过滤集合"内取 topK；召回改为 `JOIN archive_item` 取密级与数据范围，杜绝"条目改密级、片段留旧值"的静默越权。回归用例含"600 条全 SECRET + 唯一 PUBLIC"的假阴性场景。
+
+> 遗留（未修，单独登记）：`applyAccessFilter` 对 ORG 范围会生成 `"org_id"` 条件，而 `archive_item` 无该列（机构归属实际在 `volume.org_id`）。这是**主检索同款既有缺口**，仅在用户存在 ORG 型数据范围授权时触发；建议单独立项修，不在 kb 模块内私修以免两套口径。
 
 ### D-4 没有推理/向量化运行时（能力缺口）
 
@@ -102,11 +104,12 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 - 硬件门槛**无 CPU 核数条目、无 GPU 条目**；内存 K10 = `≥8GB（建议 16GB）`（`安装器总体设计.md:319`）。
 - 结论：**闭网内只能走 CPU 推理**，且现有门槛没有为推理预留余量。
 
-### 附：另有两个"骨架未闭环"的观察（不影响可行性，但影响工程量估算）
+### 附：三处"骨架未闭环"（✅ 均已于 `0bbf744` 收口）
 
-- `EsVectorStore`（`vector.store.ts`）**注册了 provider 但从未被注入** —— `KbService` 直接用 `entryRepo`（`kb.service.ts:49`）。该类的 `search()` 对所有命中返回 `score: 0`（`vector.store.ts:53`）。**抽象层是死代码。**
-- `EMBEDDING_PROVIDER` 令牌（`embedding.provider.ts:25`）**全仓零引用** —— `KbService` 注入的是具体类 `LocalHashEmbeddingProvider`（`:51`）。想换模型必须改代码，不是改配置。
-- KB 模块**零测试**：`apps/api/__tests__/` 22 个 spec，无一覆盖 kb。
+- `EsVectorStore`（`vector.store.ts`）**注册了 provider 但从未被注入** —— `KbService` 直接用 `entryRepo`（`kb.service.ts:49`）。该类的 `search()` 对所有命中返回 `score: 0`（`vector.store.ts:53`）。**抽象层曾是死代码** → 现真正被调用，打分改为真实余弦。
+- `EMBEDDING_PROVIDER` 令牌（`embedding.provider.ts:25`）**全仓零引用** —— `KbService` 注入的是具体类 `LocalHashEmbeddingProvider`（`:51`）。想换模型必须改代码，不是改配置 → 现两个实现均经令牌注入，换模型只改 `kb.module.ts` 一处 wiring。
+- KB 模块**零测试**：`apps/api/__tests__/` 22 个 spec，无一覆盖 kb → 新增 `kb.retrieval.spec.ts`（16 例），全量 459/459。
+- 另修一处**伪造完成态**：`reindex()` 旧实现把 `embedding_status` 改成 `OK` 却不做任何向量化。现改为"无片段返回 0、不动状态位、WARN 说明 chunk 生产者未实现"。
 
 ---
 
@@ -176,11 +179,12 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 
 ## 6. 建议的下一步（按顺序）
 
-1. **先修 D-2 + D-3，不必等立项**。这两条是**既有代码的缺陷**，与"要不要做 RAG"无关：向量空间混用、召回窗口错位，都属"看起来能用其实不能用"，留着比没有更危险。
-2. **A 档立项**：补 chunker + ES `dense_vector` 迁移 + 权限下推 + KB 单测。判据清晰、无硬件影响、可独立验收。
+1. ~~先修 D-2 + D-3，不必等立项~~ → **已完成**（`0bbf744`）：向量空间统一、权限下推 SQL、`EsVectorStore` 与令牌接线收口、16 例回归 + 变异探针。这两条本就是既有代码缺陷，与"要不要做 RAG"无关。
+2. **A 档立项**：补 chunker + ES `dense_vector` 迁移 + kNN 检索。判据清晰、无硬件影响、可独立验收。**（已立项，见《RAG知识库立项书》`TJ-RAG-01`；但 G-1~G-3 未闭合，未开工）**
 3. **B 档先做硬件复核**，再谈实现：目标机实际内存分布、CPU 是否支持 AVX2、7B q4 的实际 tokens/s。**硬件没结论之前不写 B 档代码。**
 4. **交付面裁定**：模型包是否独立分发 —— 建议独立，理由同 §7.1。
 5. **PRD 补两条边界**：①RAG 答案不作为档案凭证；②模型包可选，缺失时降级为 A 档能力。避免现场预期错位。
+6. **ORG 范围缺口单独立项**：`archive_item` 无 `org_id`，ORG 型数据范围授权会在主检索与 kb 同时失效。与 RAG 无关，但会被 RAG 继承。
 
 ---
 
@@ -199,3 +203,4 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 | 版本 | 日期 | 内容 |
 | --- | --- | --- |
 | v1.0 | 2026-11-10 | 首版：地基盘点（含 2 个代码缺陷 D-2/D-3 定位到行）、四缺口、三档路径、F-22 判据对照、模型包独立分发建议 |
+| v1.1 | 2026-11-10 | **D-2/D-3 已修**（`0bbf744`）：补修复处置与验证证据；三处骨架未闭环（死代码 / 令牌零引用 / 零测试）+ `reindex` 伪造完成态 一并收口；新增 ORG 范围缺口登记（`archive_item` 无 `org_id`，主检索同款，待单独立项） |
