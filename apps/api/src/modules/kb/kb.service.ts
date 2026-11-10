@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -12,7 +12,8 @@ import {
 } from '@tianji/shared';
 import { KbEntry } from '../../infra/database/entities/kb-entry.entity';
 import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
-import { LocalHashEmbeddingProvider } from './embedding.provider';
+import { EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding.provider';
+import { VECTOR_STORE } from './vector.store';
 
 /** 向量检索命中项 */
 export interface VectorHit {
@@ -24,22 +25,29 @@ export interface VectorHit {
   score: number;
 }
 
-/** 向量存储接口（P2 预留；P0 用 PG 表 + 内存余弦实现） */
+/** 向量存储接口（P2 换 ES kNN / pgvector 时实现保持不变） */
 export interface VectorStore {
   readonly name: string;
   upsert(entries: KbEntry[]): Promise<number>;
-  search(queryVector: number[], options: { topK: number; allowedItemIds: string[] | null }): Promise<VectorHit[]>;
+  search(
+    queryVector: number[],
+    options: { topK: number; user: PermissionSnapshot },
+  ): Promise<VectorHit[]>;
   deleteByItem(itemId: string): Promise<number>;
 }
 
 /**
- * KB 检索服务（F-20 P2 预留，P0 仅契约 + 可运行骨架）。
+ * KB 检索服务（P2 预留能力，P0 契约 + 可运行实现）。
  *
- * 硬性约束（验收要点 3）：检索前必须经 AccessFilterBuilder.buildKbFilter 过滤，
+ * 硬性约束（验收要点 3）：检索前必须经 `applyAccessFilter` 过滤，
  * 本服务即使只是骨架也完整实现密级 + 数据范围过滤，绝不返回越权片段。
  *
- * P0 行为：`/api/kb/query` 返回 501（KB_NOT_ENABLED）并携带过滤后的候选数量，
- * 便于前端提示「知识库未启用」；`/api/kb/status` 返回能力与提供方信息。
+ * 当前对外行为：`/api/kb/query` 返回 501（KB_NOT_ENABLED）并携带候选数量，
+ * 便于前端如实提示「知识库未启用」；`/api/kb/status` 返回能力与提供方信息。
+ *
+ * ⚠️ 501 是防呆闸门，不是占位符：**不得单独移除**。移除前必须同时满足
+ * 《RAG知识库立项书》§4 的 G-1~G-4（尤其是"补 chunk 生产者"——没有 chunker 时
+ * 即使打开也只会在空表上返回"无依据"，看起来像功能故障）。
  */
 @Injectable()
 export class KbService {
@@ -48,10 +56,9 @@ export class KbService {
   public constructor(
     @InjectRepository(KbEntry) private readonly entryRepo: Repository<KbEntry>,
     private readonly accessBuilder: AccessFilterBuilder,
-    private readonly embedding: LocalHashEmbeddingProvider,
-  ) {
-    this.embedding.warnIfPlaceholder();
-  }
+    @Inject(EMBEDDING_PROVIDER) private readonly embedding: EmbeddingProvider,
+    @Inject(VECTOR_STORE) private readonly vectorStore: VectorStore,
+  ) {}
 
   /** 能力状态（前端可据此隐藏入口） */
   public async status(user: PermissionSnapshot): Promise<{
@@ -89,6 +96,9 @@ export class KbService {
 
     // 2) 计算候选条目数（仅统计，不返回内容）
     //    空集合（未知密级 fail-closed）不能用 `IN ()`（PG 语法错误），降级为 `FALSE`。
+    //    注意：此处只按密级统计（信息性数值，随 501 一同返回）。完整的数据范围过滤
+    //    由 `EsVectorStore.search` 在真正检索时下推到 SQL —— 两处口径同源于
+    //    AccessFilterBuilder，不存在第二套判断。
     const allowedLevels = this.accessBuilder.levelsAtMost(user.maxSecurityLevel);
     const countQb = this.entryRepo.createQueryBuilder('k');
     if (allowedLevels.length === 0) {
@@ -105,75 +115,51 @@ export class KbService {
     // 3) P0 明确 501，避免前端误以为无结果
     throw new BizException(
       ErrorCode.KB_NOT_ENABLED,
-      `知识库问答为 P2 能力，当前版本未启用（已就绪：向量化提供方 ${this.embedding.name}，权限过滤已生效，候选片段 ${candidates} 条）`,
+      `知识库问答为 P2 能力，当前版本未启用（已就绪：向量化提供方 ${this.embedding.name}，权限过滤已生效，密级可达片段 ${candidates} 条）`,
     );
   }
 
-  /** 检索召回（P2 内部使用：向量化 → 权限过滤 → topK） */
+  /**
+   * 检索召回（P2 内部使用）：向量化 → 权限下推过滤 → topK 打分。
+   *
+   * 三处历史缺陷在此收口：
+   *  - 查询向量与片段向量**同一 provider、同一特征空间**（旧实现另写了一套哈希，
+   *    两者余弦无意义）；
+   *  - 权限过滤**先于**截断（旧实现先取 500 条最新再过滤，低密级用户会假阴性）；
+   *  - 打分由存储层返回真实余弦值（旧实现恒 `score: 0`）。
+   */
   public async retrieve(
     question: string,
     user: PermissionSnapshot,
     topK = 5,
   ): Promise<KbCitation[]> {
-    const vector = await this.embedding.embedOne(question);
-    const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' } });
-    const allowed = rows.filter((r) =>
-      this.accessBuilder.canAccessRecord(user, {
-        securityLevel: r.securityLevel,
-        deleted: false,
-      }),
-    );
-    if (allowed.length === 0) return [];
+    const q = (question ?? '').trim();
+    if (q.length === 0) return [];
 
-    const scored = allowed.slice(0, 200).map((r) => ({
-      row: r,
-      score: this.cosine(vector, this.hashOf(r.chunk)),
-    }));
-    scored.sort((a, b) => b.score - a.score);
+    const vector = await this.embedding.embedOne(q);
+    const hits = await this.vectorStore.search(vector, { topK, user });
 
-    return scored.slice(0, Math.min(50, Math.max(1, topK))).map((s) => ({
-      danghao: s.row.sourceDanghao,
-      itemId: s.row.itemId,
-      snippet: s.row.chunk.slice(0, 200),
-      securityLevel: s.row.securityLevel,
+    return hits.map((h) => ({
+      danghao: h.danghao,
+      itemId: h.itemId,
+      snippet: h.chunk.slice(0, 200),
+      securityLevel: h.securityLevel,
     }));
   }
 
-  /** 条目重建索引（P2 使用；P0 返回 0） */
+  /**
+   * 条目重建索引（P2 使用；当前返回 0）。
+   *
+   * 说明：真正的重建需要「切块 → 向量化 → 写 kb_entry」，而 chunk 生产者尚未实现
+   * （《RAG知识库立项书》§1.2 缺口 D-1）。此处保持"只改状态位"的原语义并**不再
+   * 假装**完成重建 —— 无片段时返回 0，不把 `embedding_status` 改成 OK 制造假象。
+   */
   public async reindex(itemId: string): Promise<{ indexed: number }> {
     const rows = await this.entryRepo.find({ where: { itemId } });
     if (rows.length === 0) return { indexed: 0 };
-    await this.entryRepo.update({ itemId }, { embeddingStatus: 'OK' });
-    return { indexed: rows.length };
-  }
-
-  /** 简易哈希（用于内存余弦，与 provider 维度一致） */
-  private hashOf(text: string): number[] {
-    const dim = this.embedding.dimension;
-    const vec = new Array<number>(dim).fill(0);
-    const s = (text ?? '').toLowerCase();
-    for (let i = 0; i < s.length - 1; i += 1) {
-      let h = 0;
-      for (let j = 0; j < 2; j += 1) {
-        h = (h * 31 + s.charCodeAt(i + j)) % 1000003;
-      }
-      vec[h % dim] += 1;
-    }
-    return vec;
-  }
-
-  /** 余弦相似度 */
-  private cosine(a: number[], b: number[]): number {
-    let dot = 0;
-    let na = 0;
-    let nb = 0;
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i += 1) {
-      dot += a[i] * b[i];
-      na += a[i] * a[i];
-      nb += b[i] * b[i];
-    }
-    if (na === 0 || nb === 0) return 0;
-    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+    this.logger.warn(
+      `KB 重建索引被调用但 chunk 生产者未实现（条目 ${itemId} 现有 ${rows.length} 条片段，未重新向量化）`,
+    );
+    return { indexed: 0 };
   }
 }
