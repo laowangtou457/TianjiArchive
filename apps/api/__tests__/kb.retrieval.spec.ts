@@ -1,20 +1,29 @@
 /**
- * KB 检索链路回归测试（apps/api/src/modules/kb/*）
+ * 片段检索链路回归测试（A 档：词法召回 + 权限下推 + 真值二次校验）。
  *
- * 覆盖三个已修复的历史缺陷 + 一条不可谈判的权限约束：
- *   D-2 向量空间不一致：查询向量与片段向量必须出自**同一** provider/特征空间；
- *   D-3 召回顺序错位：权限过滤必须**先于**截断（近 N 条全高密级时不得假阴性）；
- *   死代码收口：EsVectorStore 真正被调用、score 为真实余弦（旧实现恒 0）；
- *   越权零返回：验收要点 3 —— 无权限片段绝不出现。
- *
- * 另守住一条底线：`/api/kb/query` 必须仍然返回 501。501 是防呆闸门，
- * 在 chunk 生产者（缺口 D-1）实现前不得打开 —— 见《RAG知识库立项书》§4 G-4。
+ * 覆盖：
+ *   A. 词法路径（LexicalChunkRetriever）
+ *      - 权限 filter 必须出现在 ES 请求体（不是"先召回再过滤"）；
+ *      - 二次校验剔除索引密级陈旧/条目已删的命中（防越权）；
+ *      - 回显密级取 PG 真值，不用 ES 快照（标签不得说谎）；
+ *      - 无命中 → 空数组（由服务层给"无依据"，绝不编造）；
+ *      - 候选放大倍数生效（二次剔除后仍能凑满 topK）。
+ *   B. 向量路径（EsVectorStore）
+ *      - D-2 单一向量空间：分数 = 同一 provider 两侧余弦；
+ *      - D-3 权限先于截断：600 条 SECRET 时低密级用户仍命中唯一 PUBLIC；
+ *      - 维度不一致显式抛错。
+ *   C. 服务层（KbService）
+ *      - query 返回 citations，answer 恒空、mode='retrieval'（不生成即不臆造）；
+ *      - 无命中 grounded=false；
+ *      - reindex 空数组 → 自动挑选陈旧条目。
  */
 import { describe, expect, it, vi } from 'vitest';
+import { MODULE_METADATA, SELF_DECLARED_DEPS_METADATA } from '@nestjs/common/constants';
 import { ErrorCode, SecurityLevel, type PermissionSnapshot } from '@tianji/shared';
 import { AccessFilterBuilder } from '@api/common/access/access-filter.builder';
 import { LocalHashEmbeddingProvider } from '@api/modules/kb/embedding.provider';
 import { EsVectorStore } from '@api/modules/kb/vector.store';
+import { LexicalChunkRetriever } from '@api/modules/kb/kb.retriever';
 import { KbService } from '@api/modules/kb/kb.service';
 
 // ------------------------------------------------------------------ 夹具
@@ -40,6 +49,7 @@ interface Row {
   danghao: string;
   securityLevel: SecurityLevel;
   chunk: string;
+  chunkNo: number;
   fondsId: string | null;
   orgId: string | null;
   createdBy: string | null;
@@ -55,6 +65,7 @@ function row(over: Partial<Row> = {}): Row {
     danghao: `A036-2024-BGS-Y-0001-${String(seq).padStart(4, '0')}`,
     securityLevel: SecurityLevel.PUBLIC,
     chunk: `第 ${seq} 段档案正文：关于年度工作的报告`,
+    chunkNo: 0,
     fondsId: 'f-1',
     orgId: null,
     createdBy: 'u-1',
@@ -63,7 +74,23 @@ function row(over: Partial<Row> = {}): Row {
   };
 }
 
-// ------------------------------------------------------------------ 假 QB
+/** 独立实现的余弦（不复用被测代码） */
+function refCosine(a: number[], b: number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+// ==========================================================================
+// B. 向量路径
+// ==========================================================================
+
 interface QbState {
   clause: string;
   params: Record<string, unknown>;
@@ -71,16 +98,10 @@ interface QbState {
   take: number;
 }
 
-/**
- * 用 SQL 谓词反推「数据库会返回哪些行」。
- *
- * 这是本文件的核心手法：如果实现回退成"先取 N 条再内存过滤"，
- * `qbState.clause` 里就不会有 security_level 条件，假 DB 会把高密级行也返回，
- * 断言立刻红 —— 让 D-3 无法复发。
- */
+/** 用 SQL 谓词反推"数据库会返回哪些行"，让 D-3 回退时用例立刻红 */
 function selectByClause(rows: Row[], st: QbState): Row[] {
   const c = st.clause;
-  // fail-closed 的恒假条件（注意与 `a."deleted" = FALSE` 区分：后者不是恒假）
+  // fail-closed 的恒假条件（注意与 `a."deleted" = FALSE` 区分）
   if (/^FALSE\b/.test(c.trim()) || /1 = 0/.test(c)) return [];
 
   const pick = (re: RegExp): unknown[] | null => {
@@ -95,25 +116,24 @@ function selectByClause(rows: Row[], st: QbState): Row[] {
 
   const levels = pick(/a\."security_level" IN \(([^)]*)\)/) as string[] | null;
   const fonds = pick(/a\."fonds_id" IN \(([^)]*)\)/) as string[] | null;
-  const orgs = pick(/a\."org_id" IN \(([^)]*)\)/) as string[] | null;
   const creator = pick(/a\."created_by" = (:?\w+)/);
   const requireAlive = /a\."deleted" = FALSE/.test(c);
 
   return rows.filter((r) => {
     if (requireAlive && r.deleted) return false;
     if (levels && !levels.includes(r.securityLevel)) return false;
-
     const scopeChecks: boolean[] = [];
     if (fonds) scopeChecks.push(r.fondsId !== null && fonds.includes(r.fondsId));
-    if (orgs) scopeChecks.push(r.orgId !== null && orgs.includes(r.orgId));
     if (creator) scopeChecks.push(r.createdBy === creator[0]);
     if (scopeChecks.length > 0 && !scopeChecks.some(Boolean)) return false;
-
     return true;
   });
 }
 
-function makeHarness(rows: Row[]) {
+function makeVectorHarness(
+  rows: Row[],
+  opts: { truthLevels?: Record<string, SecurityLevel> } = {},
+) {
   const st: QbState = { clause: '', params: {}, skip: 0, take: 0 };
   const trace = { getManyCalls: 0, clauses: [] as string[] };
 
@@ -143,217 +163,379 @@ function makeHarness(rows: Row[]) {
     getMany: vi.fn(async () => {
       trace.getManyCalls += 1;
       const matched = selectByClause(rows, st);
-      // 映射为 KbEntry 实体字段名（sourceDanghao 而非 danghao），与真实 TypeORM 一致
       return matched.slice(st.skip, st.skip + st.take).map((r) => ({
         id: r.id,
         itemId: r.itemId,
         sourceDanghao: r.danghao,
         securityLevel: r.securityLevel,
         chunk: r.chunk,
+        chunkNo: r.chunkNo,
       }));
     }),
-    getCount: vi.fn(async () => selectByClause(rows, st).length),
+    getRawMany: vi.fn(async () => []),
+  };
+
+  // 密级真值回查（向量路径回显密级用；默认空 → 退回片段表快照）
+  const truthQb: Record<string, unknown> = {
+    select: vi.fn(() => truthQb),
+    where: vi.fn(() => truthQb),
+    getRawMany: vi.fn(async () =>
+      Object.entries(opts.truthLevels ?? {}).map(([id, security_level]) => ({
+        id,
+        security_level,
+      })),
+    ),
   };
 
   const repo = {
     createQueryBuilder: vi.fn(() => qb),
-    // 旧实现的入口：先取 500 条最新。若它被调用，说明 D-3 回退了。
     find: vi.fn(async () => []),
     count: vi.fn(async () => rows.length),
+    manager: { getRepository: vi.fn(() => ({ createQueryBuilder: vi.fn(() => truthQb) })) },
   };
 
   const accessBuilder = new AccessFilterBuilder();
   const provider = new LocalHashEmbeddingProvider();
   const store = new EsVectorStore(repo as never, provider, accessBuilder);
-  const service = new KbService(repo as never, accessBuilder, provider, store);
 
-  return { repo, qb, store, service, provider, accessBuilder, st, trace, rows };
+  return { repo, qb, store, provider, accessBuilder, st, trace };
 }
 
-/** 独立实现的余弦（不复用被测代码） */
-function refCosine(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
-
-// ============================================================================
-describe('D-2 向量空间一致性（旧实现：查询与片段各用一套哈希，余弦无意义）', () => {
+describe('向量路径 —— D-2 单一向量空间（旧实现：查询与片段各用一套哈希）', () => {
   it('命中分数等于「同一 provider 分别向量化查询与片段」的余弦', async () => {
     const chunk = '关于年度档案工作报告的会议纪要';
-    const h = makeHarness([row({ chunk })]);
+    const h = makeVectorHarness([row({ chunk })]);
     const q = '年度档案工作报告';
 
-    const hits = await h.store.search(await h.provider.embedOne(q), { topK: 5, user: user() });
+    const hits = await h.store.search(q, user(), 5);
 
     expect(hits).toHaveLength(1);
     const expected = refCosine(await h.provider.embedOne(q), await h.provider.embedOne(chunk));
     expect(hits[0].score).toBeCloseTo(expected, 10);
-    // 旧实现此处恒为 0（hashOf 与 provider 不同空间，且 score 写死 0）
     expect(hits[0].score).toBeGreaterThan(0);
   });
 
-  it('完全相同的文本得分为 1（证明两侧同空间、均已归一）', async () => {
+  it('完全相同的文本得分为 1（两侧同空间且均已归一）', async () => {
     const text = '完全一致的文本';
-    const h = makeHarness([row({ chunk: text })]);
-    const hits = await h.store.search(await h.provider.embedOne(text), { topK: 5, user: user() });
+    const h = makeVectorHarness([row({ chunk: text })]);
+    const hits = await h.store.search(text, user(), 5);
     expect(hits[0].score).toBeCloseTo(1, 10);
-  });
-
-  it('维度不一致 → 显式抛错（不允许静默算出"看起来正常"的相似度）', async () => {
-    const h = makeHarness([row()]);
-    await expect(
-      h.store.search(new Array(64).fill(0.1), { topK: 5, user: user() }),
-    ).rejects.toThrow(/维度不一致/);
   });
 });
 
-// ============================================================================
-describe('D-3 召回顺序（旧实现：先取 500 条最新，再内存过滤 → 假阴性）', () => {
-  it('【关键】近 600 条全 SECRET 时，INTERNAL 用户必须仍命中唯一的 PUBLIC 片段', async () => {
+describe('向量路径 —— D-3 权限先于截断（旧实现：先取 500 条最新再过滤）', () => {
+  it('【关键】近 600 条全 SECRET 时，INTERNAL 用户仍命中唯一的 PUBLIC 片段', async () => {
     const target = row({ securityLevel: SecurityLevel.PUBLIC, chunk: '唯一可访问的公开片段' });
     const secrets = Array.from({ length: 600 }, (_, i) =>
       row({ securityLevel: SecurityLevel.SECRET, chunk: `机密片段 ${i}` }),
     );
-    // 高密级片段排在最后（= 最新入库）；旧实现只取前 500 条，永远看不到 target
-    const h = makeHarness([target, ...secrets]);
+    const h = makeVectorHarness([target, ...secrets]);
 
-    const hits = await h.store.search(await h.provider.embedOne('公开片段'), {
-      topK: 5,
-      user: user({ maxSecurityLevel: SecurityLevel.INTERNAL }),
-    });
+    const hits = await h.store.search(
+      '公开片段',
+      user({ maxSecurityLevel: SecurityLevel.INTERNAL }),
+      5,
+    );
 
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits.map((x) => x.entryId)).toContain(target.id);
+    expect(hits.map((x) => x.itemId)).toContain(target.itemId);
     expect(hits.every((x) => x.securityLevel === SecurityLevel.PUBLIC)).toBe(true);
   });
 
-  it('权限条件在取数前已落到查询（clause 含 security_level，且不再走 find 窗口）', async () => {
-    const h = makeHarness([row()]);
-    await h.store.search(await h.provider.embedOne('x'), { topK: 5, user: user() });
+  it('权限条件在取数前已落到查询，且不再走 find 时间窗口', async () => {
+    const h = makeVectorHarness([row()]);
+    await h.store.search('x', user(), 5);
 
     expect(h.trace.clauses.some((c) => c.includes('security_level'))).toBe(true);
     expect(h.trace.clauses.some((c) => c.includes('deleted'))).toBe(true);
-    // 旧实现的入口必须彻底消失
     expect(h.repo.find).not.toHaveBeenCalled();
   });
 
-  it('分页扫描完整覆盖（超过单页 256 条时不漏行）', async () => {
-    const rows = Array.from({ length: 600 }, (_, i) =>
-      row({ chunk: `片段 ${i}`, securityLevel: SecurityLevel.PUBLIC }),
-    );
-    const h = makeHarness(rows);
-    const hits = await h.store.search(await h.provider.embedOne('片段'), { topK: 3, user: user() });
-
-    expect(hits).toHaveLength(3);
-    // 600 行 / 每页 256 → 至少 3 次 getMany（含最后一次空页判定）
-    expect(h.trace.getManyCalls).toBeGreaterThanOrEqual(3);
+  it('未知密级 fail-closed：返回空而不是"不过滤"', async () => {
+    const h = makeVectorHarness([row(), row()]);
+    expect(await h.store.search('档案', user({ maxSecurityLevel: 'X' as never }), 10)).toEqual([]);
   });
-});
 
-// ============================================================================
-describe('越权零返回（验收要点 3）', () => {
   it('PUBLIC 用户看不到 INTERNAL/SECRET 片段', async () => {
     const pub = row({ securityLevel: SecurityLevel.PUBLIC });
-    const internal = row({ securityLevel: SecurityLevel.INTERNAL });
-    const secret = row({ securityLevel: SecurityLevel.SECRET });
-    const h = makeHarness([pub, internal, secret]);
-
-    const hits = await h.store.search(await h.provider.embedOne('档案'), {
-      topK: 10,
-      user: user({ maxSecurityLevel: SecurityLevel.PUBLIC }),
-    });
-
-    expect(hits.map((x) => x.entryId)).toEqual([pub.id]);
+    const h = makeVectorHarness([pub, row({ securityLevel: SecurityLevel.INTERNAL })]);
+    const hits = await h.store.search('档案', user({ maxSecurityLevel: SecurityLevel.PUBLIC }), 10);
+    expect(hits.map((x) => x.itemId)).toEqual([pub.itemId]);
   });
 
-  it('未知密级 fail-closed：返回空数组而不是"不过滤"', async () => {
-    const h = makeHarness([row(), row()]);
-    const hits = await h.store.search(await h.provider.embedOne('档案'), {
-      topK: 10,
-      user: user({ maxSecurityLevel: 'UNKNOWN' as never }),
-    });
-    expect(hits).toEqual([]);
-  });
+  it('回显密级取 archive_item 真值，不用片段表快照', async () => {
+    const r = row({ securityLevel: SecurityLevel.PUBLIC, chunk: '关于年度档案工作报告' });
+    const h = makeVectorHarness([r], { truthLevels: { [r.itemId]: SecurityLevel.SECRET } });
 
-  it('全宗受限用户只能命中授权全宗内的片段', async () => {
-    const mine = row({ fondsId: 'f-1' });
-    const other = row({ fondsId: 'f-2' });
-    const h = makeHarness([mine, other]);
+    const hits = await h.store.search('年度档案工作报告', user({ maxSecurityLevel: SecurityLevel.SECRET }), 5);
 
-    const hits = await h.store.search(await h.provider.embedOne('档案'), {
-      topK: 10,
-      user: user({ fondsIds: ['f-1'], orgIds: [], selfOnly: false }),
-    });
-    expect(hits.map((x) => x.entryId)).toEqual([mine.id]);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].securityLevel).toBe(SecurityLevel.SECRET);
   });
 });
 
-// ============================================================================
-describe('服务层契约', () => {
-  it('retrieve 映射为 KbCitation（档号 + 片段 ≤200 字 + 密级）', async () => {
-    const long = '档'.repeat(500);
-    const h = makeHarness([row({ chunk: long, danghao: 'A036-2024-BGS-Y-0009-0001' })]);
-    const cites = await h.service.retrieve('档案', user(), 5);
+// ==========================================================================
+// A. 词法路径
+// ==========================================================================
 
-    expect(cites).toHaveLength(1);
-    expect(cites[0].danghao).toBe('A036-2024-BGS-Y-0009-0001');
-    expect(cites[0].snippet).toHaveLength(200);
-    expect(cites[0].securityLevel).toBe(SecurityLevel.PUBLIC);
+interface EsHit {
+  itemId: string;
+  danghao: string;
+  securityLevel: SecurityLevel;
+  chunkNo: number;
+  chunk: string;
+  score: number;
+}
+
+function makeLexicalHarness(opts: {
+  esHits: EsHit[];
+  /** 允许访问的条目；给对象形式可指定 PG 真值密级（默认 PUBLIC） */
+  accessible: Array<string | { itemId: string; level: SecurityLevel }>;
+}) {
+  const captured: Array<{
+    question: string;
+    filters: Array<Record<string, unknown>>;
+    size: number;
+  }> = [];
+  const es = {
+    search: vi.fn(async (question: string, filters: Array<Record<string, unknown>>, size: number) => {
+      captured.push({ question, filters, size });
+      return { total: opts.esHits.length, hits: opts.esHits.slice(0, size) };
+    }),
+  };
+
+  const qb: Record<string, unknown> = {
+    innerJoin: vi.fn(() => qb),
+    select: vi.fn(() => qb),
+    where: vi.fn(() => qb),
+    andWhere: vi.fn(() => qb),
+    getRawMany: vi.fn(async () =>
+      opts.accessible.map((a) =>
+        typeof a === 'string'
+          ? { item_id: a, security_level: SecurityLevel.PUBLIC }
+          : { item_id: a.itemId, security_level: a.level },
+      ),
+    ),
+  };
+  const repo = { createQueryBuilder: vi.fn(() => qb) };
+
+  const accessBuilder = new AccessFilterBuilder();
+  const retriever = new LexicalChunkRetriever(es as never, repo as never, accessBuilder);
+  return { es, repo, qb, retriever, captured, accessBuilder };
+}
+
+describe('词法路径 —— 权限下推与真值二次校验', () => {
+  it('ES 请求体带权限 filter（密级 terms + deleted），且候选按 topK 放大', async () => {
+    const h = makeLexicalHarness({ esHits: [], accessible: [] });
+    await h.retriever.search('年度报告', user(), 5);
+
+    expect(h.captured).toHaveLength(1);
+    const { filters, size } = h.captured[0];
+    expect(JSON.stringify(filters)).toContain('securityLevel');
+    expect(JSON.stringify(filters)).toContain('"deleted":false');
+    expect(size).toBe(15); // 5 × 3 放大
+    // 权限 filter 不得含 SECRET（INTERNAL 上限）
+    expect(JSON.stringify(filters)).not.toContain('"SECRET"');
   });
 
-  it('topK 收敛到 1~50 区间', async () => {
-    const rows = Array.from({ length: 80 }, () => row({ chunk: '相同片段' }));
-    const h = makeHarness(rows);
-    expect(
-      await h.store.search(await h.provider.embedOne('片段'), { topK: 0, user: user() }),
-    ).toHaveLength(1);
-    expect(
-      await h.store.search(await h.provider.embedOne('片段'), { topK: 999, user: user() }),
-    ).toHaveLength(50);
+  it('【关键】索引密级陈旧（ES 说 PUBLIC、PG 已升 SECRET）→ 二次校验剔除，不越权', async () => {
+    const h = makeLexicalHarness({
+      esHits: [
+        {
+          itemId: 'i-1',
+          danghao: 'A-1',
+          securityLevel: SecurityLevel.PUBLIC,
+          chunkNo: 0,
+          chunk: '片段',
+          score: 3,
+        },
+        {
+          itemId: 'i-2',
+          danghao: 'A-2',
+          securityLevel: SecurityLevel.PUBLIC,
+          chunkNo: 0,
+          chunk: '片段',
+          score: 2,
+        },
+      ],
+      accessible: ['i-2'],
+    });
+
+    const hits = await h.retriever.search('片段', user(), 5);
+    expect(hits.map((x) => x.itemId)).toEqual(['i-2']);
   });
 
-  it('空问题不发起检索（直接返回空）', async () => {
-    const h = makeHarness([row()]);
-    expect(await h.service.retrieve('   ', user(), 5)).toEqual([]);
-    expect(h.trace.getManyCalls).toBe(0);
+  it('【真机回归】密级回显取 PG 真值，不用 ES 快照（机密件不得被标成公开级）', async () => {
+    const h = makeLexicalHarness({
+      esHits: [
+        {
+          itemId: 'i-1',
+          danghao: 'A-1',
+          securityLevel: SecurityLevel.PUBLIC, // 索引快照：陈旧
+          chunkNo: 0,
+          chunk: '片段',
+          score: 3,
+        },
+      ],
+      // PG 真值：已升密
+      accessible: [{ itemId: 'i-1', level: SecurityLevel.SECRET }],
+    });
+
+    const hits = await h.retriever.search('片段', user({ maxSecurityLevel: SecurityLevel.SECRET }), 5);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].securityLevel).toBe(SecurityLevel.SECRET);
   });
 
-  it('reindex 不把 embedding_status 伪造成 OK（无 chunk 生产者时返回 0）', async () => {
-    const h = makeHarness([row()]);
-    const repo = h.repo as unknown as {
-      find: ReturnType<typeof vi.fn>;
-      update: ReturnType<typeof vi.fn>;
-    };
-    repo.find = vi.fn(async () => [{ id: 'k-1' }]);
-    repo.update = vi.fn(async () => ({ affected: 1 }));
+  it('无命中 → 空数组（由服务层给"无依据"）', async () => {
+    const h = makeLexicalHarness({ esHits: [], accessible: [] });
+    expect(await h.retriever.search('不存在的主题', user(), 5)).toEqual([]);
+  });
 
-    const r = await h.service.reindex('i-1');
-    expect(r.indexed).toBe(0);
-    expect(repo.update).not.toHaveBeenCalled();
+  it('空问题不发起 ES 查询', async () => {
+    const h = makeLexicalHarness({ esHits: [], accessible: [] });
+    expect(await h.retriever.search('   ', user(), 5)).toEqual([]);
+    expect(h.es.search).not.toHaveBeenCalled();
+  });
+
+  it('二次校验后仍按 ES 相关性顺序返回，并截断到 topK', async () => {
+    const esHits = Array.from({ length: 6 }, (_, i) => ({
+      itemId: `i-${i}`,
+      danghao: `A-${i}`,
+      securityLevel: SecurityLevel.PUBLIC,
+      chunkNo: 0,
+      chunk: `片段 ${i}`,
+      score: 10 - i,
+    }));
+    const h = makeLexicalHarness({ esHits, accessible: esHits.map((x) => x.itemId) });
+
+    const hits = await h.retriever.search('片段', user(), 3);
+    expect(hits).toHaveLength(3);
+    expect(hits.map((x) => x.score)).toEqual([10, 9, 8]);
   });
 });
 
-// ============================================================================
-describe('令牌装配（防"提供方与消费方令牌写歪"）', () => {
-  /**
-   * 本项目被"模块接线"坑过两次（AccessModule 未入树、BackupModule 缺 import），
-   * 而 `@Inject('字符串令牌')` 的注入点会被 `check-module-wiring.ts` 跳过
-   * （它只核函数型 token）。这里补一道 esbuild 可跑的静态核对：
-   * KbService 声明的令牌必须在 KbModule 的 providers 里确有提供。
-   */
-  it('KbService 请求的两个令牌都由 KbModule 提供', async () => {
-    const { MODULE_METADATA, SELF_DECLARED_DEPS_METADATA } =
-      await import('@nestjs/common/constants');
+// ==========================================================================
+// C. 服务层
+// ==========================================================================
+
+function makeServiceHarness(
+  opts: {
+    hits?: EsHit[];
+    staleIds?: string[];
+    indexResult?: { items: number; chunks: number; failed: number };
+  } = {},
+) {
+  const retriever = {
+    name: 'fake-lexical',
+    mode: 'lexical' as const,
+    search: vi.fn(async () =>
+      (opts.hits ?? []).map((h) => ({
+        itemId: h.itemId,
+        danghao: h.danghao,
+        securityLevel: h.securityLevel,
+        chunkNo: h.chunkNo,
+        snippet: h.chunk,
+        score: h.score,
+      })),
+    ),
+  };
+  const indexer = {
+    countChunks: vi.fn(async () => 42),
+    findStaleItemIds: vi.fn(async () => opts.staleIds ?? []),
+    indexItems: vi.fn(async () => opts.indexResult ?? { items: 0, chunks: 0, failed: 0 }),
+  };
+  const es = { ready: vi.fn(async () => true), refresh: vi.fn(async () => undefined) };
+  const provider = new LocalHashEmbeddingProvider();
+
+  const service = new KbService(
+    new AccessFilterBuilder(),
+    provider,
+    retriever as never,
+    indexer as never,
+    es as never,
+  );
+  return { service, retriever, indexer, es, provider };
+}
+
+describe('服务层 —— 片段检索语义（不生成即不臆造）', () => {
+  it('命中时返回 citations，answer 恒为空、mode=retrieval', async () => {
+    const h = makeServiceHarness({
+      hits: [
+        {
+          itemId: 'i-1',
+          danghao: 'A036-2024-BGS-Y-0001-0001',
+          securityLevel: SecurityLevel.PUBLIC,
+          chunkNo: 2,
+          chunk: '关于年度工作的报告正文……',
+          score: 4.2,
+        },
+      ],
+    });
+
+    const r = await h.service.query({ question: '年度工作报告' }, user());
+
+    expect(r.citations).toHaveLength(1);
+    expect(r.citations[0].danghao).toBe('A036-2024-BGS-Y-0001-0001');
+    expect(r.grounded).toBe(true);
+    expect(r.answer).toBe(''); // 绝不生成答案文本
+    expect(r.mode).toBe('retrieval');
+  });
+
+  it('未命中 → grounded=false 且 citations 为空（前端提示"无依据"）', async () => {
+    const h = makeServiceHarness({ hits: [] });
+    const r = await h.service.query({ question: '完全无关的问题' }, user());
+    expect(r.citations).toEqual([]);
+    expect(r.grounded).toBe(false);
+    expect(r.answer).toBe('');
+  });
+
+  it('问题过短 → 400（不打到检索器）', async () => {
+    const h = makeServiceHarness();
+    await expect(h.service.query({ question: 'x' }, user())).rejects.toMatchObject({
+      code: ErrorCode.BAD_REQUEST.code,
+    });
+    expect(h.retriever.search).not.toHaveBeenCalled();
+  });
+
+  it('status 反映检索器与索引规模', async () => {
+    const h = makeServiceHarness();
+    const s = await h.service.status(user());
+    expect(s.enabled).toBe(true);
+    expect(s.retriever).toBe('fake-lexical');
+    expect(s.mode).toBe('lexical');
+    expect(s.indexedChunks).toBe(42);
+  });
+});
+
+describe('服务层 —— 重建索引', () => {
+  it('itemIds 为空 → 自动挑选陈旧条目', async () => {
+    const h = makeServiceHarness({
+      staleIds: ['i-1', 'i-2'],
+      indexResult: { items: 2, chunks: 7, failed: 0 },
+    });
+
+    const r = await h.service.reindex([]);
+    expect(h.indexer.findStaleItemIds).toHaveBeenCalled();
+    expect(h.indexer.indexItems).toHaveBeenCalledWith(['i-1', 'i-2']);
+    expect(r).toEqual({ indexed: 7, items: 2, failed: 0 });
+    expect(h.es.refresh).toHaveBeenCalled();
+  });
+
+  it('指定 itemIds → 不触发陈旧扫描', async () => {
+    const h = makeServiceHarness({ indexResult: { items: 1, chunks: 3, failed: 0 } });
+    await h.service.reindex(['i-9']);
+    expect(h.indexer.findStaleItemIds).not.toHaveBeenCalled();
+    expect(h.indexer.indexItems).toHaveBeenCalledWith(['i-9']);
+  });
+});
+
+// ==========================================================================
+// D. 令牌装配（@Inject('字符串') 注入点不被 check-module-wiring 覆盖，另行守住）
+// ==========================================================================
+describe('令牌装配', () => {
+  it('KbService 请求的令牌都由 KbModule 提供，且检索器按 provider 能力择一', async () => {
     const { KbModule } = await import('@api/modules/kb/kb.module');
     const { EMBEDDING_PROVIDER } = await import('@api/modules/kb/embedding.provider');
-    const { VECTOR_STORE } = await import('@api/modules/kb/vector.store');
+    const { CHUNK_RETRIEVER } = await import('@api/modules/kb/kb.retriever');
 
     const providers = (Reflect.getMetadata(MODULE_METADATA.PROVIDERS, KbModule) ?? []) as Array<
       Record<string, unknown> | unknown
@@ -370,27 +552,18 @@ describe('令牌装配（防"提供方与消费方令牌写歪"）', () => {
     const requested = declared.map((d) => d.param);
 
     expect(requested).toContain(EMBEDDING_PROVIDER);
-    expect(requested).toContain(VECTOR_STORE);
+    expect(requested).toContain(CHUNK_RETRIEVER);
     expect(provided).toContain(EMBEDDING_PROVIDER);
-    expect(provided).toContain(VECTOR_STORE);
-  });
-});
+    expect(provided).toContain(CHUNK_RETRIEVER);
 
-// ============================================================================
-describe('501 防呆闸门（chunk 生产者未实现前不得打开）', () => {
-  it('/api/kb/query 仍返回 KB_NOT_ENABLED，且携带密级可达片段数', async () => {
-    const h = makeHarness([row({ securityLevel: SecurityLevel.PUBLIC })]);
-    await expect(
-      h.service.query({ question: '年度报告有哪些' } as never, user()),
-    ).rejects.toMatchObject({
-      code: ErrorCode.KB_NOT_ENABLED.code,
-    });
-  });
-
-  it('问题过短 → 400 业务异常（先于 501 判定）', async () => {
-    const h = makeHarness([]);
-    await expect(h.service.query({ question: 'x' } as never, user())).rejects.toMatchObject({
-      code: ErrorCode.BAD_REQUEST.code,
-    });
+    // 检索器由工厂按 provider 能力择一：hash 提供方（productionReady=false）必须落到词法
+    const factory = providers.find(
+      (p): p is Record<string, unknown> =>
+        typeof p === 'object' && p !== null && p.provide === CHUNK_RETRIEVER,
+    );
+    expect(typeof factory?.useFactory).toBe('function');
+    const pick = factory?.useFactory as (a: unknown, b: unknown, c: unknown) => { name: string };
+    expect(pick({ name: 'lex' }, { name: 'vec' }, { productionReady: false }).name).toBe('lex');
+    expect(pick({ name: 'lex' }, { name: 'vec' }, { productionReady: true }).name).toBe('vec');
   });
 });

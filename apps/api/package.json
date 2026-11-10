@@ -19,7 +19,8 @@
     "s3:probe": "ts-node src/scripts/seaweedfs-s3-probe.ts",
     "presign:host": "ts-node src/scripts/presign-host-probe.ts",
     "demo:books": "ts-node src/scripts/demo-books-seed.ts",
-    "verify:params": "ts-node src/scripts/verify-params.ts"
+    "verify:params": "ts-node src/scripts/verify-params.ts",
+    "kb:reindex": "ts-node src/scripts/kb-reindex.ts"
   },
   "dependencies": {
     "@elastic/elasticsearch": "^8.15.0",

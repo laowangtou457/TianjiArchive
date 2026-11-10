@@ -11,3 +11,4 @@ export * from './dto';
 export * from './permission';
 export * from './params';
 export * from './permission-mutations';
+export * from './chunker';

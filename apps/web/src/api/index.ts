@@ -319,7 +319,7 @@ export const recycleApi = {
   purge: (id: string): Promise<{ purged: boolean }> => api.delete(`/recycle/${id}`),
 };
 
-// ---------------------------------------------------------------- 知识库（P2 预留）
+// ---------------------------------------------------------------- 知识库（片段检索）
 export const kbApi = {
   status: (): Promise<{
     enabled: boolean;
@@ -327,20 +327,25 @@ export const kbApi = {
     dimension: number;
     productionReady: boolean;
     indexedChunks: number;
+    retriever: string;
+    mode: 'lexical' | 'vector';
+    searchReady: boolean;
     filter: Record<string, unknown>;
   }> => api.get('/kb/status'),
   query: (question: string, topK?: number, fondsId?: string): Promise<{
     answer: string;
     citations: Array<{ danghao: string; itemId: string; snippet: string; securityLevel: string }>;
     grounded: boolean;
+    mode?: 'retrieval' | 'generative';
   }> =>
     api.post('/kb/query', {
       question,
       ...(topK !== undefined ? { topK } : {}),
       ...(fondsId !== undefined ? { fondsId } : {}),
     }),
-  /** 重建指定条目的向量（P2；P0 传空数组即无操作） */
-  reindex: (itemIds: string[]): Promise<{ indexed: number }> => api.post('/kb/reindex', { itemIds }),
+  /** 重建片段索引（传空数组 = 自动挑选陈旧/未索引条目） */
+  reindex: (itemIds: string[]): Promise<{ indexed: number; items: number; failed: number }> =>
+    api.post('/kb/reindex', { itemIds }),
 };
 
 // ---------------------------------------------------------------- 健康检查

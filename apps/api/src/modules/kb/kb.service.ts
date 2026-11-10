@@ -1,89 +1,79 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import {
-  SecurityLevel,
   type KbCitation,
   type KbQueryRequest,
   type KbQueryResponse,
   type PermissionSnapshot,
   BizException,
-  ErrorCode,
 } from '@tianji/shared';
-import { KbEntry } from '../../infra/database/entities/kb-entry.entity';
 import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
 import { EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding.provider';
-import { VECTOR_STORE } from './vector.store';
-
-/** 向量检索命中项 */
-export interface VectorHit {
-  entryId: string;
-  itemId: string;
-  danghao: string;
-  securityLevel: SecurityLevel;
-  chunk: string;
-  score: number;
-}
-
-/** 向量存储接口（P2 换 ES kNN / pgvector 时实现保持不变） */
-export interface VectorStore {
-  readonly name: string;
-  upsert(entries: KbEntry[]): Promise<number>;
-  search(
-    queryVector: number[],
-    options: { topK: number; user: PermissionSnapshot },
-  ): Promise<VectorHit[]>;
-  deleteByItem(itemId: string): Promise<number>;
-}
+import { CHUNK_RETRIEVER, type ChunkRetriever } from './kb.retriever';
+import { KbIndexer } from './kb.indexer';
+import { KbEsService } from './kb.es';
 
 /**
- * KB 检索服务（P2 预留能力，P0 契约 + 可运行实现）。
+ * KB 服务 —— 片段检索（A 档）对外入口。
  *
- * 硬性约束（验收要点 3）：检索前必须经 `applyAccessFilter` 过滤，
- * 本服务即使只是骨架也完整实现密级 + 数据范围过滤，绝不返回越权片段。
+ * ## 能力边界（必须与前端文案一致）
  *
- * 当前对外行为：`/api/kb/query` 返回 501（KB_NOT_ENABLED）并携带候选数量，
- * 便于前端如实提示「知识库未启用」；`/api/kb/status` 返回能力与提供方信息。
+ * 本服务只做**片段检索**：把问题匹配到档案正文的片段，返回"档号 + 原文片段 + 密级"。
+ * **不生成任何答案文本**。`answer` 恒为空串、`mode='retrieval'`，前端据此展示
+ * "仅返回依据"，而不是把空答案当成故障。
  *
- * ⚠️ 501 是防呆闸门，不是占位符：**不得单独移除**。移除前必须同时满足
- * 《RAG知识库立项书》§4 的 G-1~G-4（尤其是"补 chunk 生产者"——没有 chunker 时
- * 即使打开也只会在空表上返回"无依据"，看起来像功能故障）。
+ * 生成式问答（B 档）需本地模型与硬件复核，见《RAG知识库立项书》§4 G-1/G-2。
+ *
+ * ## 权限（硬性验收要点 3）
+ *
+ * 检索链路必然经过 `AccessFilterBuilder`：词法路径在 ES 侧下推 filter、再回 PG 二次
+ * 校验；向量路径直接在 SQL 里下推。两条路径都不存在"先取全量再过滤"的写法。
  */
 @Injectable()
 export class KbService {
   private readonly logger = new Logger(KbService.name);
 
   public constructor(
-    @InjectRepository(KbEntry) private readonly entryRepo: Repository<KbEntry>,
     private readonly accessBuilder: AccessFilterBuilder,
     @Inject(EMBEDDING_PROVIDER) private readonly embedding: EmbeddingProvider,
-    @Inject(VECTOR_STORE) private readonly vectorStore: VectorStore,
+    @Inject(CHUNK_RETRIEVER) private readonly retriever: ChunkRetriever,
+    private readonly indexer: KbIndexer,
+    private readonly es: KbEsService,
   ) {}
 
-  /** 能力状态（前端可据此隐藏入口） */
+  /** 能力状态（前端据此决定是否展示入口、如何措辞） */
   public async status(user: PermissionSnapshot): Promise<{
     enabled: boolean;
     embeddingProvider: string;
     dimension: number;
     productionReady: boolean;
     indexedChunks: number;
+    retriever: string;
+    mode: 'lexical' | 'vector';
+    searchReady: boolean;
     filter: Record<string, unknown>;
   }> {
     const filter = this.accessBuilder.buildKbFilter(user);
-    const indexedChunks = await this.entryRepo.count();
+    const indexedChunks = await this.indexer.countChunks();
+    const searchReady = await this.es.ready();
     return {
-      enabled: false,
+      // 片段检索可用即视为 enabled；生成式能力另由 mode 表达
+      enabled: searchReady,
       embeddingProvider: this.embedding.name,
       dimension: this.embedding.dimension,
       productionReady: this.embedding.productionReady,
       indexedChunks,
+      retriever: this.retriever.name,
+      mode: this.retriever.mode,
+      searchReady,
       filter: { filters: filter.filters },
     };
   }
 
   /**
-   * 问答检索（P0 未启用，抛 501）。
-   * 即使未启用，也先完成权限过滤与候选统计，确保契约字段可用、且不泄露越权数据。
+   * 片段检索（对外 `/api/kb/query`）。
+   *
+   * 未命中时返回空 citations + `grounded=false`，由前端提示「无依据」——
+   * **绝不返回相似度低但看起来相关的编造内容**（本项目的"不臆造"硬约束）。
    */
   public async query(req: KbQueryRequest, user: PermissionSnapshot): Promise<KbQueryResponse> {
     const question = (req.question ?? '').trim();
@@ -91,75 +81,43 @@ export class KbService {
       throw BizException.badRequest('问题内容过短');
     }
 
-    // 1) 权限过滤（密级 + 全宗范围），与主检索同一口径
-    const filter = this.accessBuilder.buildKbFilter(user);
-
-    // 2) 计算候选条目数（仅统计，不返回内容）
-    //    空集合（未知密级 fail-closed）不能用 `IN ()`（PG 语法错误），降级为 `FALSE`。
-    //    注意：此处只按密级统计（信息性数值，随 501 一同返回）。完整的数据范围过滤
-    //    由 `EsVectorStore.search` 在真正检索时下推到 SQL —— 两处口径同源于
-    //    AccessFilterBuilder，不存在第二套判断。
-    const allowedLevels = this.accessBuilder.levelsAtMost(user.maxSecurityLevel);
-    const countQb = this.entryRepo.createQueryBuilder('k');
-    if (allowedLevels.length === 0) {
-      countQb.where('FALSE');
-    } else {
-      countQb.where('k.security_level IN (:...levels)', { levels: allowedLevels });
-    }
-    const candidates = await countQb.getCount();
-
-    this.logger.log(
-      `KB 查询被调用（P2 未启用）：question="${question.slice(0, 30)}…" 候选=${candidates} filters=${JSON.stringify(filter.filters)}`,
-    );
-
-    // 3) P0 明确 501，避免前端误以为无结果
-    throw new BizException(
-      ErrorCode.KB_NOT_ENABLED,
-      `知识库问答为 P2 能力，当前版本未启用（已就绪：向量化提供方 ${this.embedding.name}，权限过滤已生效，密级可达片段 ${candidates} 条）`,
-    );
-  }
-
-  /**
-   * 检索召回（P2 内部使用）：向量化 → 权限下推过滤 → topK 打分。
-   *
-   * 三处历史缺陷在此收口：
-   *  - 查询向量与片段向量**同一 provider、同一特征空间**（旧实现另写了一套哈希，
-   *    两者余弦无意义）；
-   *  - 权限过滤**先于**截断（旧实现先取 500 条最新再过滤，低密级用户会假阴性）；
-   *  - 打分由存储层返回真实余弦值（旧实现恒 `score: 0`）。
-   */
-  public async retrieve(
-    question: string,
-    user: PermissionSnapshot,
-    topK = 5,
-  ): Promise<KbCitation[]> {
-    const q = (question ?? '').trim();
-    if (q.length === 0) return [];
-
-    const vector = await this.embedding.embedOne(q);
-    const hits = await this.vectorStore.search(vector, { topK, user });
-
-    return hits.map((h) => ({
+    const hits = await this.retriever.search(question, user, req.topK ?? 5);
+    const citations: KbCitation[] = hits.map((h) => ({
       danghao: h.danghao,
       itemId: h.itemId,
-      snippet: h.chunk.slice(0, 200),
+      snippet: h.snippet.slice(0, 200),
       securityLevel: h.securityLevel,
     }));
+
+    this.logger.log(
+      `KB 片段检索：question="${question.slice(0, 30)}…" 命中=${citations.length} 检索器=${this.retriever.name}`,
+    );
+
+    return {
+      answer: '',
+      citations,
+      grounded: citations.length > 0,
+      mode: 'retrieval',
+    };
   }
 
   /**
-   * 条目重建索引（P2 使用；当前返回 0）。
+   * 重建索引。
    *
-   * 说明：真正的重建需要「切块 → 向量化 → 写 kb_entry」，而 chunk 生产者尚未实现
-   * （《RAG知识库立项书》§1.2 缺口 D-1）。此处保持"只改状态位"的原语义并**不再
-   * 假装**完成重建 —— 无片段时返回 0，不把 `embedding_status` 改成 OK 制造假象。
+   * @param itemIds 指定条目；**传空数组表示自动挑选陈旧/未索引条目**（前端按钮用的是这个）。
    */
-  public async reindex(itemId: string): Promise<{ indexed: number }> {
-    const rows = await this.entryRepo.find({ where: { itemId } });
-    if (rows.length === 0) return { indexed: 0 };
-    this.logger.warn(
-      `KB 重建索引被调用但 chunk 生产者未实现（条目 ${itemId} 现有 ${rows.length} 条片段，未重新向量化）`,
+  public async reindex(itemIds: string[]): Promise<{ indexed: number; items: number; failed: number }> {
+    const targets =
+      itemIds.length > 0 ? itemIds : await this.indexer.findStaleItemIds(KbService.DEFAULT_BATCH);
+
+    const r = await this.indexer.indexItems(targets);
+    if (targets.length > 0) await this.es.refresh();
+    this.logger.log(
+      `KB 重建：条目 ${r.items}（失败 ${r.failed}），写入片段 ${r.chunks}（目标 ${targets.length}）`,
     );
-    return { indexed: 0 };
+    return { indexed: r.chunks, items: r.items, failed: r.failed };
   }
+
+  /** 单次自动重建的条目上限（避免一次请求把 API 拖住） */
+  private static readonly DEFAULT_BATCH = 200;
 }

@@ -7,45 +7,39 @@ import { ArchiveItem } from '../../infra/database/entities/archive-item.entity';
 import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
 import { applyAccessFilter } from '../../common/access/scoped-query';
 import { EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding.provider';
-import type { VectorHit, VectorStore } from './kb.service';
-
-/** 向量存储注入令牌（P2 换 ES kNN / pgvector 实现时只改模块 wiring，不动调用方） */
-export const VECTOR_STORE = 'VECTOR_STORE';
+import type { ChunkHit, ChunkRetriever } from './kb.retriever';
 
 /** 扫描分页大小（控制单次内存占用；不影响召回正确性） */
 const PAGE_SIZE = 256;
 
 /**
- * KB 向量存储实现（PG 权威元数据 + 权限下推 + 逐页扫描打分）。
+ * 向量片段检索（B 档路径）：PG 权威片段表 + 权限下推 + 逐页扫描余弦。
  *
- * ## 为什么不是"先取 N 条再过滤"（历史缺陷 D-3，已修）
+ * ## 何时被使用
  *
- * 旧实现 `entryRepo.find({ take: 500, order: { createdAt: 'DESC' } })` 先按入库时间
- * 截断、再在内存里过滤权限。若最近 500 条片段全属高密级，低密级用户的可访问片段
- * 根本进不了窗口 —— **稳定返回 0 命中**，前端显示"无依据"，是假阴性。
+ * 仅当 `EmbeddingProvider.productionReady === true` 时由 `kb.module.ts` 的工厂选中。
+ * 当前默认提供方（`LocalHashEmbeddingProvider`）为 `false`，故本实现处于**待命**状态，
+ * 检索走 `LexicalChunkRetriever`。这不是死代码：是否启用只取决于 provider 的能力声明。
  *
- * 现实现把权限条件下推成 SQL 谓词（`applyAccessFilter`，与主检索同一入口），
- * 使"取 topK"发生在"已过滤集合"内。**顺序不可颠倒**：
- * 过滤只允许改「时机」，不允许改「严格度」。
+ * 为什么在 hash 提供方下也不用它：字符 2-gram 哈希没有语义能力，用它排序会把
+ * 无关片段排到前面——那比"词法命中"更糟，因为它看起来像语义检索。
  *
- * ## 为什么 JOIN archive_item 而不是只信 kb_entry.security_level
+ * ## D-2 教训（已固化在此实现中）
  *
- * 密级与数据范围（全宗/机构/本人）的权威源是条目本身。JOIN 保证片段密级与条目
- * 密级永远一致，不存在"条目改密级、片段仍是旧值"这类静默越权；也因此不必把
- * fonds_id / org_id / created_by 冗余进 kb_entry。
+ * 查询向量与片段向量必须出自**同一** provider、同一特征空间。旧实现另写了一套
+ * `hashOf` 与 provider 混用，余弦值等于噪声；维度不一致时还会用 `min()` 截断比较，
+ * 静默算出"看起来正常"的相似度——故此处维度不一致直接抛错。
  *
- * ## 已知边界（不在此处私修，单独登记）
+ * ## 已知边界
  *
- * - 逐页扫描 + 内存余弦是 **O(n)**，不是 ANN 索引。当前 `kb_entry` 在生产恒为 0 行
- *   （无 chunk 生产者，见《RAG知识库立项书》§1.2），且 `/api/kb/query` 仍返回 501，
- *   故无性能暴露。P2 启用前必须换成 ES `dense_vector` kNN 或 pgvector。
+ * - 逐页扫描是 O(n)，不是 ANN 索引；片段量级大时应换 ES `dense_vector` kNN 或 pgvector。
  * - `applyAccessFilter` 对 ORG 范围会生成 `"org_id"` 条件，而 `archive_item` 无该列
- *   （机构归属实际在 `volume.org_id`）—— 这是**主检索同款既有缺口**，本模块选择与
- *   主检索保持同一口径而非另造一套过滤（防漂移）。
+ *   （机构归属在 `volume.org_id`）——与主检索同源缺口，单独登记，不在此私修。
  */
 @Injectable()
-export class EsVectorStore implements VectorStore {
-  public readonly name = 'pg-kb-entry';
+export class EsVectorStore implements ChunkRetriever {
+  public readonly name = 'pg-vector-scan';
+  public readonly mode = 'vector' as const;
   private readonly logger = new Logger(EsVectorStore.name);
 
   public constructor(
@@ -54,31 +48,16 @@ export class EsVectorStore implements VectorStore {
     private readonly accessBuilder: AccessFilterBuilder,
   ) {}
 
-  /**
-   * 写入/更新片段（P2 由 chunker 调用；当前无生产者，保留为契约入口）。
-   */
-  public async upsert(entries: KbEntry[]): Promise<number> {
-    if (entries.length === 0) return 0;
-    await this.repo.save(entries);
-    this.logger.debug(`KB 写入 ${entries.length} 条片段`);
-    return entries.length;
-  }
-
-  /**
-   * 向量检索：权限下推 → 逐页扫描 → 余弦打分 → topK。
-   *
-   * @param queryVector 查询向量（必须与 provider 维度一致）
-   * @param options.topK 返回条数上限（1~50，超出收敛）
-   * @param options.user 权限快照（密级 + 数据范围，服务端唯一可信来源）
-   */
   public async search(
-    queryVector: number[],
-    options: { topK: number; user: PermissionSnapshot },
-  ): Promise<VectorHit[]> {
-    const topK = Math.min(50, Math.max(1, Math.floor(options.topK ?? 5)));
+    question: string,
+    user: PermissionSnapshot,
+    topK: number,
+  ): Promise<ChunkHit[]> {
+    const q = (question ?? '').trim();
+    if (q.length === 0) return [];
+    const limit = Math.min(50, Math.max(1, Math.floor(topK || 5)));
 
-    // 维度不一致必须显式失败：若用 min() 截断比较，会静默算出一个"看起来正常"的
-    // 相似度 —— 那比报错更坏。
+    const queryVector = await this.embedding.embedOne(q);
     if (queryVector.length !== this.embedding.dimension) {
       throw new Error(
         `KB 向量维度不一致：query=${queryVector.length} provider=${this.embedding.dimension}（换模型须全量重建索引）`,
@@ -88,10 +67,17 @@ export class EsVectorStore implements VectorStore {
     const qb = this.repo
       .createQueryBuilder('k')
       .innerJoin(ArchiveItem, 'a', 'a.id = k.item_id')
-      .select(['k.id', 'k.item_id', 'k.source_danghao', 'k.security_level', 'k.chunk']);
+      .select([
+        'k.id',
+        'k.item_id',
+        'k.source_danghao',
+        'k.security_level',
+        'k.chunk',
+        'k.chunk_no',
+      ]);
 
     // 权限条件先落 SQL（security_level / 数据范围 / a.deleted = FALSE）
-    applyAccessFilter(qb, this.accessBuilder, options.user, 'a');
+    applyAccessFilter(qb, this.accessBuilder, user, 'a');
 
     const best: Array<{ row: KbEntry; score: number }> = [];
     let offset = 0;
@@ -101,10 +87,10 @@ export class EsVectorStore implements VectorStore {
       const page = await qb.skip(offset).take(PAGE_SIZE).getMany();
       if (page.length === 0) break;
 
-      // 批量向量化：与查询向量同一 provider、同一特征空间（历史缺陷 D-2，已修）
+      // 批量向量化：与查询向量同一 provider、同一特征空间
       const vectors = await this.embedding.embed(page.map((r) => r.chunk));
       for (let i = 0; i < page.length; i += 1) {
-        insertTop(best, { row: page[i], score: cosine(queryVector, vectors[i] ?? []) }, topK);
+        insertTop(best, { row: page[i], score: cosine(queryVector, vectors[i] ?? []) }, limit);
       }
 
       scanned += page.length;
@@ -112,21 +98,37 @@ export class EsVectorStore implements VectorStore {
       offset += PAGE_SIZE;
     }
 
-    this.logger.debug(`KB 召回：扫描 ${scanned} 条已授权片段，返回 ${best.length} 条`);
+    this.logger.debug(`KB 向量召回：扫描 ${scanned} 条已授权片段，返回 ${best.length} 条`);
+
+    // `k.security_level` 是索引快照，回显前换成 archive_item 真值
+    const trueLevels = await this.loadTrueLevels(best.map((s) => s.row.itemId));
     return best.map((s) => ({
-      entryId: s.row.id,
       itemId: s.row.itemId,
       danghao: s.row.sourceDanghao,
-      securityLevel: s.row.securityLevel as SecurityLevel,
-      chunk: s.row.chunk,
+      securityLevel: trueLevels.get(s.row.itemId) ?? (s.row.securityLevel as SecurityLevel),
+      chunkNo: s.row.chunkNo,
+      snippet: s.row.chunk.slice(0, 200),
       score: s.score,
     }));
   }
 
-  /** 删除某条目的全部片段（条目硬删时由调用方触发；归档条目 FK 亦为 CASCADE） */
-  public async deleteByItem(itemId: string): Promise<number> {
-    const res = await this.repo.delete({ itemId });
-    return res.affected ?? 0;
+  /**
+   * 回查条目密级真值（与词法路径同口径）。
+   *
+   * 权限过滤已在前一步 SQL 用 `a.security_level` 完成，此处只负责**标签正确**：
+   * 片段表里的密级是建索引时的快照，条目升密后、自愈扫描跑到之前会偏松，
+   * 直接回显等于把机密件标成公开级。查不到时退回快照值 —— 不会因此放宽权限。
+   */
+  private async loadTrueLevels(itemIds: string[]): Promise<Map<string, SecurityLevel>> {
+    const ids = [...new Set(itemIds)].filter(Boolean);
+    if (ids.length === 0) return new Map();
+    const rows = (await this.repo.manager
+      .getRepository(ArchiveItem)
+      .createQueryBuilder('i')
+      .select(['i.id AS id', 'i.security_level AS security_level'])
+      .where('i.id IN (:...ids)', { ids })
+      .getRawMany()) as Array<{ id: string; security_level: SecurityLevel }>;
+    return new Map(rows.map((r) => [r.id, r.security_level]));
   }
 }
 

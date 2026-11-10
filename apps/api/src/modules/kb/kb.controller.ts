@@ -19,7 +19,7 @@ export class KbQueryBodyDto {
   public fondsId?: string;
 }
 
-/** 重建索引 DTO */
+/** 重建索引 DTO（itemIds 为空表示自动挑选陈旧/未索引条目） */
 export class ReindexBodyDto {
   @IsArray()
   @IsUUID('all', { each: true })
@@ -27,10 +27,13 @@ export class ReindexBodyDto {
 }
 
 /**
- * 知识库控制器（F-20 P2 预留）。
+ * 知识库控制器（F-22 片段检索，A 档）。
  *
- * 路由已就位（`/api/kb/*`），P0 返回 501 + 明确提示，前端可提前接入。
+ * 路由保持 `/api/kb/*` 不变，前端无需改契约。
  * 检索前强制复用 AccessFilterBuilder（密级 + 数据范围），与主检索同口径。
+ *
+ * 注意：本控制器**不生成答案**，只返回依据片段；生成式问答属 B 档，
+ * 需本地模型与硬件复核（《RAG知识库立项书》§4）。
  */
 @Controller('kb')
 export class KbController {
@@ -45,12 +48,15 @@ export class KbController {
     dimension: number;
     productionReady: boolean;
     indexedChunks: number;
+    retriever: string;
+    mode: 'lexical' | 'vector';
+    searchReady: boolean;
     filter: Record<string, unknown>;
   }> {
     return this.kbService.status(user as PermissionSnapshot);
   }
 
-  /** 问答（P0 未启用 → 501 KB_NOT_ENABLED） */
+  /** 片段检索（返回依据片段，不生成答案） */
   @Post('query')
   @RequirePerm({ domain: 'KB', op: 'READ', checkScope: false, objectType: 'KB' })
   @Audit({ action: 'SEARCH', objectType: 'KB', mandatory: true, objectIdPath: 'body.fondsId' })
@@ -61,16 +67,13 @@ export class KbController {
     return this.kbService.query(dto, user as PermissionSnapshot);
   }
 
-  /** 重建索引（P2 使用） */
+  /** 重建片段索引（itemIds 为空 → 自动挑选陈旧/未索引条目） */
   @Post('reindex')
   @RequirePerm({ domain: 'KB', op: 'WRITE', checkScope: false, objectType: 'KB' })
   @Audit({ action: 'UPDATE', objectType: 'KB', objectIdPath: 'body.itemIds' })
-  public async reindex(@Body() dto: ReindexBodyDto): Promise<{ indexed: number }> {
-    let total = 0;
-    for (const id of dto.itemIds) {
-      const r = await this.kbService.reindex(id);
-      total += r.indexed;
-    }
-    return { indexed: total };
+  public async reindex(
+    @Body() dto: ReindexBodyDto,
+  ): Promise<{ indexed: number; items: number; failed: number }> {
+    return this.kbService.reindex(dto.itemIds ?? []);
   }
 }

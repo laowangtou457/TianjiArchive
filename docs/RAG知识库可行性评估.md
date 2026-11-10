@@ -13,11 +13,13 @@
 
 | 档位 | 内容 | 可行性 | 主要代价 | 是否满足 F-22 判据 |
 | --- | --- | --- | --- | --- |
-| **A 检索增强**（不上生成模型） | chunk 切分 + 真向量化 + ES kNN + 返回原文片段与档号 | ✅ **高**，纯软件 | 改 3 处既有代码 + 加 1 个 chunker | ✅ 天然满足（不生成即不臆造） |
+| **A 检索增强**（不上生成模型） | chunk 切分 + 片段索引 + BM25/IK 召回 + 返回原文片段与档号 | ✅ **已交付**（v1.2，真机闭环） | 新增 chunker + 片段索引 + 两段式检索 | ✅ 天然满足（不生成即不臆造） |
 | **B RAG 问答**（本地 embedding + 本地小 LLM） | A + bge 系 embedding + Qwen2.5-3B/7B 量化 + 抽取式作答 | ⚠️ **中**，卡在硬件与交付体积 | 内存门槛上调、交付包增 4~6GB、问答改异步 | ✅ 满足，但需强制引用与无依据短路 |
 | **C LLM Wiki**（自动生成百科式条目） | 模型把档案内容改写成 wiki 页 | ❌ **不建议 v1 做** | 与档案凭证价值冲突 | ❌ **天然违判据**（改写内容无法逐句溯源） |
 
 **建议：先做 A，把三个真实缺陷修掉；B 待硬件复核后单独立项；C 不做，最多做"带引用的导读页"。**
+
+> **v1.2 状态**：D-2 / D-3 / D-5 已修，A 档已落地并通过真机闭环（6 条目 / 6 片段 / 越权零返回 / 无依据可判），接口不再返回 501。B / C 档结论不变。
 
 一句话理由：A 档不引入任何模型，就把「能不能检索到、检索得对不对、越不越权」这三件事做实了；而 B 档的瓶颈既不是算法也不是代码，是**闭网内的推理硬件**和**"一个安装包即完整安装"这个已定目标**。
 
@@ -54,15 +56,19 @@ P0 阶段留下的不是空壳，是"两端实、中间空"。
 
 **"入库 → 向量 → 召回 → 过滤 → 组装"这条链路，两端有实现，中间的"生产 + 向量化"是缺的。**
 
+> **v1.2 已补齐**（`packages/shared/src/chunker.ts` + `kb.indexer.ts` + `kb.scheduler.ts`）：chunk 生产者、片段落库（`kb_entry` 新增 `chunk_no` + 唯一索引 `uk_kb_item_chunk`）、ES `kb_chunks` 索引、5 分钟自愈扫描均已就位。真机 `kb:reindex --all` 结果为「条目 6 / 片段 6 / 失败 0」，`/api/kb/status` 的 `indexedChunks` 不再恒 0。
+
 ---
 
 ## 2. 四个硬缺口（含 2 个已定位的代码缺陷）
 
-### D-1 缺 chunk 生产者（缺功能，非缺陷）
+### D-1 缺 chunk 生产者（缺功能，非缺陷） ✅ **已修（A 档）**
 
 `kb_entry.chunk` 没有任何生成逻辑。现有 `fulltext` 是**整篇 500KB 截断文本**，直接拿去向量化既超模型上下文、又会让相似度坍缩。
 
 **A 档必须先补一个 chunker**：按段落/句号切 300~500 字、重叠 50 字，同时写入 `item_id` / `source_danghao` / `security_level`（从条目元数据带过来，**不能由 chunker 自己推断密级**）。触发点有两条：抽取完成事件（增量）、`/kb/reindex`（存量）。
+
+**实际处置**：触发点最终选了**扫描式增量**而非抽取完成回调 —— 抽取器是独立进程，回调要引入"内网回调 + 鉴权 + 重试"三套问题，而"每 5 分钟扫一遍陈旧条目"天然幂等、失败自愈（`kb.scheduler.ts`）。切分目标值取 `target=400 / max=500 / min=120 / overlap=50`（`DEFAULT_CHUNK_OPTIONS`），句读优先、不切断英文词、结果确定性可复现。密级**只从 `archive_item.security_level` 取**，绝不由文本推断。
 
 ### D-2 向量空间不一致 —— **真缺陷，会导致排序完全无意义** ✅ **已修（`0bbf744`）**
 
@@ -104,6 +110,21 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 - 硬件门槛**无 CPU 核数条目、无 GPU 条目**；内存 K10 = `≥8GB（建议 16GB）`（`安装器总体设计.md:319`）。
 - 结论：**闭网内只能走 CPU 推理**，且现有门槛没有为推理预留余量。
 
+### D-5 引用回显的密级取自索引快照 —— **真机验证时发现，属安全问题** ✅ **已修（A 档）**
+
+片段表 / ES 文档里的 `securityLevel` 是**建索引那一刻**的快照。条目升密后、自愈扫描跑到之前，索引里的密级比真值更宽松。
+
+权限**过滤**本身没被击穿（两段式检索的第二段用 PG 真值回表核对，越权片段仍然零返回）。真正的问题在**回显**：有权限的用户看到的引用标签是旧值。真机实测（同一问题、同一索引命中）：
+
+| 账号 | 密级上限 | 命中 | 引用回显密级（修前） |
+| --- | --- | --- | --- |
+| `kb_reader` | PUBLIC | 0（正确剔除） | — |
+| `admin` | SECRET | 1 | `PUBLIC` ❌ 实际已升 SECRET |
+
+把机密件标成公开级，标签本身就在说假话 —— 在档案系统里这是独立于"能不能看"的第二个错误。
+
+**修复**：`verifyAccessible` 的返回从 `Set<itemId>` 改为 `Map<itemId, securityLevel>`，一次回表同时拿到"能否访问"和"当前真密级"；词法路径与向量路径都改成用真值回显（`vector.store.ts` 补 `loadTrueLevels`，查不到时才退回快照，权限不受影响）。两条路径各加一条回归用例，变异探针确认会转红。
+
 ### 附：三处"骨架未闭环"（✅ 均已于 `0bbf744` 收口）
 
 - `EsVectorStore`（`vector.store.ts`）**注册了 provider 但从未被注入** —— `KbService` 直接用 `entryRepo`（`kb.service.ts:49`）。该类的 `search()` 对所有命中返回 `score: 0`（`vector.store.ts:53`）。**抽象层曾是死代码** → 现真正被调用，打分改为真实余弦。
@@ -138,7 +159,15 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 
 **为什么先做它**：不引入任何模型 → **不动硬件门槛、不动交付包体积、不新增容器**；且"不生成"天然满足 F-22 的"不臆造"。判据干净。
 
-**必须注意**：ES mapping 是 `dynamic: 'strict'`（`es.module.ts:62`）。加 `dense_vector` 属**显式 schema 变更**，需迁移脚本 + 存量条目的向量回填（`fulltext` 已 `store: false`，即**正文不在 `_source` 里** —— 回填只能走 PG 侧原文或 `kb_entry.chunk`，不能指望从 ES 读回来）。**这是 A 档最容易低估的一步。**
+**实际形态（v1.2 交付，与上文计划的差异必须说明）**：计划里写的是"ES 加 `dense_vector` + kNN"，实际**先落在词法路径**上——`es-bm25-ik`（BM25 + IK 中文分词）召回、PG 回表二次校验。原因是当前 `LocalHashEmbeddingProvider` 声明 `productionReady = false`（字符 2-gram 哈希没有语义能力），拿它做向量召回会把无关片段排到前面，**看起来像语义检索，实际是噪声**，比词法更糟。
+
+因此检索器按**能力声明**择一，而不是按配置开关（开关会被"顺手打开"，能力声明是代码事实）：
+
+```
+CHUNK_RETRIEVER = embedding.productionReady ? EsVectorStore : LexicalChunkRetriever
+```
+
+`EsVectorStore`（`pg-vector-scan`：权限下推 SQL + 逐页扫描 + 同空间余弦）已完整实现并单测覆盖，处于**待命**状态——换成真实 embedding 模型（bge 系）并置 `productionReady=true` 即自动接管，不需要改调用方。ES `dense_vector` kNN 留到片段量级需要时再做（当前量级下 PG 逐页扫描足够，避免提前引入 mapping 迁移与回填）。
 
 ### B 档｜RAG 问答（本地 embedding + 本地小 LLM）
 
@@ -180,7 +209,7 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 ## 6. 建议的下一步（按顺序）
 
 1. ~~先修 D-2 + D-3，不必等立项~~ → **已完成**（`0bbf744`）：向量空间统一、权限下推 SQL、`EsVectorStore` 与令牌接线收口、16 例回归 + 变异探针。这两条本就是既有代码缺陷，与"要不要做 RAG"无关。
-2. **A 档立项**：补 chunker + ES `dense_vector` 迁移 + kNN 检索。判据清晰、无硬件影响、可独立验收。**（已立项，见《RAG知识库立项书》`TJ-RAG-01`；但 G-1~G-3 未闭合，未开工）**
+2. ~~**A 档立项**：补 chunker + ES `dense_vector` 迁移 + kNN 检索~~ → **已交付**（《RAG知识库立项书》`TJ-RAG-01` M1）：chunker / 片段索引 / 自愈扫描 / 两段式检索 / 前端「片段检索」页 / `kb:reindex` 脚本全部落地，501 已解除。真机证据见 §8。
 3. **B 档先做硬件复核**，再谈实现：目标机实际内存分布、CPU 是否支持 AVX2、7B q4 的实际 tokens/s。**硬件没结论之前不写 B 档代码。**
 4. **交付面裁定**：模型包是否独立分发 —— 建议独立，理由同 §7.1。
 5. **PRD 补两条边界**：①RAG 答案不作为档案凭证；②模型包可选，缺失时降级为 A 档能力。避免现场预期错位。
@@ -191,10 +220,29 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 ## 7. 本评估明确**未**验证的事
 
 - 未做任何性能实测（CPU 上 embedding 吞吐、LLM tokens/s、kNN 延迟）—— 全部为量级估计。
-- 未验证 ES `dense_vector` 在本项目 `ik` 自定义分析器/`dynamic:strict` 配置下的建索引与 kNN 行为（需实测，mapping 冲突风险真实存在）。
+- 未验证 ES `dense_vector` 在本项目 `ik` 自定义分析器/`dynamic:strict` 配置下的建索引与 kNN 行为（需实测，mapping 冲突风险真实存在）。A 档实际未走 kNN，该项仍悬空。
 - 未核目标机 CPU 指令集（AVX2 缺失会让 GGUF 推理慢一个数量级）。
 - 未评估 `fulltext` 500KB 截断对检索质量的影响（超长文档尾部内容对 RAG 不可见）。
-- 未做任何代码改动，本文档不构成实现承诺。
+- 本文档 v1.0 阶段未做任何代码改动；A 档实现与真机验证见 §8，**B/C 档仍不构成实现承诺**。
+
+---
+
+## 8. A 档真机验证证据（v1.2）
+
+环境：本机 `docker compose` 全家桶（`tianji-api / postgres / elasticsearch-ik / seaweedfs / redis` 均 healthy），数据由 `demo:books` 造数（6 条目 / 12 文件 / 8 行 `document_text`）。
+
+| 项 | 做法 | 结果 |
+| --- | --- | --- |
+| 迁移 | 容器内 `typeorm migration:run` | `AddKbChunkNo1700000005000` 执行成功；`\d kb_entry` 确认 `chunk_no int not null default 0` + `uk_kb_item_chunk UNIQUE` |
+| 建索引 | `kb:reindex --all` | 条目 6 / 片段 6 / 失败 0；3 个样本回读「PG 片段=1 ES 文档=1 ✓」 |
+| 状态 | `GET /api/kb/status` | `{"enabled":true,"indexedChunks":6,"retriever":"es-bm25-ik","mode":"lexical","searchReady":true}` |
+| 命中 | `POST /api/kb/query` | `{"answer":"","grounded":true,"citations":[{"danghao":"DEMO-BOOK-2026-0002-0001",…,"snippet":"题名：<em class=\"hl\">数字</em>…"}]}` |
+| **越权零返回** | 条目升 SECRET 后**不重建索引**，用 PUBLIC 上限账号查询 | `citations=0 / grounded=false`；同问题 SECRET 账号 `citations=1`。ES 原始查询该问题返回 1 条（索引仍标 PUBLIC）→ 证明是**二次校验精确剔除**，不是整体失效 |
+| 无依据 | 查询索引中不存在的主题 | `citations=[] / grounded=false`，前端显示「无依据」并列出三种可能 |
+| 单元测试 | `vitest run` | 490 passed / 28 files |
+| 静态检查 | `tsc --noEmit`（api + web）、`eslint --max-warnings=0`、`vite build` | 全部干净；构建产物正常 |
+
+> 环境限制记录：宿主直连容器映射的 PG:5432 / ES:9200 会在 TCP 握手后立即断开（`Connection terminated unexpectedly`），`curl localhost:3000` 却正常。故迁移、脚本、SQL 一律在**容器内**执行。这一条已写入维护手册的排障节。
 
 ---
 
@@ -204,3 +252,4 @@ const rows = await this.entryRepo.find({ take: 500, order: { createdAt: 'DESC' }
 | --- | --- | --- |
 | v1.0 | 2026-11-10 | 首版：地基盘点（含 2 个代码缺陷 D-2/D-3 定位到行）、四缺口、三档路径、F-22 判据对照、模型包独立分发建议 |
 | v1.1 | 2026-11-10 | **D-2/D-3 已修**（`0bbf744`）：补修复处置与验证证据；三处骨架未闭环（死代码 / 令牌零引用 / 零测试）+ `reindex` 伪造完成态 一并收口；新增 ORG 范围缺口登记（`archive_item` 无 `org_id`，主检索同款，待单独立项） |
+| v1.2 | 2026-11-10 | **A 档交付**：D-1（chunk 生产者）闭合，新增 D-5（引用回显密级取索引快照，真机发现，已修）；补「计划 dense_vector kNN / 实际先落词法 + 向量路径待命」的差异说明与原因；新增 §8 真机验证证据表（越权零返回、无依据、状态口径、静态检查） |

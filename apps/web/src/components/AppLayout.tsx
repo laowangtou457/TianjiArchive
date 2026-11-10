@@ -15,7 +15,7 @@ export const MENU: MenuItem[] = [
   { key: 'dashboard', label: '工作台', path: '/', icon: '◧', group: '概览' },
   { key: 'search', label: '综合检索', path: '/search', icon: '⌕', group: '检索利用' },
   { key: 'borrow', label: '借阅管理', path: '/borrow', icon: '⇄', group: '检索利用' },
-  { key: 'kb', label: '智能问答', path: '/kb', icon: '◈', group: '检索利用' },
+  { key: 'kb', label: '片段检索', path: '/kb', icon: '◈', group: '检索利用' },
   { key: 'fonds', label: '全宗管理', path: '/fonds', icon: '▤', group: '档案业务' },
   { key: 'catalog', label: '档案著录', path: '/catalog', icon: '▥', group: '档案业务' },
   { key: 'rule', label: '档号规则', path: '/rules', icon: '⌗', group: '档案业务' },

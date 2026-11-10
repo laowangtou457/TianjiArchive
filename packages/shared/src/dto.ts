@@ -849,10 +849,21 @@ export interface KbCitation {
 }
 
 export interface KbQueryResponse {
+  /**
+   * 自然语言答案。
+   * 片段检索模式下恒为空串 —— 本系统在接入生成式能力前**不产出任何答案文本**，
+   * 前端应据 `mode` 展示"仅返回依据片段"，不得把空 answer 当作故障。
+   */
   answer: string;
   citations: KbCitation[];
   /** 是否命中依据（未命中时前端提示"无依据"） */
   grounded: boolean;
+  /**
+   * 本次回答的形态：
+   *   - `retrieval`：仅片段检索，返回原文依据，不生成答案（A 档，当前实现）；
+   *   - `generative`：生成式问答（B 档，需本地模型，未启用）。
+   */
+  mode?: 'retrieval' | 'generative';
 }
 
 // ============================================================================
