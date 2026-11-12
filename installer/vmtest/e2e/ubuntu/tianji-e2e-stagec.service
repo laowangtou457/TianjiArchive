@@ -1,0 +1,12 @@
+[Unit]
+Description=Tianji e2e stageC full chain S1-S10 (oneshot, armed by host prep)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/stagec.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

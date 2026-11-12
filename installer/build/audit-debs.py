@@ -360,9 +360,20 @@ def audit(dir_path: str) -> dict:
                 if mismatch and len(mismatch) == len(results):
                     errors.append("%s（%s）的 %s：%s" % (pkg.name, pkg.version, field, "；".join(mismatch)))
                     continue
-                # 全部落在闭包外：登记为「由目标系统提供」，不是错误
+                # 全部落在闭包外：登记为「由目标系统提供」，不是错误。
+                # 但**严格等版**（=）依赖落在外是例外——正是 2026-11-12 变体 A 真机
+                # e2e 抓到的 perl→perl-base(=) 失败模式：闭包带了 perl 1.9 却没带
+                # perl-base 1.9，ISO 装出的系统里是 1.3，dpkg -i 必然
+                # 「dependency problems prevent configuration」。目标机的基础包版本
+                # 在构建期不可知，所以等版约束出现在闭包外就只能算 ERROR。
                 for alt, res in zip(alts, results):
                     if res == "external":
+                        if alt["op"] == "=":
+                            errors.append(
+                                "%s（%s）的 %s：严格等版依赖 %s（= %s）落在闭包外——"
+                                "目标机不保证恰好此版本，dpkg -i 必失败；把 %s 的同版本 deb 补进闭包"
+                                % (pkg.name, pkg.version, field, alt["name"], alt["ver"], alt["name"])
+                            )
                         external.setdefault(alt["name"], []).append(
                             "%s%s" % (pkg.name, "（%s）" % field if field == "Pre-Depends" else "")
                         )

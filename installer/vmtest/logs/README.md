@@ -16,6 +16,23 @@
 | `*-install-qemu.cmd` / `*-boot-qemu.cmd` | 实际 qemu 命令行（含 `accel`） | 原文 |
 | `*-install-qemu.out` / `*-boot-qemu.out` | qemu 自身 stderr | 原文（通常为空） |
 
+## 变体 A（ubuntu/debian）证据（2026-11-12）
+
+| 文件 | 内容 | 可信度 |
+|---|---|---|
+| `ubuntu-install.log` | Ubuntu 22.04.5 无人值守装机串口全文（第 6 轮，ISO 本地 apt 镜像方案，零 `install_fail`） | 原文，**核心证据** |
+| `ubuntu-e2e-stagec-boot.log` | guest 内 oneshot 自跑 S1→S10 全链串口全文，末段 `=== CX ubuntu ALL-GREEN ===` | 原文，**核心证据（主判据）** |
+| `ubuntu-e2e-collect-boot.log` | collect 阶段（disable docker 后）串口全文 | 原文 |
+| `ubuntu-e2e-collect-files.tgz` | guest 内取证包：`state.json` + `S1..S10` 全部 `/api/step` 回执 + `stagec-ubuntu.log` | 原文，**判据数据源** |
+| `*-stages.log` | 阶段耗时打点（装机 173s / boot 272s） | 只记时间戳，**不是结论证据** |
+| `ubuntu-e2e-evidence.md` | 本次 e2e 的结论汇总（十步 / 8 镜像 sha / 冒烟 4/4 / 串口行号 / 缺陷闭环） | 结论文档，引用数字一律可回溯到上面几份原文 |
+| `ubuntu-e2e-docker-inventory.txt` | 采集失败留痕：`docker` 起来后 slirp SSH 失联（同 `kylin-firewalld-exp3` 机理） | ⚠ **不可作证据**，镜像判据改用 `S4_IMAGES` 回执 |
+
+> 与变体 B 的差别：变体 A 走 `docker load`，容器记录的是 **sha 引用**而非 tag，
+> 事后按 `Repository:Tag` 数 `docker images` 会误判为 0 个（已在 `e2e/ubuntu/stagec.sh` 修掉
+> docker CLI 路径硬编码问题）。「8 镜像」以 installer 自己导入后的 `checks[]` 全 `ok:true` 为准。
+
+
 ## ⚠ 关于 `kylin-firewalld-exp3/exp4`
 
 这两份记录的是「guest 内 dockerd 起来后，宿主经 QEMU `hostfwd` 的 SSH 失联」。

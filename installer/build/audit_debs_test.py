@@ -196,9 +196,19 @@ def test_unlisted_deb_is_rejected():
 # ---------------------------------------------------------------- zstd 分支
 
 def test_zstd_magic_without_module_gives_actionable_error():
-    """缺 zstd 能力时，错误信息必须说清「这是环境缺能力，不是闭包坏」。"""
+    """缺 zstd 能力时，错误信息必须说清「这是环境缺能力，不是闭包坏」。
+
+    注：同时屏蔽 zstandard 模块与 zstd CLI——只 mock shutil.which 不够，
+    构建机一旦 pip install 过 zstandard（2026-11-12 实测），模块路径会先命中，
+    用例就测不到「两者皆无」的错误分支了。
+    """
     body = b"\x28\xb5\x2f\xfd" + b"\x00" * 16
     old_which = ad.shutil.which
+    # 置 None 而不是 pop：pop 后函数内 import 会从磁盘重新加载；
+    # sys.modules[name] = None 会让 import 直接抛 ImportError（Python 语义）。
+    had_zstd_mod = "zstandard" in sys.modules
+    old_zstd_mod = sys.modules.get("zstandard")
+    sys.modules["zstandard"] = None
     ad.shutil.which = lambda _name: None
     try:
         try:
@@ -211,6 +221,10 @@ def test_zstd_magic_without_module_gives_actionable_error():
             raise AssertionError("缺 zstd 能力时必须抛错")
     finally:
         ad.shutil.which = old_which
+        if had_zstd_mod:
+            sys.modules["zstandard"] = old_zstd_mod
+        else:
+            sys.modules.pop("zstandard", None)
 
 
 def test_control_compression_dispatch():

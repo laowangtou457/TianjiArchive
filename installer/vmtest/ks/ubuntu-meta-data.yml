@@ -1,0 +1,2 @@
+#cloud-init nocloud meta-data —— vmtest 固定实例标识，内容无实际用途但端点必须存在
+instance-id: tianji-vmtest-ubuntu-001

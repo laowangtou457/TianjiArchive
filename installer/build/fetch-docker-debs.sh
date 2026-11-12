@@ -180,6 +180,11 @@ rm -rf "${OUT_DIR}/partial"
 # 设计 §4.2 点名的那种失败，且现象是 docker-ce 装完却起不来。
 # --reinstall 强制重新下载这些「目标机未必有」的基础包，让闭包与构建机的
 # 既有安装状态**无关**——这是闭包能自称「闭」的前提。
+# perl-base 是 2026-11-12 变体 A 真机 e2e 抓到的真缺陷（Round5）：构建机 perl-base
+# 已是新版 → apt 认为「已满足」没带出来；而 git 的依赖链 perl→perl-base(=) 是严格
+# 等版依赖，ISO 装出的 22.04.5 里是旧版 perl-base，dpkg -i 两轮补装仍
+# 「dependency problems prevent configuration of perl」→ S3 FAIL。
+# 审计侧的对应防线：audit-debs.py 已把「严格等版依赖落在闭包外」升级为 ERROR。
 ALWAYS_DOWNLOAD=(
   libseccomp2
   libc6
@@ -189,6 +194,7 @@ ALWAYS_DOWNLOAD=(
   libnftables1
   libmnl0
   libnfnetlink0
+  perl-base
 )
 log "补下载目标机可能缺失的基础依赖：${ALWAYS_DOWNLOAD[*]}"
 set +e

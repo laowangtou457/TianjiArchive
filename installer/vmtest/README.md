@@ -1,9 +1,11 @@
-# 变体 B 真机验证：容器化 QEMU 装 麒麟 V10 SP3 / 统信 UOS 20
+# 真机验证：容器化 QEMU 装 麒麟 V10 SP3 / 统信 UOS 20（变体 B）与 ubuntu/debian（变体 A）
 
 目的：把 `docs/变体B-系统基线实测.md` §7 里六项「未验证」变成**有命令有输出**的实测结论。
 不是读包列表，是真的装进虚拟盘、开机、跑 `getenforce` / `getstatus` / `xfs_info`。
+同一套 harness 也用于 **变体 A（ubuntu/debian）** 的端到端验收（§9）。
 
-结论汇总见 **`docs/变体B-真机实测结果.md`**；本文件只讲怎么复现。
+结论汇总：变体 B 见 **`docs/变体B-真机实测结果.md`**；变体 A 见
+**`logs/ubuntu-e2e-evidence.md`**。本文件只讲怎么复现。
 
 ---
 
@@ -65,11 +67,15 @@ bash installer/vmtest/probe.sh --os uos
 
 ```
 installer/vmtest/
-├── run-vm.sh          # 建盘 + 起 http + 引导 anaconda（宿主/容器双模式，含阶段打点）
+├── run-vm.sh          # 建盘 + 起 http + 引导 anaconda/subiquity（宿主/容器双模式，含阶段打点）
 ├── probe.sh           # ssh 进 guest 采集六项 + 附加
+├── e2e-ubuntu.sh      # 变体 A 三阶段驱动：prep | chain | collect（§9）
+├── e2e/ubuntu/        # 变体 A guest 内自跑全链：stagec.sh / collect.sh / 两个 systemd 单元
 ├── ks-httpd.pl        # 喂 kickstart / .run 包的极简 HTTP（流式 + Range；镜像里没 python3/curl）
 ├── ks/kylin-min.ks    # 麒麟无人值守 kickstart
 ├── ks/uos-min.ks      # 统信（仅 hostname/注释差异）
+├── ks/ubuntu-user-data.yml   # 变体 A 的 subiquity autoinstall
+├── ks/ubuntu-meta-data.yml   # nocloud 数据源必需的 meta-data
 └── logs/              # 串口全文 + 阶段打点 + 探测原文（文本，入库）
 ```
 
@@ -344,3 +350,79 @@ git add -f installer/vmtest/logs/kylin-e2e-*.log   # *.log 被 .gitignore 排除
    会被拒（「当前应执行 S<N>」）；`.env` 变更后 S5 支持重渲，但必须先重新提交表单。
    另：**S5 拒绝覆盖已存在的 `.env`**（防静默丢弃现场配置），重装场景用
    `--overwrite` 重启安装器——旧 `.env` 会**自动备份到日志目录**再覆盖，不是直接丢弃。
+
+## 9. 变体 A（ubuntu/debian）端到端验收
+
+被测系统 **Ubuntu 22.04.5 LTS (jammy)**，走 **casper + subiquity autoinstall**（不是 kickstart），
+安装包 `tianji-server-setup-ubuntu-debian-amd64-1.0.0.run`。2026-11-12 真机 ALL-GREEN，
+证据与结论见 **`logs/ubuntu-e2e-evidence.md`**。
+
+### 9.1 三步走（同变体 B 的 prep/chain/collect 骨架，脚本独立）
+
+```bash
+# 0) 装盘：subiquity 装完执行 shutdown: poweroff，qemu 由 -no-reboot 顶掉，rc=0 即装完
+bash installer/vmtest/run-vm.sh --os ubuntu --fresh --disk 60G --mem 8192 --smp 4
+
+# 1) prep：起机 -> 推资产（.run / 镜像 tar / stagec.sh / 单元）-> arm 单元 -> 关机
+bash installer/vmtest/e2e-ubuntu.sh prep
+
+# 2) chain：带 attach-ro 镜像 tar 引导，guest 内 oneshot 自跑 S1→S10
+bash installer/vmtest/e2e-ubuntu.sh chain
+
+# 3) collect：disable docker 后收集引导，slirp SSH 恢复后 scp 取证
+bash installer/vmtest/e2e-ubuntu.sh collect
+```
+
+产物：`logs/ubuntu-{install,boot}.log`（装盘/首启，`run-vm.sh` 直出）与
+`logs/ubuntu-e2e-{stagec-boot,collect-boot}.log` + `logs/ubuntu-e2e-collect-files.tgz`
+（内含 `state.json` + S1..S10 全部回执）。
+
+### 9.2 与变体 B 的关键差异
+
+| 项 | 变体 B（麒麟/统信） | 变体 A（ubuntu/debian） |
+|---|---|---|
+| 引导 | ISO `/images/pxeboot/{vmlinuz,initrd.img}` | ISO `/casper/{vmlinuz,initrd}` |
+| 应答文件 | kickstart `inst.ks=http://10.0.2.2:8000/ks.cfg` | autoinstall `ds=nocloud;s=http://10.0.2.2:8000/`，需 `/user-data` + `/meta-data` 两个端点 |
+| 装完信号 | anaconda `-no-reboot` 顶掉 QEMU | `shutdown: poweroff` + `-no-reboot` |
+| 源 | 光盘 `inst.repo=hd:LABEL=` | **ISO 变本地 apt 镜像**（见 9.3 第 1 条） |
+| docker | 静态二进制 `/usr/local/lib/tianji/docker-static/docker` | deb 安装 `/usr/bin/docker` |
+
+### 9.3 已知坑（2026-11-12 踩出来的，按踩到顺序）
+
+1. **subiquity 对 target 内 `apt-get update` 失败一律致命**（Launchpad #1963725 / #1991813），
+   `apt.fallback-offline` 兜不住；且 `Early/run` 早于 `Mirror/apt-config`，`ip link set down`
+   也拦不住它自己重放 netplan。宿主侧 `archive.ubuntu.com` 还会 502/200 摇摆（clash TUN），
+   外网镜像不能作确定性依赖。
+   → **终解：把 ISO 变成本地 apt 镜像**。`run-vm.sh` 在容器内 `mount -o loop,ro ISO /iso-mnt`
+   再起第二个 `ks-httpd.pl 8001 /iso-mnt`，`apt.primary` 指向 `http://10.0.2.2:8001/`，
+   并用 `disable-suites: [backports, proposed, security, updates]` +
+   `disable-components: [universe, multiverse, restricted]` 把源条目裁到与 ISO `dists/jammy`
+   （仅 main+restricted）**完全一致** → 零外网依赖，第 6 轮 173s 装完、零 `install_fail`。
+2. **live 环境的 `/etc/resolv.conf` 是 systemd stub（127.0.0.53）**，curtin 拷进 target 后
+   chroot 内没有 resolved → DNS 全挂。early-commands 里换成真实 DNS 普通文件是必要修复。
+3. **late-commands 不能往 `/home/<user>` 写**：那时用户主目录还没创建，命令 exit 1 直接拖挂安装。
+   写 `/root/` 下。
+4. **guest 内没有 curl**：全链脚本用 `python3 urllib` 发 `/api/step`，别照抄变体 B 的 curl 版本。
+5. **`scp -P` 不是 `-p`**：`-p` 是 preserve，会把端口号当本地文件（`stat local "2222"`）。
+6. **离线改盘要知道 p2 偏移**：容器内 `losetup -P` 不生成分区节点（`/dev/loopNp2` 不存在），
+   必须 `qemu-img convert -O raw` 后手工解 GPT 拿 start LBA（本盘 p2 = 4096 LBA = 2 MiB），
+   再 `mount -o loop,offset=2097152 -t ext4`。急着改已装盘（摘 arm 单元）时用这条。
+7. **`docker load` 出来的镜像在容器 `config.v2.json` 里是 sha 引用**，事后 `docker images`
+   按 `Repository:Tag` 计数会误判。变体 A 的「8 镜像」判据用 installer 的 `S4_IMAGES` 回执。
+
+### 9.4 本轮抓到并修掉的产品缺陷
+
+`perl (= 5.34.0-3ubuntu1.9)` 的**严格等版**依赖 `perl-base (= 5.34.0-3ubuntu1.9)`，
+而 payload 只带了 perl 1.9、未带 perl-base 1.9；ISO 装出的系统自带 `perl-base 1.3` →
+`dpkg: dependency problems prevent configuration of perl` → 级联 `liberror-perl`、`git` →
+**S3_DOCKER 直接 FAIL**（容器里测不出来，只有真机装盘才暴露）。
+
+- 构建侧：`fetch-docker-debs.sh` 的 `ALWAYS_DOWNLOAD` 补 `perl-base`，payload 增至 86 个 deb
+- 审计侧：`audit-debs.py` 新增规则——**严格等版（`=`）依赖若落在闭包外即 ERROR**
+  （原逻辑把闭包外依赖一律记作「目标系统提供」，正是这条盲区放过了该缺陷）
+
+### 9.5 遗留
+
+- 该包**未 gpg 签名**：构建机无 TTY 时 gpg 卡 pinentry（`--batch`/`loopback`/杀 agent 均无效，
+  实测挂 22 分钟后被 SIGTERM）。payload 完整性由内嵌 `SHA256SUMS` 把守；正式交付前需在
+  可用环境补 `--sign` 出 `.asc`。

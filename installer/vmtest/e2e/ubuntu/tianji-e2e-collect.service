@@ -1,0 +1,11 @@
+[Unit]
+Description=Tianji e2e collect boot (oneshot, serial marker then idle)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/collect.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,73 @@
+#cloud-config
+# 天玑档案 vmtest —— Ubuntu Server 22.04 (jammy) subiquity autoinstall 种子
+# 与 kylin-min.ks / uos-min.ks 同口径：最小系统 + SSH 公钥 + 串口控制台。
+# 装完 shutdown: poweroff —— QEMU 随之退出、容器退出，作为「装盘完成」的硬信号
+# （与变体 B 的 anaconda -no-reboot 重启信号等价）。
+# @SSH_PUBKEY@ 由 run-vm.sh 注入宿主公钥。
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  timezone: Asia/Shanghai
+  # apt：完全本地化。primary 指向 run-vm.sh 起的 ISO 镜像 httpd（10.0.2.2:8001，
+  # loop mount 官方 ISO），ISO 的 dists/jammy 只含 main+restricted → 用
+  # disable_suites/disable_components 把源条目裁到与镜像完全一致，apt-get update
+  # 零外网依赖（确定性成功）。openssh-server 从 ISO pool 装。
+  # fallback-offline 保留作兜底语义。
+  apt:
+    geoip: false
+    fallback-offline: true
+    disable-suites: [backports, proposed, security, updates]
+    disable-components: [universe, multiverse, restricted]
+    primary:
+      - arches: [default]
+        uri: "http://10.0.2.2:8001/"
+    conf: |
+      Acquire::Retries "8";
+      Acquire::http::Timeout "30";
+  # 诊断：apt-get update 在 target 内 exit 100 两次，且 fallback-offline 未兜底。
+  # early-commands 在 curtin apt_config 之前跑、与 apt 同 live 网络命名空间，
+  # 把 DNS/HTTP 探测结果打到串口（宿主 logs/ubuntu-install.log 直接可读）。
+  early-commands:
+    # resolv 修复：live 的 stub（127.0.0.53）进 target chroot 后没有 resolved。
+    - rm -f /etc/resolv.conf
+    - printf 'nameserver 10.0.2.3\nnameserver 223.5.5.5\n' > /etc/resolv.conf
+    - |
+      {
+        echo "== EC-DIAG $(date -u '+%FT%TZ') =="
+        echo '--- /etc/resolv.conf (after fix)'; cat /etc/resolv.conf 2>&1
+        echo '--- DNS probe'
+        python3 -c "import socket; print('archive.ubuntu.com ->', socket.gethostbyname('archive.ubuntu.com'))" 2>&1
+        python3 -c "import socket; print('mirrors.ustc.edu.cn ->', socket.gethostbyname('mirrors.ustc.edu.cn'))" 2>&1
+        echo '--- HTTP probe'
+        python3 -c "import urllib.request; print('ustc ->', urllib.request.urlopen('http://mirrors.ustc.edu.cn/ubuntu/dists/jammy/Release', timeout=12).status)" 2>&1
+        python3 -c "import urllib.request; print('archive ->', urllib.request.urlopen('http://archive.ubuntu.com/ubuntu/dists/jammy/Release', timeout=12).status)" 2>&1
+        python3 -c "import urllib.request; print('local-mirror ->', urllib.request.urlopen('http://10.0.2.2:8001/dists/jammy/Release', timeout=12).status)" 2>&1
+        echo '--- EC-DIAG end'
+      } > /dev/ttyS0 2>&1 || true
+      true
+  identity:
+    hostname: tianji-ubuntu
+    username: tianji
+    # 'Tianji#VM2026' 的 sha512crypt（openssl passwd -6 -salt tjtianji）。
+    # e2e 全程走公钥登录，此口令仅作串口/控制台后备，不入任何交付物。
+    password: "$6$tjtianji$pdioM3w8vmtcpAaK.b.0D5yStDJv6QhkCjkQ3Jdow.uHvwXYwCv5DiKh2TOSxHrIMv5ktyscFB0gYlsm4me/z1"
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - "@SSH_PUBKEY@"
+  storage:
+    layout:
+      name: direct          # 全盘直用 ext4，不用默认 LVM —— 与变体 B 的极简分盘口径一致
+  shutdown: poweroff
+  late-commands:
+    # tianji 用户免密 sudo：e2e 驱动走 ssh 普通用户 + sudo，对齐变体 B 的 root 直登语义
+    - echo 'tianji ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-tianji-vmtest
+    # 装好的系统也把控制台落到 ttyS0（boot 模式串口日志才可读）
+    - sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="console=tty0 console=ttyS0,115200n8"/' /target/etc/default/grub
+    # 与变体 B %post 同口径的开机留痕（写 /root：late 阶段用户主目录还未创建，
+    # 首跑实测 2026-11-12 写 /home/tianji 直接 exit 1）
+    - |
+      curtin in-target -- bash -c '{ echo "== installed at"; date -u; echo "== uname -r"; uname -r; echo "== ip a"; ip a; } > /root/facts-boot.txt'
