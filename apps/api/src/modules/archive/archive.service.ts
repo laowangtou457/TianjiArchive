@@ -1022,6 +1022,7 @@ export class ArchiveService {
       note: r.note,
       status: r.status,
       openFlag: r.openFlag,
+      openScope: r.openScope,
       fullText: null,
       extra: r.extra ?? {},
       fileCount,

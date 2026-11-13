@@ -30,6 +30,7 @@ import {
   BORROW_MODE_LABELS,
   ITEM_STATUS_LABELS,
   ITEM_STATUS_VALUES,
+  OPEN_SCOPE_LABELS,
   BorrowMode,
   ItemStatus,
   type ElectronicFileDto,
@@ -427,6 +428,16 @@ export function ItemEditorPage(): ReactElement {
                   <Stack direction="row" spacing={1} alignItems="center">
                     <SecurityChip level={selected.securityLevel} />
                     <Chip size="small" label={ITEM_STATUS_LABELS[selected.status]} />
+                    {selected.openScope && selected.openScope !== 'NONE' && (
+                      <Tooltip title="开放审核结论（P3）：条目开放=目录可查；原文开放=目录与原文均可查">
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color={selected.openScope === 'FULLTEXT' ? 'success' : 'info'}
+                          label={OPEN_SCOPE_LABELS[selected.openScope]}
+                        />
+                      </Tooltip>
+                    )}
                     <PermGate domain="BORROW_APPLY" op="WRITE">
                       <Button size="small" color="primary" variant="outlined" onClick={() => setBorrowDialog(true)}>
                         申请借阅

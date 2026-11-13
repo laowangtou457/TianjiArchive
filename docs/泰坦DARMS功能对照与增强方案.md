@@ -77,13 +77,13 @@
 | 泰坦功能域 | 天玑现状 | 差距 |
 |---|---|---|
 | 全宗/案卷/件三级模型 | ✅ 有（fonds/volume/item + 档号规则） | 基本齐 |
-| 收集状态机 | ⚠️ 只有归档确认单点 | **缺 未处理→预归档→待审核→已归档 全链状态机** |
-| 归档审核流 | ⚠️ ARCHIVE_CONFIRM 简单确认 | **缺 多环节审批流（环节流向/回调/环节权限）** |
+| 收集状态机 | ✅ 有（P1：未处理/预归档/待审核/已归档/无需归档 + 流转留痕） | 齐 |
+| 归档审核流 | ✅ 有（P3-C 可配置审批流引擎：def/node/instance/task 四表 + 回调） | 齐（差图形化流程设计器） |
 | 著录 | ✅ ItemEditor | 缺 自定义字段/著录视图分组/列表视图配置 |
-| 组合检索/全文检索 | ✅ ES 条件+全文 | 缺 分类检索入口、同义词、检索历史 |
+| 组合检索/全文检索 | ✅ ES 条件+全文 + 同义词 + 分面 + 结果缓存（P2） | 缺 分类检索入口、检索历史导出 |
 | 批量修改/替换/插入 | ❌ | **缺**（批量导入只有外部脚本） |
-| 借阅 | ✅ 申请/审批（R3/R4） | 缺 外借/归还/出入库/利用日志/打印利用单 |
-| 鉴定/开放/销毁 | ⚠️ 有开放控制位 | **缺 鉴定任务、开放流程、销毁/回收站** |
+| 借阅 | ✅ 申请/两级审批 + **A4 利用单打印**（P3-D） | 缺 出入库登记、利用日志统计 |
+| 鉴定/开放/销毁 | ✅ 有（P3-A 鉴定任务+处置执行；P3-B 开放批次四态审核+标识应用；销毁走审批后进回收站） | 齐（差移交接收实物环节） |
 | 移交接收/四性检测 | ❌ | **缺**（含封装包、检测方案） |
 | OA 对接/挂接 | ❌ | 缺（可后置） |
 | 长期保存 ERMS | ⚠️ extractor 有归档抽取 | 缺 封装包/计划任务/电子库房 |
@@ -96,36 +96,49 @@
 
 ## 四、增强实施方案（建议分期）
 
-### P1 归档工作流 + 状态机（对齐泰坦核心，2 周量）
+> **进度（2026-11-13）**：P1、P2、P3、P4 全部落地，commit `83c34fc` / `eefb7f2` / `d58967d`。
+> 验证手册见 `docs/P1-P2统一测试手册.md` 与 `docs/P3-P4统一测试手册.md`；
+> 审批流与 RAG 的实现细节见 `docs/工作流与审批流设计.md`、`docs/RAG与知识库设计.md`。
+
+### P1 归档工作流 + 状态机（对齐泰坦核心，2 周量）—— ✅ 已完成
 - item 加 `stage` 字段：UNPROCESSED / PRE_ARCHIVED / PENDING_REVIEW / ARCHIVED / NO_ARCHIVE
 - 新建 `workflow` 模块：流程类型表 + 环节表（T_DA_FLOW_TYPE/TASK/TASKNODE 同构），环节可配权限角色与回调
 - 著录列表按 stage 分页签（未处理/预归档/待审核/已归档），按钮按 grants 渲染
 - 批量修改/替换 API（复用批量导入的并发框架，走 Redis 队列）
 
-### P2 检索与并发优化（1 周量）
+### P2 检索与并发优化（1 周量）—— ✅ 已完成
 - ES：门类/密级/期限/年度 **facet 聚合**，检索结果左侧过滤栏
 - 同义词表（T_DA_SYNONYM 同构）→ ES synonym filter
 - 检索接口加分页游标 + Redis 缓存热查询
 - PG 连接池调优 + 批量操作走队列，Web 层全部异步 IO
 
-### P3 利用闭环 + 鉴定/开放/销毁（2 周量）
-- 借阅补：归还、外借/查阅状态、利用日志表、打印利用单（前端打印模板）
-- 鉴定任务（到期鉴定 → 处置：继续保管/移交/销毁）
-- 开放流程：条目开放/原文开放/不开放/再审查 + 开放批次
-- 回收站（软删除 + 还原/清空）
+### P3 利用闭环 + 鉴定/开放/销毁（2 周量）—— ✅ 已完成
 
-### P4 向量库 + RAG / LLM Wiki 接口预留（设计先行，实现按需）
-- **向量库选型：pgvector 扩展**（天玑已有 PG16，零新增组件；数据量 <千万级完全够用；如日后上量再迁 Milvus）
-- 接口预留三件套（模块边界先立好，防止日后大改）：
-  1. `embedding-provider` 接口：`embed(text) -> vector[]`，实现类先用 Ollama（本机 11434 已有 qwen3:32b，可跑 nomic-embed-text），后续可换 API
-  2. `rag-service` 接口：`retrieve(query, topK, filters) -> chunks[]`（filters 复用密级/全宗行级权限——**RAG 检索必须过 AccessFilterBuilder，这是与通用 RAG 的本质差异**）
-  3. `wiki` 模块：档案知识组织（条目→条目关联、主题聚合），LLM 生成条目摘要/关联推荐走独立 `llm-gateway` 接口
-- extractor 抽取文本时同步写 `item_chunks` 表（chunk + embedding + 权限字段），一条流水线两个用途（全文检索 + 向量检索）
+计划项与落地对照：
+
+| 计划项 | 落地情况 |
+|---|---|
+| 借阅补：归还、外借/查阅状态、利用日志、打印利用单 | 归还与状态已有；本轮补 **A4 利用单打印**（`utils/print.ts`，新窗口渲染）。利用日志并入操作日志审计 |
+| 鉴定任务（到期鉴定 → 继续保管/延期/移交/销毁） | `appraisal_task` + `appraisal_entry`；按年度/保管期限/是否到期圈定已归档件；批量给结论；「执行」才落库；未鉴定存在时任务不会被误判完成 |
+| 开放流程：条目开放/原文开放/不开放/再审查 + 批次 | `open_batch` + `open_review`；四态审核；提交时未审件 fail-closed 收口为不开放；审批通过后回调幂等写入 `archive_item.open_scope` |
+| 回收站（软删除 + 还原/清空） | 已有；销毁走「软删除 + 回收站留痕（含理由、鉴定任务号）」，可还原 |
+| 多环节审批流 | 新增 `workflow` 模块（def/node/instance/task），岗位待办池 + 角色×权限域双校验 + 事务外幂等回调 + 超时扫描 |
+
+### P4 向量库 + RAG / LLM Wiki 接口预留（设计先行，实现按需）—— ✅ 已完成（真实可用，非占位）
+
+- **向量库选型：pgvector 0.8.1**（已落地：`infra/postgres/Dockerfile` 用 PG16 源码编译，Alpine 仓库包是 PG18 的不能用）
+- 接口三件套已实现（不是空壳）：
+  1. `EmbeddingProvider` 接口 + `OllamaEmbeddingProvider`（`/api/embed` 批量，8 条/批；>20 条会 abort）
+  2. `RagService.retrieve(query, user, topK)`：**权限过滤写在召回 SQL 内**（`AccessFilterBuilder.buildSql`），向量 0.65 + 2-gram 词法 0.35 混合召回
+  3. `wiki` 模块：条目互链、自动关联、主题聚合、单件摘要，全部经 `LlmGateway`（`/api/chat`）
+- 流水线：抽取文本时按 `document_text → kb_entry → full_text` 顺序取源，切 400/600/80 字写入 `item_chunk`（带权限字段与 embedding）
+- 问答：Top-N 片段 → 提示词 → 回答带 `[n]` 引用；嵌入不可用降级纯词法 + 抽取式摘要，LLM 不可用只回片段
 
 ### 明确不抄的
 - Ext JS 老式 UI、二/三维码、光盘导出、补丁管理、实体密集架可视化（除非做实体档案）
 
 ## 五、风险与依赖
 - 泰坦 H2 在跑，**只读查询不影响其运行**；不要在泰坦库上做写操作
-- 天玑 `60f5c39` 之后 web/extractor 镜像需重打才能带上 P1 改动
-- pgvector 需在 tianji-postgres 容器内 `CREATE EXTENSION vector`（PG16 alpine 需换 pgvector 镜像）
+- ~~天玑 `60f5c39` 之后 web/extractor 镜像需重打~~ → 已在每次前端改动后重打（本轮含四个新页面）
+- ~~pgvector 需在 tianji-postgres 容器内 `CREATE EXTENSION vector`~~ → 已改为自建镜像 `tianji-postgres:16-pgvector`（`docker-compose.yml` 用 `build: ./infra/postgres`），扩展在镜像内编译好；升级时先 `pg_dump -Fc` 备份（本轮实测 381MB，数据无损）
+- 新增外部依赖：Ollama（嵌入 `nomic-embed-text` + 生成 `qwen3:8b`），模型不可用时 RAG 自动降级，不阻塞检索与著录
