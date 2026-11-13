@@ -17,6 +17,22 @@ import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
 import { LlmGateway, OllamaEmbeddingProvider } from './embedding.provider';
 
 /**
+ * 问句套话：检索前先剔掉。
+ *
+ * 这些词在任何片段里都可能出现（「的」「是什麼」「有哪些」），保留会让覆盖率
+ * 失去区分度——长文档凭字数堆命中数就能压过真正相关的短片段。
+ * 只收「多字套话 + 极少成词的虚字」，不收「中/国/内」这类会破坏实词的单字。
+ */
+const RAG_QUERY_FILLERS: readonly string[] = [
+  '請告訴我', '请告诉我', '告訴我', '告诉我', '請問', '请问', '麻煩', '麻烦',
+  '幫我查', '帮我查', '查一下', '查詢', '查询', '檢索', '检索',
+  '是什麼', '是什么', '有哪些', '哪些', '如何', '怎麼', '怎么', '怎樣', '怎样',
+  '為什麼', '为什么', '是否', '有沒有', '有没有', '可以', '能否',
+  '下一句', '上一句', '指的是', '什麼意思', '什么意思', '含義', '含义', '所謂', '所谓',
+  '的', '了', '嗎', '吗', '呢', '吧', '啊', '呀',
+];
+
+/**
  * RAG 检索/问答服务（P4）。
  *
  * ## 与通用 RAG 的本质差异：检索前就做权限过滤
@@ -133,9 +149,11 @@ export class RagService {
         // 为什么不是纯向量：中文短查询（如「四性检测」）在通用英文嵌入模型下
         // 语义漂移明显，纯向量会把「字面高度相关」的片段排到后面；
         // 词法补上精确匹配，向量补上同义/改写，两者互补远好于二选一。
+        // 各取 4k 候选：融合后会按「每件最多 2 条」做件级去重，
+        // 只取 k 条的话去重后常常凑不满（同一件占满候选池）。
         const [vecHits, lexHits] = await Promise.all([
-          this.vectorSearch(vec, user, k, kind),
-          this.lexicalSearch(q, user, k),
+          this.vectorSearch(vec, user, k * 4, kind),
+          this.lexicalSearch(q, user, k * 4),
         ]);
         const hits = this.mergeHits(vecHits, lexHits, k);
         return {
@@ -146,7 +164,7 @@ export class RagService {
           note:
             hits.length === 0
               ? '未检索到与问题相关且您有权访问的档案片段'
-              : `混合召回（向量 ${vecHits.length} + 词法 ${lexHits.length}）`,
+              : `混合召回（候选 ${vecHits.length}+${lexHits.length} 条，已按件去重取前 ${hits.length}）`,
         };
       } catch (err) {
         this.logger.warn(`向量检索失败，降级词法：${(err as Error).message}`);
@@ -234,36 +252,81 @@ export class RagService {
     user: PermissionSnapshot,
     k: number,
   ): Promise<RagChunkHit[]> {
-    const filter = this.accessFilter.buildSql(user, 'i', { startIndex: 2 });
-    const grams = this.ngrams(query);
-    // LIMIT 的占位符序号 = 2（grams 之后是 filter 参数）+ filter 参数个数
-    const limitIdx = 2 + filter.params.length;
+    const filter = this.accessFilter.buildSql(user, 'i', { startIndex: 3 });
+    const { grams, phrases } = this.lexicalTerms(query);
+    // LIMIT 的占位符序号 = 3（grams、phrases 之后是 filter 参数）+ filter 参数个数
+    const limitIdx = 3 + filter.params.length;
     const rows: Array<Record<string, unknown>> = await this.dataSource.query(
       `SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level, i.danghao, i.title,
-              (SELECT COUNT(*) FROM unnest($1::text[]) g WHERE c.content ILIKE '%' || g || '%') AS hits
+              (SELECT COUNT(*) FROM unnest($1::text[]) g WHERE c.content ILIKE '%' || g || '%') AS hits,
+              EXISTS (SELECT 1 FROM unnest($2::text[]) p WHERE c.content ILIKE '%' || p || '%') AS exact
          FROM item_chunk c
          JOIN archive_item i ON i.id = c.item_id
         WHERE c.deleted = FALSE AND ${filter.clause}
           AND EXISTS (SELECT 1 FROM unnest($1::text[]) g WHERE c.content ILIKE '%' || g || '%')
-        ORDER BY hits DESC, c.created_at DESC
+        ORDER BY exact DESC, hits DESC, c.created_at DESC
         LIMIT $${limitIdx}`,
-      [grams, ...filter.params, k],
+      [grams, phrases, ...filter.params, k],
     );
     return rows.map((r) => {
       const hitCount = Number.parseInt(String(r.hits ?? '0'), 10);
-      return {
-        ...this.toHit(r),
-        // 归一化到 0-1，仅用于展示；不代表语义相似度
-        score: Math.min(1, hitCount / Math.max(1, grams.length)),
-      };
+      const coverage = Math.min(1, hitCount / Math.max(1, grams.length));
+      const exact = r.exact === true;
+      // 词法分三档，避免「短查询命中两个常见 2-gram」就冒充强相关：
+      //   exact          用户贴了 ≥4 字的原文 → 满分（这是最强信号）
+      //   覆盖率高        gram 足够多（≥6）且命中 ≥80% → 0.85，可触发融合保底
+      //   其它           压到 0.6 以下，只作加权项，不让它压过向量
+      // 实测反例：查「司法院」（2 个 gram）时，几本会议记录因含「司法」「法院」
+      // 就拿到 1.0 并靠保底排到最前，而真正的司法院解释反而被挤掉。
+      const strong = grams.length >= 6 && coverage >= 0.8;
+      const score = exact ? 1 : strong ? Math.min(0.85, coverage) : coverage * 0.6;
+      return { ...this.toHit(r), score };
     });
+  }
+
+  /**
+   * 检索用词：剔掉问句套话与标点后，产出 2-gram（覆盖率分母）+ 长短语（整串命中判据）。
+   *
+   * 为什么必须清洗：问句里的「是什麼 / 有哪些 / 下一句 / 的 / 嗎」会对所有片段命中，
+   * 让长文档凭字数量取胜。清洗后 gram 全部落在实质词上，覆盖率才有区分度。
+   */
+  private lexicalTerms(query: string): { grams: string[]; phrases: string[] } {
+    let cleaned = query.normalize('NFKC');
+    for (const w of RAG_QUERY_FILLERS) cleaned = cleaned.split(w).join(' ');
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+    const segments = cleaned
+      .split(/[\s，。,.;；:：!！?？、"“”'‘’「」『』（）()【】《》<>|/\\+=~`*#$%@&_-]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 2);
+
+    const grams = new Set<string>();
+    for (const seg of segments) {
+      if (seg.length === 2) grams.add(seg);
+      for (let i = 0; i + 2 <= seg.length; i += 1) grams.add(seg.slice(i, i + 2));
+    }
+    if (grams.size === 0) {
+      const fallback = cleaned.replace(/\s+/g, '');
+      if (fallback.length > 0) grams.add(fallback.slice(0, 2));
+    }
+
+    // 整串判据只认长段（≥4 字）：短词如「一剪梅」「中國」在大量片段里都出现，
+    // 拿它做满分判据会把无关片段一起顶上去。
+    const phrases = segments
+      .filter((s) => s.length >= 4)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 2);
+
+    return { grams: [...grams].slice(0, 40), phrases };
   }
 
   /**
    * 融合向量与词法召回结果。
    *
    * 权重 0.65/0.35：向量主导（能处理同义改写），词法保底（避免中文短查询漂移）。
-   * 同一 chunk 两路都命中时分数相加（说明「字面 + 语义」双相关，应排更前）。
+   * 同一 chunk 两路都命中时分数相加（「字面 + 语义」双相关应排更前）。
+   * 词法强相关（整串命中或覆盖率 ≥0.8）时给 0.9 保底：这种情况下向量分常因
+   * 嵌入模型对中文长句漂移而偏低，若只做加权求和会被无关长文档压掉。
    */
   private mergeHits(vecHits: RagChunkHit[], lexHits: RagChunkHit[], k: number): RagChunkHit[] {
     const map = new Map<string, RagChunkHit>();
@@ -271,11 +334,38 @@ export class RagService {
       map.set(h.chunkId, { ...h, score: h.score * 0.65 });
     }
     for (const h of lexHits) {
+      const weighted = h.score * 0.35;
+      const floor = h.score >= 0.8 ? h.score * 0.9 : 0;
       const cur = map.get(h.chunkId);
-      if (cur) cur.score = Math.min(1, cur.score + h.score * 0.35);
-      else map.set(h.chunkId, { ...h, score: h.score * 0.35 });
+      if (cur) {
+        cur.score = Math.min(1, Math.max(cur.score + weighted, floor));
+      } else {
+        map.set(h.chunkId, { ...h, score: Math.min(1, Math.max(weighted, floor)) });
+      }
     }
-    return [...map.values()].sort((a, b) => b.score - a.score).slice(0, k);
+    const ranked = [...map.values()].sort((a, b) => b.score - a.score);
+    // 件级多样性：同一件往往有几十个切片，若不做限制，一个问题会被同一本书的
+    // 相邻片段占满（实测「司法院」查询 Top5 有 3 条来自同一件），引用就失去意义。
+    // 先按「每件最多 2 条」取，取不满再用被压下的按原序补齐。
+    const perItemLimit = 2;
+    const picked: RagChunkHit[] = [];
+    const overflow: RagChunkHit[] = [];
+    const seen = new Map<string, number>();
+    for (const h of ranked) {
+      const n = seen.get(h.itemId) ?? 0;
+      if (n >= perItemLimit) {
+        overflow.push(h);
+        continue;
+      }
+      seen.set(h.itemId, n + 1);
+      picked.push(h);
+      if (picked.length >= k) break;
+    }
+    for (const h of overflow) {
+      if (picked.length >= k) break;
+      picked.push(h);
+    }
+    return picked.slice(0, k);
   }
 
   // ==========================================================================
@@ -523,27 +613,5 @@ export class RagService {
     }
     if (na === 0 || nb === 0) return 0;
     return dot / (Math.sqrt(na) * Math.sqrt(nb));
-  }
-
-  /** 中文 2-gram 切片（保留原串整体，避免短查询被切碎后失去精度） */
-  private ngrams(query: string): string[] {
-    const q = query.replace(/\s+/g, ' ').trim();
-    const set = new Set<string>();
-    if (q.length <= 2) {
-      set.add(q);
-      return [...set];
-    }
-    // 按空格分词后，对每个词取 2-gram；整串也保留一次
-    for (const token of q.split(' ')) {
-      if (token.length <= 2) {
-        set.add(token);
-        continue;
-      }
-      for (let i = 0; i + 2 <= token.length; i += 2) {
-        set.add(token.slice(i, i + 2));
-      }
-    }
-    if (set.size === 0) set.add(q);
-    return [...set].slice(0, 16);
   }
 }
