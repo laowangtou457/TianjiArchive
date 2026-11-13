@@ -25,4 +25,5 @@ export * from './kb-entry.entity';
 export * from './recycle-bin.entity';
 export * from './saved-search.entity';
 export * from './search-history.entity';
+export * from './search-synonym.entity';
 export * from './backup-record.entity';

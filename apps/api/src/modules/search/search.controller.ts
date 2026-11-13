@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -10,6 +10,7 @@ import {
   type FulltextSearchResult,
   type SavedSearchDto,
   type SearchHit,
+  type SearchSynonymDto,
   type PermissionSnapshot,
   OpenFlag,
   ItemStatus,
@@ -17,8 +18,36 @@ import {
   SecurityLevel,
 } from '@tianji/shared';
 import { SearchService } from './search.service';
+import { SynonymService } from './synonym.service';
 import { CurrentUser, RequirePerm, Audit } from '../../common/decorators/require-perm.decorator';
 import { SavedSearch } from '../../infra/database/entities/saved-search.entity';
+
+class SynonymBodyDto {
+  @IsArray()
+  @IsString({ each: true })
+  public words!: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  public note?: string;
+}
+
+class SynonymPatchBodyDto {
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  public words?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  public note?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  public enabled?: boolean;
+}
 
 class SaveSearchBodyDto {
   @IsString()
@@ -41,6 +70,7 @@ class SaveSearchBodyDto {
 export class SearchController {
   constructor(
     private readonly service: SearchService,
+    private readonly synonyms: SynonymService,
     @InjectRepository(SavedSearch) private readonly savedRepo: Repository<SavedSearch>,
   ) {}
 
@@ -158,6 +188,46 @@ export class SearchController {
     }
     await this.savedRepo.delete({ id });
     return { deleted: true };
+  }
+
+  // ------------------------------------------------------------------ 同义词
+  // 同义词是检索配置而非检索行为，权限挂 PARAM（系统参数），不给普通用户改。
+
+  @Get('synonyms')
+  @RequirePerm({ domain: 'PARAM', op: 'READ', checkScope: false, objectType: 'SEARCH' })
+  public async listSynonyms(): Promise<SearchSynonymDto[]> {
+    return this.synonyms.list();
+  }
+
+  @Post('synonyms')
+  @RequirePerm({ domain: 'PARAM', op: 'WRITE', checkScope: false, objectType: 'SEARCH' })
+  @Audit({ action: 'UPDATE', objectType: 'SEARCH' })
+  public async createSynonym(
+    @Body() dto: SynonymBodyDto,
+    @CurrentUser('userId') userId: string,
+  ): Promise<SearchSynonymDto> {
+    return this.synonyms.create(dto.words ?? [], dto.note ?? null, userId);
+  }
+
+  @Patch('synonyms/:id')
+  @RequirePerm({ domain: 'PARAM', op: 'WRITE', checkScope: false, objectType: 'SEARCH' })
+  @Audit({ action: 'UPDATE', objectType: 'SEARCH' })
+  public async updateSynonym(
+    @Param('id') id: string,
+    @Body() dto: SynonymPatchBodyDto,
+  ): Promise<SearchSynonymDto> {
+    return this.synonyms.update(id, {
+      words: dto.words,
+      note: dto.note,
+      enabled: dto.enabled,
+    });
+  }
+
+  @Delete('synonyms/:id')
+  @RequirePerm({ domain: 'PARAM', op: 'WRITE', checkScope: false, objectType: 'SEARCH' })
+  @Audit({ action: 'DELETE', objectType: 'SEARCH' })
+  public async deleteSynonym(@Param('id') id: string): Promise<{ deleted: boolean }> {
+    return this.synonyms.remove(id);
   }
 
   /** 重建 ES 索引（R0/R1 运维操作） */

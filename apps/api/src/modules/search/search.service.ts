@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { createHash } from 'node:crypto';
 import { In, Repository } from 'typeorm';
 import {
   BizException,
@@ -23,9 +24,12 @@ import { ArchiveItem } from '../../infra/database/entities/archive-item.entity';
 import { Fonds } from '../../infra/database/entities/fonds.entity';
 import { ElectronicFile } from '../../infra/database/entities/electronic-file.entity';
 import { SearchHistory } from '../../infra/database/entities/search-history.entity';
-import { EsService, type ArchiveEsDoc } from '../../infra/elasticsearch/es.module';
+import { EsService } from '../../infra/elasticsearch/es.module';
+import { EsIndexerService } from '../../infra/elasticsearch/es-indexer.service';
 import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
 import { applyAccessFilter } from '../../common/access/scoped-query';
+import { RedisService } from '../../infra/redis/redis.module';
+import { SynonymService } from './synonym.service';
 
 /** ES 聚合返回桶 */
 interface EsBucket {
@@ -63,6 +67,9 @@ export class SearchService {
     @InjectRepository(SearchHistory) private readonly historyRepo: Repository<SearchHistory>,
     private readonly es: EsService,
     private readonly accessBuilder: AccessFilterBuilder,
+    private readonly esIndexer: EsIndexerService,
+    private readonly synonyms: SynonymService,
+    private readonly redis: RedisService,
   ) {}
 
   // ==========================================================================
@@ -73,20 +80,78 @@ export class SearchService {
     query: FulltextSearchQuery,
     user: PermissionSnapshot,
   ): Promise<FulltextSearchResult> {
+    const startedAt = Date.now();
     const page = Math.max(1, query.page ?? 1);
     const size = PAGE_SIZE_OPTIONS.includes(query.size ?? 20) ? (query.size as number) : 20;
 
+    // ---- 结果缓存 ----
+    // 缓存只覆盖「ES 成功路径」：PG 降级本身已经是毫秒级，缓存它反而让降级状态被掩盖。
+    // key 里带权限指纹与索引版本号：换人、换权限、条目变更后自动落到新 key，
+    // 不需要 SCAN 删旧键，旧键靠 TTL 自然淘汰。
+    const cacheKey = await this.buildCacheKey(query, user, page, size);
+    const cached = await this.redis.getJson<FulltextSearchResult>(cacheKey);
+    if (cached) {
+      // 命中缓存也必须留痕：「我的检索历史」与审计不能因为缓存出现空洞
+      void this.recordHistory(user.userId, query.q ?? '', query as unknown as Record<string, unknown>, cached.total, Date.now() - startedAt);
+      return { ...cached, took: Date.now() - startedAt };
+    }
+
     let result: FulltextSearchResult;
+    let viaEs = false;
     try {
       result = await this.fulltextViaEs(query, user, page, size);
+      viaEs = true;
     } catch (err) {
       this.logger.warn(`ES 检索失败，降级 PG 全文: ${(err as Error).message}`);
       result = await this.fulltextViaPg(query, user, page, size);
     }
 
-    // 检索历史（工作台"我的最近检索"）
-    await this.recordHistory(user.userId, query.q ?? '', query as unknown as Record<string, unknown>, result.total, result.took);
+    if (viaEs) await this.redis.setJson(cacheKey, result, SearchService.CACHE_TTL_SECONDS);
+
+    // 检索历史异步写：它只影响「最近检索」列表，不该拖慢检索响应
+    void this.recordHistory(user.userId, query.q ?? '', query as unknown as Record<string, unknown>, result.total, result.took);
     return result;
+  }
+
+  /** 检索结果缓存时长：与 ES refresh_interval(30s) 对齐，避免「缓存比索引还新」的错觉 */
+  private static readonly CACHE_TTL_SECONDS = 30;
+
+  /**
+   * 缓存键 = 权限指纹 + 归一化查询 + 索引版本。
+   *
+   * 权限指纹必须包含密级上限与数据范围：同一个查询串在不同权限下结果集不同，
+   * 若只按查询串做键，低密级用户会命中高密级用户的缓存 —— 越权。
+   */
+  private async buildCacheKey(
+    query: FulltextSearchQuery,
+    user: PermissionSnapshot,
+    page: number,
+    size: number,
+  ): Promise<string> {
+    const ver = (await this.redis.get('tj:search:ver')) ?? '0';
+    const fp = [
+      user.userId,
+      user.maxSecurityLevel,
+      user.selfOnly ? 'self' : 'all',
+      [...(user.fondsIds ?? ['*'])].sort().join(','),
+      [...(user.orgIds ?? ['*'])].sort().join(','),
+    ].join('|');
+    const payload = JSON.stringify({
+      q: query.q ?? '',
+      fonds: query.fonds ?? [],
+      category: query.category ?? [],
+      status: query.status ?? [],
+      level: query.level ?? [],
+      retention: query.retention ?? [],
+      openFlag: query.openFlag ?? [],
+      yearFrom: query.yearFrom ?? null,
+      yearTo: query.yearTo ?? null,
+      sort: query.sort ?? 'relevance',
+      page,
+      size,
+    });
+    const hash = createHash('sha1').update(`${fp}#${payload}`).digest('hex').slice(0, 24);
+    return `tj:search:v${ver}:${hash}`;
   }
 
   private async fulltextViaEs(
@@ -103,15 +168,27 @@ export class SearchService {
     const should: Array<Record<string, unknown>> = [];
 
     const q = (query.q ?? '').trim();
+    let expansions: string[] = [];
     if (q) {
-      must.push({
-        multi_match: {
-          query: q,
-          fields: ['title^3', 'keywords^2', 'responsible^2', 'docNo^1.5', 'note', 'fulltext'],
-          type: 'best_fields',
-          operator: 'or',
-        },
-      });
+      const fields = ['title^3', 'keywords^2', 'responsible^2', 'docNo^1.5', 'note', 'fulltext'];
+      // 同义词扩展：原词权重 1.0，扩展词 0.55 —— 扩展只用来兜召回，
+      // 不能把「原词精确命中」的结果挤到同义词命中之后。
+      expansions = await this.synonyms.expand(q);
+      if (expansions.length === 0) {
+        must.push({ multi_match: { query: q, fields, type: 'best_fields', operator: 'or' } });
+      } else {
+        must.push({
+          bool: {
+            should: [
+              { multi_match: { query: q, fields, type: 'best_fields', operator: 'or', boost: 1.0 } },
+              ...expansions.map((term) => ({
+                multi_match: { query: term, fields, type: 'best_fields', operator: 'or', boost: 0.55 },
+              })),
+            ],
+            minimum_should_match: 1,
+          },
+        });
+      }
       // 档号精确/前缀匹配（提升排序）
       should.push({ term: { danghao: { value: q, boost: 5 } } });
       should.push({ prefix: { danghao: { value: q, boost: 2 } } });
@@ -163,7 +240,11 @@ export class SearchService {
     const body = {
       from: (page - 1) * size,
       size,
-      track_total_hits: true,
+      // 上限 10000：超过后 ES 只给出「≥10000」而不再精确计数，省掉一次全库计数扫描；
+      // 档案检索的用途是「有没有、大概多少」，不需要精确到个位
+      track_total_hits: 10000,
+      // 注意：request_cache 在 ES 8 是顶层请求参数而非 body 字段，
+      // 写进 body 会直接 parsing_exception（曾导致全部检索静默降级 PG）
       query: {
         bool: {
           must,
@@ -195,9 +276,12 @@ export class SearchService {
 
     // 说明：ES 客户端类型对 aggs/sort 的结构要求比运行时严格，
     // 这里把请求体视为已构造正确的 SearchRequest（字段名与官方 DSL 完全一致）。
-    const request = { index: this.es.index, body } as unknown as Parameters<
-      typeof this.es.client.search
-    >[0];
+    const request = {
+      index: this.es.index,
+      body,
+      // 分片级请求缓存：同一查询体（含权限过滤）在多用户/多页间复用结果
+      request_cache: true,
+    } as unknown as Parameters<typeof this.es.client.search>[0];
     const raw = (await this.es.client.search(request)) as unknown as {
       took: number;
       hits: { total: { value: number } | number; hits: EsHit[] };
@@ -211,7 +295,11 @@ export class SearchService {
     const fondsNameMap = await this.loadFondsNames(fondsIdSet);
 
     const list: SearchHit[] = hits.map((h) => this.toHit(h, fondsNameMap));
-    const facets = this.buildFacets(raw.aggregations);
+    // 分面桶覆盖的是「全部命中」而非当前页，因此要按桶的 key 单独换名，
+    // 否则左侧过滤栏会把 UUID 直接甩给用户
+    const facetFondsIds = (raw.aggregations?.fonds?.buckets ?? []).map((b) => String(b.key));
+    const facetFondsNames = await this.loadFondsNames(facetFondsIds);
+    const facets = this.buildFacets(raw.aggregations, facetFondsNames);
 
     return {
       list,
@@ -221,6 +309,7 @@ export class SearchService {
       took: Date.now() - startedAt,
       facets,
       echo: query as unknown as Record<string, unknown>,
+      expanded: expansions,
     };
   }
 
@@ -236,13 +325,20 @@ export class SearchService {
     applyAccessFilter(qb, this.accessBuilder, user, 'i');
 
     const q = (query.q ?? '').trim();
+    let pgExpansions: string[] = [];
     if (q) {
-      qb.andWhere(
-        `(i.title ILIKE :kw OR i.responsible ILIKE :kw OR i.docNo ILIKE :kw OR i.danghao ILIKE :kw
-          OR i.note ILIKE :kw OR i.fullText ILIKE :kw
-          OR to_tsvector('simple', coalesce(i.title,'') || ' ' || coalesce(i.fullText,'')) @@ plainto_tsquery('simple', :q))`,
-        { kw: `%${q}%`, q },
-      );
+      // 降级路径同样走同义词扩展，否则 ES 一挂「同义词」就静默失效，行为不一致
+      pgExpansions = await this.synonyms.expand(q);
+      const terms = [q, ...pgExpansions];
+      const params: Record<string, unknown> = {};
+      const groups = terms.map((t, i) => {
+        params[`kw${i}`] = `%${t}%`;
+        params[`tq${i}`] = t;
+        return `(i.title ILIKE :kw${i} OR i.responsible ILIKE :kw${i} OR i.docNo ILIKE :kw${i}
+          OR i.danghao ILIKE :kw${i} OR i.note ILIKE :kw${i} OR i.fullText ILIKE :kw${i}
+          OR to_tsvector('simple', coalesce(i.title,'') || ' ' || coalesce(i.fullText,'')) @@ plainto_tsquery('simple', :tq${i}))`;
+      });
+      qb.andWhere(`(${groups.join(' OR ')})`, params);
     }
     if (query.fonds && query.fonds.length > 0) {
       qb.andWhere('i.fondsId IN (:...fonds)', { fonds: query.fonds });
@@ -307,6 +403,7 @@ export class SearchService {
       took: Date.now() - startedAt,
       facets,
       echo: query as unknown as Record<string, unknown>,
+      expanded: pgExpansions,
     };
   }
 
@@ -491,90 +588,14 @@ export class SearchService {
   // ES 索引写入（由 Archive 变更与 Extractor 调用）
   // ==========================================================================
 
-  /** 将条目（含全文）同步到 ES */
-  public async syncItemToEs(itemId: string, fulltext?: string): Promise<void> {
-    const item = await this.itemRepo.findOne({ where: { id: itemId } });
-    if (!item) return;
-    const fileCount = await this.fileRepo.count({ where: { itemId } });
-    const doc: ArchiveEsDoc = {
-      id: item.id,
-      danghao: item.danghao,
-      title: item.title,
-      responsible: item.responsible,
-      docNo: item.docNo,
-      keywords: Array.isArray(item.keywords) ? item.keywords : [],
-      note: item.note,
-      fulltext: fulltext ?? item.fullText ?? '',
-      fondsId: item.fondsId,
-      orgId: null,
-      volumeId: item.volumeId,
-      year: item.year,
-      retention: item.retention,
-      securityLevel: item.securityLevel,
-      categoryCode: item.categoryCode,
-      classNo: item.classNo,
-      status: item.status,
-      openFlag: item.openFlag,
-      docDate: item.docDate,
-      createdAt: new Date(item.createdAt).toISOString(),
-      updatedAt: new Date(item.updatedAt).toISOString(),
-      createdBy: item.createdBy,
-      deleted: item.deleted,
-      fileCount,
-      hasPreview: fileCount > 0,
-    };
-    try {
-      await this.es.indexDoc(doc);
-    } catch (err) {
-      this.logger.warn(`ES 索引写入失败 item=${itemId}: ${(err as Error).message}`);
-    }
+  /** 将条目（含全文）同步到 ES —— 委托 infra 层索引器（单一实现） */
+  public async syncItemToEs(itemId: string, _fulltext?: string): Promise<void> {
+    await this.esIndexer.syncItem(itemId);
   }
 
   /** 批量重建索引（运维/迁移后调用） */
   public async reindexAll(batchSize = 500): Promise<{ indexed: number }> {
-    let offset = 0;
-    let indexed = 0;
-    for (;;) {
-      const rows = await this.itemRepo.find({
-        where: { deleted: false },
-        order: { id: 'ASC' },
-        skip: offset,
-        take: batchSize,
-      });
-      if (rows.length === 0) break;
-      const docs: ArchiveEsDoc[] = rows.map((item) => ({
-        id: item.id,
-        danghao: item.danghao,
-        title: item.title,
-        responsible: item.responsible,
-        docNo: item.docNo,
-        keywords: Array.isArray(item.keywords) ? item.keywords : [],
-        note: item.note,
-        fulltext: item.fullText ?? '',
-        fondsId: item.fondsId,
-        orgId: null,
-        volumeId: item.volumeId,
-        year: item.year,
-        retention: item.retention,
-        securityLevel: item.securityLevel,
-        categoryCode: item.categoryCode,
-        classNo: item.classNo,
-        status: item.status,
-        openFlag: item.openFlag,
-        docDate: item.docDate,
-        createdAt: new Date(item.createdAt).toISOString(),
-        updatedAt: new Date(item.updatedAt).toISOString(),
-        createdBy: item.createdBy,
-        deleted: item.deleted,
-        fileCount: 0,
-        hasPreview: false,
-      }));
-      const r = await this.es.bulkIndex(docs);
-      indexed += r.indexed;
-      offset += batchSize;
-    }
-    await this.es.refresh();
-    return { indexed };
+    return this.esIndexer.reindexAll(batchSize, true);
   }
 
   // ==========================================================================
@@ -626,16 +647,22 @@ export class SearchService {
     };
   }
 
-  private buildFacets(aggs?: Record<string, { buckets: EsBucket[] }>): SearchFacets {
-    const toBuckets = (buckets: EsBucket[] = [], labelMap?: Record<string, string>): FacetBucket[] =>
+  private buildFacets(
+    aggs?: Record<string, { buckets: EsBucket[] }>,
+    fondsNames?: Map<string, string>,
+  ): SearchFacets {
+    const toBuckets = (
+      buckets: EsBucket[] = [],
+      labelMap?: Record<string, string> | Map<string, string>,
+    ): FacetBucket[] =>
       buckets.map((b) => ({
         key: String(b.key),
-        label: labelMap?.[String(b.key)] ?? String(b.key),
+        label: this.labelOf(labelMap, String(b.key)),
         count: b.doc_count,
       }));
 
     return {
-      fonds: toBuckets(aggs?.fonds?.buckets),
+      fonds: toBuckets(aggs?.fonds?.buckets, fondsNames),
       year: toBuckets(aggs?.year?.buckets),
       retention: toBuckets(aggs?.retention?.buckets, RETENTION_LABELS),
       securityLevel: toBuckets(aggs?.level?.buckets, SECURITY_LEVEL_LABELS),
@@ -643,15 +670,18 @@ export class SearchService {
     };
   }
 
+  /** 分面标签解析：支持普通映射与 Map（全宗名用 Map 传，避免构造大对象） */
+  private labelOf(labelMap: Record<string, string> | Map<string, string> | undefined, key: string): string {
+    if (!labelMap) return key;
+    if (labelMap instanceof Map) return labelMap.get(key) ?? key;
+    return labelMap[key] ?? key;
+  }
+
   private countFacet(
     values: string[],
     labelMap?: Record<string, string> | Map<string, string>,
   ): FacetBucket[] {
-    const labelOf = (key: string): string => {
-      if (!labelMap) return key;
-      if (labelMap instanceof Map) return labelMap.get(key) ?? key;
-      return labelMap[key] ?? key;
-    };
+    const labelOf = (key: string): string => this.labelOf(labelMap, key);
     const counter = new Map<string, number>();
     for (const v of values) {
       if (!v) continue;
@@ -697,6 +727,7 @@ export class SearchService {
       took: Date.now() - startedAt,
       facets: { fonds: [], year: [], retention: [], securityLevel: [], category: [] },
       echo: query as unknown as Record<string, unknown>,
+      expanded: [],
     };
   }
 

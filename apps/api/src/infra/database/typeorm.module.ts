@@ -22,6 +22,7 @@ import {
   Role,
   SavedSearch,
   SearchHistory,
+  SearchSynonym,
   SystemParam,
   UserDataScope,
   Volume,
@@ -52,6 +53,7 @@ export const ALL_ENTITIES = [
   RecycleBin,
   SavedSearch,
   SearchHistory,
+  SearchSynonym,
   BackupRecord,
 ] as const;
 

@@ -125,6 +125,20 @@ function makeHarness(opts: { esFails?: boolean } = {}) {
   const accessBuilder = new AccessFilterBuilder();
   const es = { index: 'archive_items', client: esClient };
 
+  // 同义词与缓存对「权限过滤」这条断言无影响，给最小可用桩：
+  // expand 恒返回空（不引入额外 must 子句），redis 恒 miss（不走缓存短路）。
+  const synonyms = { expand: vi.fn(async () => [] as string[]) };
+  const redis = {
+    getJson: vi.fn(async () => null),
+    setJson: vi.fn(async () => undefined),
+    get: vi.fn(async () => null),
+    incr: vi.fn(async () => 1),
+  };
+  const esIndexer = {
+    syncItem: vi.fn(async () => undefined),
+    reindexAll: vi.fn(async () => ({ indexed: 0 })),
+  };
+
   const service = new SearchService(
     itemRepo as never,
     fondsRepo as never,
@@ -132,6 +146,9 @@ function makeHarness(opts: { esFails?: boolean } = {}) {
     historyRepo as never,
     es as never,
     accessBuilder,
+    esIndexer as never,
+    synonyms as never,
+    redis as never,
   );
 
   return { service, captured, esClient, itemRepo, historyRepo, accessBuilder };

@@ -7,6 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArchiveService } from '@api/modules/archive/archive.service';
+import { AccessFilterBuilder } from '@api/common/access/access-filter.builder';
 import { ItemStatus, Retention, SecurityLevel, VolumeStatus } from '@tianji/shared';
 import type { CreateItemDto, UpdateItemDto } from '@tianji/shared';
 
@@ -142,6 +143,10 @@ function makeHarness(initial: Row = itemRow()) {
     fondsService as never,
     categoryService as never,
     recycleService as never,
+    // 行级过滤构造器：本组用例只断言档号与状态，用真实实现（纯函数、无副作用）
+    new AccessFilterBuilder() as never,
+    // 索引同步是副作用，单测里断言不到 ES，给个空壳即可
+    { enqueue: vi.fn(), enqueueMany: vi.fn(), syncItem: vi.fn(async () => undefined) } as never,
   );
 
   return { service, itemRepo, volumeRepo, manager, state, ruleService, recycleService };

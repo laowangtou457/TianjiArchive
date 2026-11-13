@@ -36,6 +36,7 @@ import type {
   RecycleBinDto,
   RoleDto,
   SearchHistoryDto,
+  SearchSynonymDto,
   StageTransitionResult,
   StockReport,
   SystemParamDto,
@@ -215,6 +216,16 @@ export const searchApi = {
   removeSaved: (id: string): Promise<{ deleted: boolean }> => api.delete(`/search/saved/${id}`),
 
   reindex: (): Promise<{ indexed: number; failed: number }> => api.post('/search/reindex'),
+
+  // ---- 同义词（对齐泰坦同义词维护）----
+  synonyms: (): Promise<SearchSynonymDto[]> => api.get('/search/synonyms'),
+  createSynonym: (words: string[], note?: string): Promise<SearchSynonymDto> =>
+    api.post('/search/synonyms', { words, note }),
+  updateSynonym: (
+    id: string,
+    patch: { words?: string[]; note?: string | null; enabled?: boolean },
+  ): Promise<SearchSynonymDto> => api.patch(`/search/synonyms/${id}`, patch),
+  removeSynonym: (id: string): Promise<{ deleted: boolean }> => api.delete(`/search/synonyms/${id}`),
 };
 
 // ---------------------------------------------------------------- 电子文件

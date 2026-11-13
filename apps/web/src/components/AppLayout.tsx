@@ -33,6 +33,7 @@ export const MENU: MenuItem[] = [
   { key: 'audit', label: '操作日志', path: '/audit', icon: '☰', group: '系统管理', domains: ['AUDIT_LOG'] },
   { key: 'users', label: '用户与角色', path: '/system/users', icon: '☗', group: '系统管理', domains: ['USER'] },
   { key: 'dict', label: '数据字典', path: '/system/dict', icon: '≡', group: '系统管理', domains: ['DICT'] },
+  { key: 'synonyms', label: '检索同义词', path: '/system/synonyms', icon: '⇋', group: '系统管理', domains: ['PARAM'] },
   { key: 'params', label: '系统参数', path: '/system/params', icon: '⚙', group: '系统管理', domains: ['PARAM'] },
 ];
 

@@ -37,6 +37,7 @@ import { Fonds } from '../../infra/database/entities/fonds.entity';
 import { OrgNode } from '../../infra/database/entities/org-node.entity';
 import { Category } from '../../infra/database/entities/category.entity';
 import { ElectronicFile } from '../../infra/database/entities/electronic-file.entity';
+import { EsIndexerService } from '../../infra/elasticsearch/es-indexer.service';
 import { DanghaoRuleService } from '../danghao/rule.service';
 import { FondsService } from '../fonds/fonds.service';
 import { CategoryService } from '../category/category.service';
@@ -69,6 +70,7 @@ export class ArchiveService {
     private readonly categoryService: CategoryService,
     private readonly recycleService: RecycleService,
     private readonly accessBuilder: AccessFilterBuilder,
+    private readonly esIndexer: EsIndexerService,
   ) {}
 
   // ==========================================================================
@@ -347,7 +349,7 @@ export class ArchiveService {
 
     const org = volume.orgId ? await this.orgRepo.findOne({ where: { id: volume.orgId } }) : null;
 
-    return this.dataSource.transaction(async (manager) => {
+    const created = await this.dataSource.transaction(async (manager) => {
       const generated = await this.ruleService.generateItemDanghao(manager, {
         fondsId: volume.fondsId,
         fondsNo: fonds.fondsNo,
@@ -389,6 +391,9 @@ export class ArchiveService {
       this.logger.log(`卷 ${volume.danghao} 新增件 ${saved.danghao}`);
       return this.toItemDto(saved, 0);
     });
+    // 索引同步必须在事务提交后触发：事务未提交时另起连接读不到新行
+    this.esIndexer.enqueue(created.id);
+    return created;
   }
 
   /**
@@ -405,7 +410,7 @@ export class ArchiveService {
     const org = dto.orgId ? await this.orgRepo.findOne({ where: { id: dto.orgId } }) : null;
     const year = dto.year ?? new Date(dto.docDate).getFullYear();
 
-    return this.dataSource.transaction(async (manager) => {
+    const created = await this.dataSource.transaction(async (manager) => {
       const generated = await this.ruleService.generateItemDanghao(manager, {
         fondsId: dto.fondsId,
         fondsNo: fonds.fondsNo,
@@ -440,6 +445,8 @@ export class ArchiveService {
       const saved = await manager.save(entity);
       return this.toItemDto(saved, 0);
     });
+    this.esIndexer.enqueue(created.id);
+    return created;
   }
 
   /** 更新件（档号不可改；已归档件仅允许有限字段） */
@@ -473,6 +480,7 @@ export class ArchiveService {
         extra: dto.extra ?? row.extra,
       }),
     );
+    this.esIndexer.enqueue(dto.id);
     return this.itemDetail(dto.id);
   }
 
@@ -528,7 +536,7 @@ export class ArchiveService {
     }
     const reason = dto.reason?.trim() || null;
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // 锁行读：防双开页面并发流转互相覆盖
       const rows = await manager
         .getRepository(ArchiveItem)
@@ -587,6 +595,9 @@ export class ArchiveService {
 
       return { requested: ids.length, updated: logs.length, failed };
     });
+    // 状态是检索的过滤维度（已归档/待审核），流转后必须让索引跟上
+    if (result.updated > 0) this.esIndexer.enqueueMany(ids);
+    return result;
   }
 
   /** 预归档（未处理 → 预归档） */
@@ -709,13 +720,14 @@ export class ArchiveService {
       .filter((id) => !okSet.has(id))
       .map((id) => ({ id, reason: '条目不存在或已作废/已删除' }));
 
+    // 批量改题名/密级/期限/开放状态都会改变检索结果与分面，整批重写索引
+    this.esIndexer.enqueueMany(okSet.size > 0 ? [...okSet] : dto.ids);
     return {
       requested: dto.ids.length,
       updated: Array.isArray(result) ? result.length : (result as { rowCount?: number })?.rowCount ?? okSet.size,
       failed,
     };
   }
-
   /**
    * 作废重编 —— 档号唯一可变通道（PRD 合规底线②）。
    *
@@ -767,7 +779,7 @@ export class ArchiveService {
 
       const reassign = dto.reassign !== false;
 
-      return this.dataSource.transaction(async (manager: EntityManager) => {
+      const result = await this.dataSource.transaction(async (manager: EntityManager) => {
         // 1) 释放旧档号唯一键（保留追溯痕迹）。
         //    WHERE 带上 status：万一有旁路（不走本锁的批量脚本）改了状态，这里会落空，
         //    我们据此拒绝，而不是把别人的改动覆盖掉。
@@ -831,6 +843,9 @@ export class ArchiveService {
           status: newDanghao ? ItemStatus.DRAFT : ItemStatus.VOID,
         };
       });
+      // 档号与状态都变了：不重写索引会留下「旧档号还能搜到」的幽灵记录
+      this.esIndexer.enqueue(id);
+      return result;
     });
   }
 
@@ -894,6 +909,8 @@ export class ArchiveService {
       },
       deletedBy: operatorId,
     });
+    // 软删也要同步：ES 里 deleted 字段是检索过滤条件，不更新会继续被搜到
+    this.esIndexer.enqueue(id);
     return { deleted: true, label };
   }
 

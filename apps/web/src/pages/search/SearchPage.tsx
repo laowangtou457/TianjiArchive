@@ -500,6 +500,18 @@ export function SearchPage(): ReactElement {
                   )}
                 </Stack>
 
+                {/* 同义词扩展回显：让「搜这个词为什么出那批档」可解释，而不是黑箱 */}
+                {result && (result.expanded?.length ?? 0) > 0 && (
+                  <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      已按同义词扩展召回：
+                    </Typography>
+                    {(result.expanded ?? []).map((w) => (
+                      <Chip key={w} label={w} size="small" variant="outlined" sx={{ height: 20 }} />
+                    ))}
+                  </Stack>
+                )}
+
                 {hits.length === 0 && !searchQuery.isLoading && result && (
                   <Box sx={{ py: 6, textAlign: 'center' }}>
                     <Typography color="text.secondary">未检索到符合条件的档案</Typography>

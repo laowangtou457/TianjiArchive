@@ -15,6 +15,7 @@ import { BackupPage } from './pages/system/BackupPage';
 import { UsersPage } from './pages/system/UsersPage';
 import { DictPage } from './pages/system/DictPage';
 import { ParamsPage } from './pages/system/ParamsPage';
+import { SynonymPage } from './pages/system/SynonymPage';
 import { AuditPage } from './pages/system/AuditPage';
 import { RecyclePage } from './pages/RecyclePage';
 import { KbPage } from './pages/KbPage';
@@ -184,6 +185,14 @@ export function AppRoutes(): ReactElement {
           element={
             <RequireAuth>
               <ParamsPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/system/synonyms"
+          element={
+            <RequireAuth>
+              <SynonymPage />
             </RequireAuth>
           }
         />

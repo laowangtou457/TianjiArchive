@@ -452,6 +452,12 @@ export interface FulltextSearchResult extends PageResult<SearchHit> {
   facets: SearchFacets;
   /** 查询语句回显（便于"保存检索条件"） */
   echo: Record<string, unknown>;
+  /**
+   * 本次查询实际带入的同义词扩展词（空数组表示未触发扩展）。
+   * 回给前端是为了让「为什么搜这个词能出那批档」可解释——
+   * 档案检索要能向利用者说明召回依据，不能是黑箱。
+   */
+  expanded?: string[];
 }
 
 /** 条件检索单个条件 */
@@ -485,6 +491,19 @@ export interface SearchHistoryDto {
   resultCount: number;
   tookMs: number;
   createdAt: string;
+}
+
+/**
+ * 检索同义词组（对齐泰坦同义词维护）。
+ * 一组内的词互为等价，检索时任意一个命中即带入其余词做扩展召回。
+ */
+export interface SearchSynonymDto {
+  id: string;
+  words: string[];
+  note: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ============================================================================
