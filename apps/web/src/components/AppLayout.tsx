@@ -1,4 +1,6 @@
 import { useState, type ReactElement, type ReactNode } from 'react';
+import type { PermissionDomain, PermissionSnapshot } from '@tianji/shared';
+import { useAuthStore } from '../stores/authStore';
 
 /** 侧栏菜单项 */
 export interface MenuItem {
@@ -8,25 +10,44 @@ export interface MenuItem {
   icon: string;
   /** 分组标题（同级相同则归为一组） */
   group: string;
+  /**
+   * 可见性所需的功能域（任一命中即显示；缺省 = 恒显示，如工作台）。
+   * 判据：grants[domain] 存在且 mode !== NONE。与后端角色权限矩阵同源，
+   * 菜单只做「引导」，服务端 PermissionGuard 仍是最终裁决。
+   */
+  domains?: PermissionDomain[];
 }
 
 /** 菜单定义（与路由表一致） */
 export const MENU: MenuItem[] = [
   { key: 'dashboard', label: '工作台', path: '/', icon: '◧', group: '概览' },
-  { key: 'search', label: '综合检索', path: '/search', icon: '⌕', group: '检索利用' },
-  { key: 'borrow', label: '借阅管理', path: '/borrow', icon: '⇄', group: '检索利用' },
-  { key: 'kb', label: '片段检索', path: '/kb', icon: '◈', group: '检索利用' },
-  { key: 'fonds', label: '全宗管理', path: '/fonds', icon: '▤', group: '档案业务' },
-  { key: 'catalog', label: '档案著录', path: '/catalog', icon: '▥', group: '档案业务' },
-  { key: 'rule', label: '档号规则', path: '/rules', icon: '⌗', group: '档案业务' },
-  { key: 'recycle', label: '回收站', path: '/recycle', icon: '⌫', group: '档案业务' },
-  { key: 'report', label: '统计报表', path: '/report', icon: '◔', group: '统计与运维' },
-  { key: 'backup', label: '备份恢复', path: '/backup', icon: '⌸', group: '统计与运维' },
-  { key: 'audit', label: '操作日志', path: '/audit', icon: '☰', group: '系统管理' },
-  { key: 'users', label: '用户与角色', path: '/system/users', icon: '☗', group: '系统管理' },
-  { key: 'dict', label: '数据字典', path: '/system/dict', icon: '≡', group: '系统管理' },
-  { key: 'params', label: '系统参数', path: '/system/params', icon: '⚙', group: '系统管理' },
+  { key: 'search', label: '综合检索', path: '/search', icon: '⌕', group: '检索利用', domains: ['SEARCH'] },
+  { key: 'borrow', label: '借阅管理', path: '/borrow', icon: '⇄', group: '检索利用', domains: ['BORROW_APPLY', 'BORROW_APPROVE', 'BORROW_RETURN'] },
+  { key: 'kb', label: '片段检索', path: '/kb', icon: '◈', group: '检索利用', domains: ['KB'] },
+  { key: 'fonds', label: '全宗管理', path: '/fonds', icon: '▤', group: '档案业务', domains: ['FONDS'] },
+  { key: 'catalog', label: '档案著录', path: '/catalog', icon: '▥', group: '档案业务', domains: ['VOLUME', 'ITEM'] },
+  { key: 'rule', label: '档号规则', path: '/rules', icon: '⌗', group: '档案业务', domains: ['DANGHAO_RULE'] },
+  { key: 'recycle', label: '回收站', path: '/recycle', icon: '⌫', group: '档案业务', domains: ['RECYCLE'] },
+  { key: 'report', label: '统计报表', path: '/report', icon: '◔', group: '统计与运维', domains: ['REPORT'] },
+  { key: 'backup', label: '备份恢复', path: '/backup', icon: '⌸', group: '统计与运维', domains: ['BACKUP'] },
+  { key: 'audit', label: '操作日志', path: '/audit', icon: '☰', group: '系统管理', domains: ['AUDIT_LOG'] },
+  { key: 'users', label: '用户与角色', path: '/system/users', icon: '☗', group: '系统管理', domains: ['USER'] },
+  { key: 'dict', label: '数据字典', path: '/system/dict', icon: '≡', group: '系统管理', domains: ['DICT'] },
+  { key: 'params', label: '系统参数', path: '/system/params', icon: '⚙', group: '系统管理', domains: ['PARAM'] },
 ];
+
+/** 菜单可见性：任一声明域为非 NONE 授权即显示（工作台无声明恒显示） */
+export function menuVisible(
+  profile: PermissionSnapshot | null | undefined,
+  item: MenuItem,
+): boolean {
+  if (!item.domains || item.domains.length === 0) return true;
+  if (!profile?.grants) return false;
+  return item.domains.some((d) => {
+    const grant = profile.grants?.[d];
+    return !!grant && grant.mode !== 'NONE';
+  });
+}
 
 /** 布局属性 */
 export interface AppLayoutProps {
@@ -41,9 +62,11 @@ export interface AppLayoutProps {
 /**
  * 应用主框架：左侧导航 + 顶部栏 + 内容区。
  * 高密度政务风格：固定 220px 侧栏，内容区自适应，最小支持 1366×768（PRD §7.4）。
+ * 侧栏菜单按当前用户 grants 过滤——不同角色看到不同模块（检索利用/档案业务/系统管理）。
  */
 export function AppLayout(props: AppLayoutProps): ReactElement {
   const { title, subtitle, actions, children } = props;
+  const profile = useAuthStore((s) => s.profile);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('tianji.sidebarCollapsed') === '1';
   });
@@ -54,7 +77,8 @@ export function AppLayout(props: AppLayoutProps): ReactElement {
     localStorage.setItem('tianji.sidebarCollapsed', next ? '1' : '0');
   };
 
-  const groups = Array.from(new Set(MENU.map((m) => m.group)));
+  const visible = MENU.filter((m) => menuVisible(profile, m));
+  const groups = Array.from(new Set(visible.map((m) => m.group)));
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -108,7 +132,7 @@ export function AppLayout(props: AppLayoutProps): ReactElement {
                   {g}
                 </div>
               )}
-              {MENU.filter((m) => m.group === g).map((m) => {
+              {visible.filter((m) => m.group === g).map((m) => {
                 const active =
                   m.path === '/'
                     ? window.location.pathname === '/'

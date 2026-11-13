@@ -63,10 +63,15 @@ const MAGIC_NUMBERS: Array<{ mime: string; bytes: number[]; offset?: number }> =
   { mime: 'application/msword', bytes: [0xd0, 0xcf, 0x11, 0xe0] },
   { mime: 'application/vnd.ms-powerpoint', bytes: [0xd0, 0xcf, 0x11, 0xe0] },
   // 电子书：EPUB = ZIP 容器（与 OOXML 同 magic，按声明的 mime 分开比对）；
-  // MOBI = PalmDB，'BOOKMOBI' 在文件偏移 60 —— 嗅探读取长度须 ≥ 64 字节
+  // MOBI/AZW3 = PalmDB，'BOOKMOBI' 在文件偏移 60 —— 嗅探读取长度须 ≥ 64 字节
   { mime: 'application/epub+zip', bytes: [0x50, 0x4b, 0x03, 0x04] },
   {
     mime: 'application/x-mobipocket-ebook',
+    bytes: [0x42, 0x4f, 0x4f, 0x4b, 0x4d, 0x4f, 0x42, 0x49], // BOOKMOBI
+    offset: 60,
+  },
+  {
+    mime: 'application/vnd.amazon.ebook', // AZW3（KF8）与 MOBI 同为 PalmDB 容器签名
     bytes: [0x42, 0x4f, 0x4f, 0x4b, 0x4d, 0x4f, 0x42, 0x49], // BOOKMOBI
     offset: 60,
   },
@@ -359,6 +364,51 @@ export class FileService {
 
     if (kind === 'NONE') {
       throw new BizException(ErrorCode.PREVIEW_UNSUPPORTED, '该格式不支持在线预览');
+    }
+
+    // 电子书容器：EPUB 返回原件 presign URL（前端 epub.js 解码渲染）；
+    // MOBI/AZW3 预览降级为抽取文本（前端无 PalmDB 解码器，转换器已产出 document_text）
+    if (kind === 'EBOOK') {
+      if (mime === 'application/epub+zip') {
+        const url = await this.minio.presignGet(file.bucket, file.objectKey, 900);
+        return {
+          url,
+          kind: PreviewKind.EBOOK,
+          mime,
+          filename: file.filename,
+          expiresIn: 900,
+          watermarked,
+          watermarkTemplate,
+        };
+      }
+      const text = await this.textRepo.findOne({ where: { fileId: file.id }, order: { version: 'DESC' } });
+      if (!text || !text.content) {
+        if (file.extractStatus === ExtractStatus.PENDING || file.extractStatus === ExtractStatus.RUNNING) {
+          throw new BizException(
+            ErrorCode.PREVIEW_UNSUPPORTED,
+            '电子书正在解析正文，请稍后重试（通常 10~60 秒）',
+          );
+        }
+        throw new BizException(
+          ErrorCode.PREVIEW_UNSUPPORTED,
+          '该电子书暂无可预览的正文（解析失败），可申请下载原件',
+        );
+      }
+      const buffer = Buffer.from(text.content, 'utf8');
+      const key = `preview-text/${file.id}.txt`;
+      await this.minio.putObject(this.minio.buckets.preview, key, buffer, {
+        'Content-Type': 'text/plain; charset=utf-8',
+      });
+      const url = await this.minio.presignGet(this.minio.buckets.preview, key, 900);
+      return {
+        url,
+        kind: PreviewKind.TEXT,
+        mime: 'text/plain; charset=utf-8',
+        filename: `${path.parse(file.filename).name}.txt`,
+        expiresIn: 900,
+        watermarked: false,
+        watermarkTemplate: '',
+      };
     }
 
     // 文本类：读 document_text 直接返回（避免暴露原件）

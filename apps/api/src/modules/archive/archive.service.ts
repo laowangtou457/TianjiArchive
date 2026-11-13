@@ -19,7 +19,9 @@ import {
   type VoidReassignDto,
   type VoidReassignResult,
   type VolumeDto,
+  type PermissionSnapshot,
 } from '@tianji/shared';
+import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
 import { BATCH_UPDATE_MAX } from '../../common/constants/enums';
 import { asPartialUpdate } from '../../common/types/typeorm-helpers';
 import { ArchiveItem } from '../../infra/database/entities/archive-item.entity';
@@ -58,6 +60,7 @@ export class ArchiveService {
     private readonly fondsService: FondsService,
     private readonly categoryService: CategoryService,
     private readonly recycleService: RecycleService,
+    private readonly accessBuilder: AccessFilterBuilder,
   ) {}
 
   // ==========================================================================
@@ -102,9 +105,12 @@ export class ArchiveService {
   }
 
   /** 案卷详情 */
-  public async volumeDetail(id: string): Promise<VolumeDto> {
+  public async volumeDetail(id: string, user?: PermissionSnapshot): Promise<VolumeDto> {
     const row = await this.volumeRepo.findOne({ where: { id, deleted: false } });
     if (!row) throw new BizException(ErrorCode.NOT_FOUND, '案卷不存在');
+    if (user && !this.accessBuilder.canAccessRecord(user, row)) {
+      throw new BizException(ErrorCode.FORBIDDEN, '密级或数据范围不足，无法查看该案卷');
+    }
     return this.toVolumeDto(row);
   }
 
@@ -242,6 +248,8 @@ export class ArchiveService {
     status?: ItemStatus;
     keyword?: string;
     allowedFondsIds?: string[] | null;
+    /** 传入时按密级+数据范围行级过滤（检索利用链路） */
+    user?: PermissionSnapshot;
   }): Promise<PageResult<ItemDto>> {
     const page = Math.max(1, params.page);
     const size = Math.min(100, Math.max(1, params.size));
@@ -263,6 +271,15 @@ export class ArchiveService {
       if (params.allowedFondsIds.length === 0) return { list: [], total: 0, page, size };
       qb.andWhere('i.fondsId IN (:...allowed)', { allowed: params.allowedFondsIds });
     }
+    if (params.user) {
+      const levels = this.accessBuilder.levelsAtMost(params.user.maxSecurityLevel);
+      if (levels.length === 0) return { list: [], total: 0, page, size };
+      qb.andWhere('i.securityLevel IN (:...levels)', { levels });
+      if (params.user.fondsIds !== null) {
+        if (params.user.fondsIds.length === 0) return { list: [], total: 0, page, size };
+        qb.andWhere('i.fondsId IN (:...scopeFonds)', { scopeFonds: params.user.fondsIds });
+      }
+    }
 
     qb.skip((page - 1) * size).take(size);
     const [rows, total] = await qb.getManyAndCount();
@@ -280,9 +297,13 @@ export class ArchiveService {
   }
 
   /** 件详情 */
-  public async itemDetail(id: string): Promise<ItemDto> {
+  /** 件详情（传入 user 时做密级+数据范围行级校验——检索利用链路的唯一防线） */
+  public async itemDetail(id: string, user?: PermissionSnapshot): Promise<ItemDto> {
     const row = await this.itemRepo.findOne({ where: { id, deleted: false } });
     if (!row) throw new BizException(ErrorCode.NOT_FOUND, '档案条目不存在');
+    if (user && !this.accessBuilder.canAccessRecord(user, row)) {
+      throw new BizException(ErrorCode.FORBIDDEN, '密级或数据范围不足，无法查看该档案');
+    }
     const fileCount = await this.fileRepo.count({ where: { itemId: id } });
     return this.toItemDto(row, fileCount);
   }

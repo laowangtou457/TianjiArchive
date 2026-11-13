@@ -27,13 +27,15 @@ import {
 import { useParams } from 'react-router-dom';
 import { useSnackbar } from 'notistack';
 import {
+  BORROW_MODE_LABELS,
   ITEM_STATUS_LABELS,
+  BorrowMode,
   type ElectronicFileDto,
   type ItemDto,
   type MetadataFieldDef,
   type VolumeDto,
 } from '@tianji/shared';
-import { archiveApi, categoryApi, fileApi } from '../../api';
+import { archiveApi, borrowApi, categoryApi, fileApi } from '../../api';
 import { ApiError } from '../../api/client';
 import { AppLayout } from '../../components/AppLayout';
 import { ArchiveNo, SecurityChip } from '../../components/ArchiveNo';
@@ -211,6 +213,30 @@ export function ItemEditorPage(): ReactElement {
       enqueueSnackbar(err instanceof ApiError ? err.message : '提交失败', { variant: 'error' }),
   });
 
+  // ---------------------------------------------------------------- 申请借阅（检索利用链路入口）
+  const [borrowDialog, setBorrowDialog] = useState(false);
+  const [borrowForm, setBorrowForm] = useState<{ purpose: string; mode: BorrowMode; expectReturn: string }>({
+    purpose: '',
+    mode: 'ONLINE',
+    expectReturn: '',
+  });
+  const borrowMutation = useMutation({
+    mutationFn: () =>
+      borrowApi.create({
+        itemId: selected?.id ?? '',
+        purpose: borrowForm.purpose,
+        mode: borrowForm.mode,
+        expectReturn: borrowForm.expectReturn,
+      }),
+    onSuccess: () => {
+      enqueueSnackbar('借阅申请已提交，等待审批', { variant: 'success' });
+      setBorrowDialog(false);
+      setBorrowForm({ purpose: '', mode: 'ONLINE', expectReturn: '' });
+    },
+    onError: (err: unknown) =>
+      enqueueSnackbar(err instanceof ApiError ? err.message : '借阅申请失败', { variant: 'error' }),
+  });
+
   // ---------------------------------------------------------------- 视图
   const volume: VolumeDto | undefined = volumeQuery.data;
   const readOnly = selected?.status === 'ARCHIVED' || selected?.status === 'VOID';
@@ -314,6 +340,11 @@ export function ItemEditorPage(): ReactElement {
                   <Stack direction="row" spacing={1} alignItems="center">
                     <SecurityChip level={selected.securityLevel} />
                     <Chip size="small" label={ITEM_STATUS_LABELS[selected.status]} />
+                    <PermGate domain="BORROW_APPLY" op="WRITE">
+                      <Button size="small" color="primary" variant="outlined" onClick={() => setBorrowDialog(true)}>
+                        申请借阅
+                      </Button>
+                    </PermGate>
                     {selected.status === 'DRAFT' && (
                       <PermGate domain="ARCHIVE_CONFIRM" op="APPROVE">
                         <Button size="small" onClick={() => submitMutation.mutate(selected.id)}>
@@ -502,6 +533,53 @@ export function ItemEditorPage(): ReactElement {
             onClick={() => voidMutation.mutate()}
           >
             确认作废并重编
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 申请借阅 */}
+      <Dialog open={borrowDialog} onClose={() => setBorrowDialog(false)} maxWidth="sm">
+        <DialogTitle>申请借阅 · {selected?.danghao ?? ''}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1, minWidth: 380 }}>
+            <TextField
+              label="借阅事由 *"
+              value={borrowForm.purpose}
+              onChange={(e) => setBorrowForm({ ...borrowForm, purpose: e.target.value })}
+              multiline
+              minRows={2}
+              helperText="将随申请单送审批人留存"
+            />
+            <TextField
+              select
+              label="借阅方式"
+              value={borrowForm.mode}
+              onChange={(e) => setBorrowForm({ ...borrowForm, mode: e.target.value as BorrowMode })}
+              SelectProps={{ native: true }}
+            >
+              {Object.entries(BORROW_MODE_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </TextField>
+            <TextField
+              label="期望归还日期 *"
+              type="date"
+              value={borrowForm.expectReturn}
+              onChange={(e) => setBorrowForm({ ...borrowForm, expectReturn: e.target.value })}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBorrowDialog(false)}>取消</Button>
+          <Button
+            variant="contained"
+            disabled={borrowForm.purpose.trim().length < 2 || !borrowForm.expectReturn || borrowMutation.isPending}
+            onClick={() => borrowMutation.mutate()}
+          >
+            提交申请
           </Button>
         </DialogActions>
       </Dialog>

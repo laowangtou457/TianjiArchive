@@ -54,7 +54,11 @@ export class PermissionGuard implements CanActivate {
     }
 
     // -------------------------------------------------------------- 1) 功能域权限
-    if (!hasPermission(user, options.domain, options.op)) {
+    // altPerm：主权限不过时的替代判定（检索利用链路——凭 SEARCH READ 只读访问）
+    if (
+      !hasPermission(user, options.domain, options.op) &&
+      !(options.altPerm && hasPermission(user, options.altPerm.domain, options.altPerm.op))
+    ) {
       this.logger.warn(
         `越权拦截 user=${user.username} domain=${options.domain} op=${options.op} ${request.method} ${request.originalUrl}`,
       );

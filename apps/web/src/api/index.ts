@@ -63,7 +63,20 @@ export const dashboardApi = {
 
 // ---------------------------------------------------------------- 全宗 / 机构
 export const fondsApi = {
-  list: (): Promise<FondsDto[]> => api.get('/fonds'),
+  /**
+   * 全宗列表（摊平为全量数组）。
+   * 后端 GET /fonds 返回分页信封 PageResult，而调用方（全宗管理列表、档号规则/检索/用户页的全宗下拉）
+   * 统一按全量数组消费，故在此解包并自动翻页，避免 (data ?? []).map 抛 TypeError。
+   */
+  list: async (): Promise<FondsDto[]> => {
+    const all: FondsDto[] = [];
+    for (let page = 1; page <= 20; page += 1) {
+      const res = await api.get<PageResult<FondsDto>>('/fonds', { page, size: 100 });
+      all.push(...(res?.list ?? []));
+      if (!res || all.length >= res.total) break;
+    }
+    return all;
+  },
   detail: (id: string): Promise<FondsDto> => api.get(`/fonds/${id}`),
   create: (body: CreateFondsDto): Promise<FondsDto> => api.post('/fonds', body),
   update: (id: string, body: Partial<CreateFondsDto>): Promise<FondsDto> =>
@@ -303,8 +316,18 @@ export const auditApi = {
 export const backupApi = {
   run: (scope: 'full' | 'db' | 'minio' | 'meta' = 'full'): Promise<BackupRecordDto> =>
     api.post('/backups/run', { scope }),
-  list: (params?: { page?: number; size?: number }): Promise<PageResult<BackupRecordDto>> =>
-    api.get('/backups', params),
+  list: async (params?: { page?: number; size?: number }): Promise<PageResult<BackupRecordDto>> => {
+    // 后端返回 { items, total, page, size }，此处归一化为 PageResult（list）供页面消费
+    const res = await api.get<
+      { items?: BackupRecordDto[]; list?: BackupRecordDto[]; total: number; page: number; size: number }
+    >('/backups', params);
+    return {
+      list: res.list ?? res.items ?? [],
+      total: res.total ?? 0,
+      page: res.page ?? 1,
+      size: res.size ?? 20,
+    };
+  },
   successRate: (): Promise<{ total: number; ok: number; failed: number; rate: number }> =>
     api.get('/backups/success-rate'),
   verifyRestore: (id: string): Promise<{ ok: boolean; checks: Array<{ name: string; ok: boolean; message: string }>; checkedAt: string }> =>
@@ -313,8 +336,18 @@ export const backupApi = {
 
 // ---------------------------------------------------------------- 回收站
 export const recycleApi = {
-  list: (params?: Record<string, unknown>): Promise<PageResult<RecycleBinDto>> =>
-    api.get('/recycle', params),
+  list: async (params?: Record<string, unknown>): Promise<PageResult<RecycleBinDto>> => {
+    // 后端返回 { items, total, page, size }，此处归一化为 PageResult（list）供页面消费
+    const res = await api.get<
+      { items?: RecycleBinDto[]; list?: RecycleBinDto[]; total: number; page: number; size: number }
+    >('/recycle', params);
+    return {
+      list: res.list ?? res.items ?? [],
+      total: res.total ?? 0,
+      page: res.page ?? 1,
+      size: res.size ?? 20,
+    };
+  },
   restore: (id: string): Promise<{ restored: boolean }> => api.post(`/recycle/${id}/restore`),
   purge: (id: string): Promise<{ purged: boolean }> => api.delete(`/recycle/${id}`),
 };

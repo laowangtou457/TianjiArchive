@@ -17,6 +17,12 @@ export interface RequirePermOptions {
   /** 操作类型 */
   op: OperationType;
   /**
+   * 替代权限：主权限不过时，若用户满足 altPerm（如检索域 READ）则放行只读访问。
+   * 用于「检索利用链路」——借阅用户（R3）无著录域权限，但凭 SEARCH READ
+   * 可查看密级/数据范围允许的件详情与卷内容（行级校验仍由 Service 层执行）。
+   */
+  altPerm?: { domain: PermissionDomain; op: OperationType };
+  /**
    * 是否强制校验密级与数据范围。
    * 默认 true：Guard 会从请求体/查询参数中提取 securityLevel/fondsId 做即时校验；
    * 列表类接口建议 false，改由 Service 层通过 AccessFilterBuilder 做行级过滤。

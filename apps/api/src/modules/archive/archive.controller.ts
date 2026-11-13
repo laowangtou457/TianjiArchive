@@ -34,6 +34,7 @@ import {
   type CreateVolumeDto,
   type ItemDto,
   type PageResult,
+  type PermissionSnapshot,
   type VoidReassignResult,
   type VolumeDto,
 } from '@tianji/shared';
@@ -239,9 +240,18 @@ export class ArchiveController {
   }
 
   @Get('volumes/:id')
-  @RequirePerm({ domain: 'VOLUME', op: 'READ', checkScope: true, objectType: 'VOLUME' })
-  public async volumeDetail(@Param('id') id: string): Promise<VolumeDto> {
-    return this.service.volumeDetail(id);
+  @RequirePerm({
+    domain: 'VOLUME',
+    op: 'READ',
+    checkScope: true,
+    objectType: 'VOLUME',
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
+  public async volumeDetail(
+    @Param('id') id: string,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<VolumeDto> {
+    return this.service.volumeDetail(id, user);
   }
 
   @Post('volumes')
@@ -281,18 +291,26 @@ export class ArchiveController {
 
   // ---------------------------------------------------------------- 件
   @Get('volumes/:id/items')
-  @RequirePerm({ domain: 'ITEM', op: 'READ', checkScope: false, objectType: 'ITEM' })
+  @RequirePerm({
+    domain: 'ITEM',
+    op: 'READ',
+    checkScope: false,
+    objectType: 'ITEM',
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
   public async listVolumeItems(
     @Param('id') volumeId: string,
     @Query('page') page?: string,
     @Query('size') size?: string,
     @Query('keyword') keyword?: string,
+    @CurrentUser() user?: PermissionSnapshot,
   ): Promise<PageResult<ItemDto>> {
     return this.service.listItems({
       page: Number.parseInt(page ?? '1', 10) || 1,
       size: Number.parseInt(size ?? '100', 10) || 100,
       volumeId,
       keyword,
+      user,
     });
   }
 
@@ -319,9 +337,19 @@ export class ArchiveController {
   }
 
   @Get('items/:id')
-  @RequirePerm({ domain: 'ITEM', op: 'READ', checkScope: true, objectType: 'ITEM' })
-  public async itemDetail(@Param('id') id: string): Promise<ItemDto> {
-    return this.service.itemDetail(id);
+  @RequirePerm({
+    domain: 'ITEM',
+    op: 'READ',
+    checkScope: true,
+    objectType: 'ITEM',
+    // 检索利用链路：无著录域权限但持检索权（R3/R4）可只读查看（行级校验在 service）
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
+  public async itemDetail(
+    @Param('id') id: string,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<ItemDto> {
+    return this.service.itemDetail(id, user);
   }
 
   /** 卷内新增件（继承卷级字段 + 服务端分配档号） */

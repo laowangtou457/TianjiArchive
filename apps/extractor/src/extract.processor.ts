@@ -130,14 +130,20 @@ export class ExtractProcessor {
    * 可见性为 public：单测需要直接驱动分发决策（转换器实现另有独立单测）。
    */
   public async route(buffer: Buffer, filename: string, mime: string): Promise<ConvertOutput> {
-    // 电子书先于 kind 分发：resolvePreviewKind 对 epub/mobi 返回 NONE（预览走
-    // 下载-only），但它们是合法入库类型，抽取必须处理。扩展名兜底的原因：
-    // 浏览器/客户端上报的 mime 不总可靠，扩展名是更稳的本地事实。
+    // 电子书先于 kind 分发：EPUB 由前端 epub.js 渲染（kind=EBOOK），MOBI/AZW3 预览
+    // 降级为抽取文本（document_text）；它们是合法入库类型，抽取必须处理。
+    // 扩展名兜底的原因：浏览器/客户端上报的 mime 不总可靠，扩展名是更稳的本地事实。
     const ext = path.extname(filename).toLowerCase().replace('.', '');
     if (mime === 'application/epub+zip' || ext === 'epub') {
       return this.epubConverter.convert(buffer, filename);
     }
-    if (mime === 'application/x-mobipocket-ebook' || ext === 'mobi') {
+    if (
+      mime === 'application/x-mobipocket-ebook' ||
+      mime === 'application/vnd.amazon.ebook' ||
+      ext === 'mobi' ||
+      ext === 'azw3'
+    ) {
+      // AZW3（KF8）与 MOBI 同为 PalmDB 容器（'BOOKMOBI' 签名），共用解码器
       return this.mobiConverter.convert(buffer, filename);
     }
 

@@ -593,6 +593,7 @@ export const ALLOWED_MIME_TYPES: readonly string[] = [
   // 魔数表（api 侧 MAGIC_NUMBERS）各有对应签名，嗅探可强校验
   'application/epub+zip',
   'application/x-mobipocket-ebook',
+  'application/vnd.amazon.ebook',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.ms-excel',
@@ -610,6 +611,8 @@ export const PreviewKind = {
   VIDEO: 'VIDEO',
   OFFICE: 'OFFICE',
   TEXT: 'TEXT',
+  /** 电子书容器（EPUB/MOBI/AZW3）——前端用内置阅读器渲染原件 */
+  EBOOK: 'EBOOK',
   NONE: 'NONE',
 } as const;
 export type PreviewKind = (typeof PreviewKind)[keyof typeof PreviewKind];
@@ -622,6 +625,9 @@ export function resolvePreviewKind(mime: string): PreviewKind {
   if (m.startsWith('audio/')) return 'AUDIO';
   if (m.startsWith('video/')) return 'VIDEO';
   if (m.startsWith('text/')) return 'TEXT';
+  if (m === 'application/epub+zip' || m === 'application/x-mobipocket-ebook' || m === 'application/vnd.amazon.ebook') {
+    return 'EBOOK';
+  }
   if (m.includes('word') || m.includes('excel') || m.includes('spreadsheet') || m.includes('presentation') || m.includes('powerpoint')) {
     return 'OFFICE';
   }

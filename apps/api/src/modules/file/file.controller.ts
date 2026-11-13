@@ -52,7 +52,14 @@ export class FileController {
 
   /** 某条目下的文件列表 */
   @Get()
-  @RequirePerm({ domain: 'FILE', op: 'READ', checkScope: false, objectType: 'FILE' })
+  @RequirePerm({
+    domain: 'FILE',
+    op: 'READ',
+    checkScope: false,
+    objectType: 'FILE',
+    // 检索利用链路：持检索权（R3/R4）可查看件下电子文件清单（行级密级校验在 service）
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
   public async list(
     @Query('itemId') itemId: string,
     @CurrentUser() user: AuthenticatedUser,
