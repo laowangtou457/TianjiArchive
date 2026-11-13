@@ -146,13 +146,67 @@ WSL2 默认 NAT 网络：宿主本机访问容器栈靠 `localhostForwarding`（
 
 ---
 
-## 9. 诚实边界（本轮如实登记）
+## 9. 诚实边界（真机回填版 · 2026-11-13）
 
-1. **本机验证受限**：开发机沙箱安全策略拦截 `wsl.exe / dism / msiexec` 等程序，S2→S7 无法在本机真机执行。已验证的只有：PowerShell 语法解析（Parser::ParseFile）、S1 预检真跑（不依赖被拦程序的项目）、组包链路双跑逐字节一致、载荷 sha 校验闸门。
-2. **S2→S7 真机验证待做**：需一台 Windows Server 2022 真机/VM（含 BIOS 开虚拟化）。预期要暴露的问题类别：DISM 特性启用后的重启时序、NAT portproxy 与 WSL IP 漂移的竞态、systemd 引导时长对 boot.sh 就绪等待的影响。
-3. **Windows Defender / 杀软**：未验证对 ext4.vhdx 与 docker 的干扰；现场如有企业杀软，登记为待验证项。
-4. **域控/组策略**：计划任务注册与防火墙规则可能被 GPO 覆盖，未验证。
-5. **WSL systemd 引导耗时**：boot.sh 的就绪等待上限设 300 秒并留日志，超时显式 FAIL——具体典型值等真机数据回填。
+> 2026-11-13 在 **Windows Server 2022（21H2 / build 20348，Evaluation）VMware 虚拟机**上完成 V0→V7 真机验证。
+> 验证清单与逐条证据见 `installer/windows/真机验证清单.md`。下列各条已按实测结论改写，**未闭环的如实标注**。
+
+### 9.1 已验证通过（真机）
+
+| 项 | 结论 |
+|---|---|
+| V0 载荷校验 | zip / tar 双 sha256 构建前后一致 |
+| V1 十项预检 | 全 PASS（`HypervisorPresent=True`、build 20348、C: 103.4GB、四端口空闲、`C:\tianji` 可写） |
+| V2 特性启用 + 重启闸 | S2 返回重启闸 rc=7、`state.json` 写 `S2=REBOOT_PENDING`；重启后续装成功（`VirtualMachinePlatform` 已启用 → wsl.msi 返回 0） |
+| V3 发行版导入 | 导入成功、`systemd=true` 生效、`.wslconfig` 生效（`memory=10GB processors=4`） |
+| V4 向导 S1→S10 | 全 DONE（S1 0.2s / S2 58.7s / S3 82.6s / S4 166.3s / S5 0.0s / S6 53.1s / S7 7.5s / S8 4.7s / S9 15.9s / S10 0.0s） |
+| V4 冒烟 | 4/4 passed：健康检查四依赖全 ok（postgres 12ms / es 6ms / objectStorage 3ms / redis 1ms）；S3 探针 `OPS_TOTAL=13 OPS_PASSED=13`；样品书籍全链路 `IS_PASS: YES` |
+| V5 端口暴露 | portproxy（`0.0.0.0` + `127.0.0.1` 各两条）+ 防火墙 8080/8333；**局域网自测 `http://<VM-IP>:8080/healthz` = ok** |
+| V6 任务注册 | `TianjiArchive-Boot` 注册成功，`Principal = Administrator / S4U / Highest` |
+| V7 完成判定 | `IS_PASS: YES —— 安装完成` |
+
+### 9.2 未闭环（如实登记，不粉饰）
+
+**V6「重启 → 不登录 → 服务自动起来」未通过**，根因已定位为 WSL2 的平台行为，不是安装脚本缺陷：
+
+- **WSL2 的实用 VM 在没有附着会话时会自动关闭**。实测证据：每次 `wsl.exe` 调用查到的
+  `PID 1 systemd` 的 `ELAPSED` 只有 12–21 秒 —— 说明每次都是**冷启动一个新 VM**，而非接入已有的。
+  8 个 docker 容器属于后台进程，**不算活动会话**，钉不住 VM。
+- VM 被关掉后 `docker.sock` 消失、8080 无监听；此时宿主 portproxy 规则再正确
+  （`iphlpsvc` Running、目标 IP 对得上）也转发不到东西 → `localhost:8080` 超时。
+- 冷启动一遍（systemd 引导 + dockerd + 8 容器 restart）实测 **约 35–60 秒**
+  （5 秒轮询第 7 轮后 `healthz=200`）。
+
+对应修复（已落源码，**尚未在真机复验**）：
+
+1. boot 包装末尾起一个常驻 `sleep infinity` WSL 会话钉住 VM；
+2. 计划任务 `ExecutionTimeLimit = 0`（原为 `PT1H`，一小时后任务被杀，keep-alive 随之消失）；
+3. S4 改为轮询 Linux 侧 `state.json` 的 `S10_DONE`，不再 `WaitForExit`（向导是常驻 Web 服务，永不退出）。
+
+**V8（`-Uninstall`）/ V9（`-Uninstall -PurgeData`）/ V10（重装回归）未执行**，等 V6 闭环后一并做。
+
+### 9.3 嵌套虚拟化对宿主的硬要求（现场部署必须提前确认）
+
+变体 C 要在 VM 内的 WSL2 里跑 docker，因此 **VM 自身需要嵌套虚拟化**（`vhv.enable="TRUE"`），
+而嵌套虚拟化要求宿主把原生 VT-x/EPT 让给 VMware：
+
+- 宿主若启用了 Hyper-V（`HypervisorPresent=True`，或 WSL2 / Docker Desktop / 内存完整性在跑），
+  VMware 只能走 WHP 模式，**WHP 不支持嵌套虚拟化** → 客户机 `HypervisorPresent` 恒 `False`，VM 内 WSL2 起不来；
+- 现场安装前必须确认：`bcdedit /set hypervisorlaunchtype off` + 关闭「内核隔离 → 内存完整性」+ 重启。
+  只做 `bcdedit` 而不关内存完整性，重启后 hypervisor 会被重新拉起（实测：重启后 VMware 报
+  「此平台不支持虚拟化的 Intel VT-x/EPT」、`模块"HV"启动失败`）；
+- 该设置与宿主上的 WSL2 / Docker Desktop **互斥**，验证/部署期间二者不可同时使用。
+
+> 这是平台限制而非本方案的取舍。若现场必须两者共存，替代路线是把 Server 2022 跑在
+> Hyper-V 上并用 `Set-VMProcessor -ExposeVirtualizationExtensions $true` 开嵌套（本方案未实现，登记为备选）。
+
+### 9.4 仍未验证（保持开放）
+
+1. **Windows Defender / 企业杀软**：对 `ext4.vhdx` 与 docker 的干扰未验证。
+2. **域控 / 组策略**：计划任务注册与防火墙规则可能被 GPO 覆盖，未验证。
+3. **Windows 11 / mirrored 网络模式**：仅验证了 Server 2022 + NAT + portproxy 路径。
+4. **磁盘清理与磁盘占用**：`.wslconfig` 的 `memory` 上限需扣除内核开销（8GB 上限实测 `MemTotal` 仅 ~7.4GB），
+   预检判据要求 ≥8GB 时须给到 10GB 以上；该梯度已按物理内存分档实现，但仅在 12GB 物理机上验证过。
 
 ---
 
@@ -161,3 +215,4 @@ WSL2 默认 NAT 网络：宿主本机访问容器栈靠 `localhostForwarding`（
 | 版本 | 日期 | 内容 |
 |---|---|---|
 | v1.0 | 2026-11-10 | 设计定稿；编排器 `tianji-windows-setup.ps1` + `fetch-wsl-assets.sh` + `build-windows-package.sh` 落地；本机静态验证与组包双跑通过；S2→S7 真机验证登记待做 |
+| v1.1 | 2026-11-13 | **真机回填**：Server 2022 VM 上跑通 V0→V5、V7（S1→S10 全 DONE + 冒烟 4/4 + LAN 自测）；§9 按实测重写。修复 13 处真机缺陷：S2 补启用 `Microsoft-Windows-Subsystem-Linux`、`wsl.conf` 反引号换行、`WslPathOf` 盘符小写、`.wslconfig` 补段头与内存梯度、`Get-WslIp` 双编码解码、`Content` 的 `Byte[]` 归一化、`$PSCommandPath`、`localhost→127.0.0.1` 与 portproxy 回环规则、`/api/health` 断言结构、boot.sh base64 前归一 LF、S6 改 S4U、**S4 改轮询 state.json 不再 `WaitForExit`**、boot 加 keep-alive + `ExecutionTimeLimit=0`。V6 重启自启未闭环（WSL2 VM 无会话自动关闭），根因与修复已登记 §9.2 |

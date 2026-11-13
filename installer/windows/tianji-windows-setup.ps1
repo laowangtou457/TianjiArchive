@@ -55,6 +55,11 @@ $PORT_S3      = 8333
 $PORT_API     = 3000
 $PORT_WIZARD  = 18080
 $BOOT_TIMEOUT_SEC = 300   # boot.sh 就绪等待上限（真机数据待回填，设计 §9.5）
+# 2026-11-13 真机缺陷修复（V4）：服务端安装器（.run）的 Web 向导在 S10 之后是**常驻
+# Web 服务**，不会自行退出。S4 若用 WaitForExit 会永久阻塞（实测 166s 后进入死等）。
+# 改为读 Linux 侧状态机判定完成：/var/lib/tianji-install/state.json 的 steps.S10_DONE.status。
+$WIZ_STATE_IN_WSL = '/var/lib/tianji-install/state.json'
+$S4_TIMEOUT_MIN   = 90    # 向导全程 10-40 分钟，留足余量（含用户手动操作时间）
 
 $Script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PayloadDir = Join-Path $ScriptDir 'payload'
@@ -100,6 +105,26 @@ function Invoke-WslDistro {
     $prev = [Console]::OutputEncoding
     [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
     try { & wsl.exe -d $DISTRO_NAME -u root -- bash -c $args[0] } finally { [Console]::OutputEncoding = $prev }
+}
+function Get-WslInstallState {
+    # 读 Linux 侧安装器状态机（$WIZ_STATE_IN_WSL）。文件不存在/解析失败返回 $null。
+    # 走进程字节流 + UTF-8 解码：state.json 是 UTF-8，而 [Console]::OutputEncoding
+    # 在计划任务/重定向环境不可靠（同 Get-WslIp 的真机教训）。
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "$env:SystemRoot\System32\wsl.exe"
+    $psi.Arguments = "-d $DISTRO_NAME -u root -- cat $WIZ_STATE_IN_WSL"
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.CreateNoWindow = $true
+    try {
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $out = $p.StandardOutput.ReadToEnd()
+        $p.WaitForExit() | Out-Null
+        if (-not $out -or -not $out.Trim()) { return $null }
+        return ($out | ConvertFrom-Json)
+    } catch { return $null }
 }
 
 # ---------------------------------------------------------------------------
@@ -284,25 +309,31 @@ function Invoke-Stage2([hashtable]$Steps) {
     Write-Stage 'S2' '虚拟化底座（VirtualMachinePlatform + WSL MSI）'
 
     # 2a 特性启用（幂等：已启用直接过）
-    try {
-        $feat = Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -ErrorAction Stop
-    } catch {
-        Die 4 "S2：无法查询 VirtualMachinePlatform 状态：$($_.Exception.Message)"
-    }
-    if ($feat.State -ne 'Enabled') {
-        Write-Log 'INFO' 'S2：启用 VirtualMachinePlatform ……'
+    # 2026-11-13 真机缺陷修复：Store 版 WSL（wsl.msi）在 Server 2022 上除 VirtualMachinePlatform
+    # 外仍需 Microsoft-Windows-Subsystem-Linux（Pico provider），缺失时 wsl --import 报
+    # WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED。两个特性一起幂等启用。
+    $features = @('VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux')
+    foreach ($fname in $features) {
         try {
-            $r = Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart -ErrorAction Stop
+            $feat = Get-WindowsOptionalFeature -Online -FeatureName $fname -ErrorAction Stop
         } catch {
-            Die 4 "S2：启用 VirtualMachinePlatform 失败：$($_.Exception.Message)"
+            Die 4 "S2：无法查询 $fname 状态：$($_.Exception.Message)"
         }
-        if ($r.RestartNeeded) {
-            Mark-Step $Steps 'S2' 'REBOOT_PENDING'
-            Die 7 'S2：特性已启用但需要重启。请重启本机后重新运行本脚本（会从 S2 自动续装）。'
+        if ($feat.State -ne 'Enabled') {
+            Write-Log 'INFO' "S2：启用 $fname ……"
+            try {
+                $r = Enable-WindowsOptionalFeature -Online -FeatureName $fname -NoRestart -ErrorAction Stop
+            } catch {
+                Die 4 "S2：启用 $fname 失败：$($_.Exception.Message)"
+            }
+            if ($r.RestartNeeded) {
+                Mark-Step $Steps 'S2' 'REBOOT_PENDING'
+                Die 7 'S2：特性已启用但需要重启。请重启本机后重新运行本脚本（会从 S2 自动续装）。'
+            }
+            Write-Log 'OK' "S2：$fname 已启用（无需重启）"
+        } else {
+            Write-Log 'OK' "S2：$fname 已启用"
         }
-        Write-Log 'OK' 'S2：VirtualMachinePlatform 已启用（无需重启）'
-    } else {
-        Write-Log 'OK' 'S2：VirtualMachinePlatform 已启用'
     }
 
     # 2b WSL MSI（3010 = 成功但需重启，同样按重启闸处理）
@@ -349,7 +380,10 @@ function Invoke-Stage3([hashtable]$Steps) {
 
     # /etc/wsl.conf：systemd=true（变体 A 的 docker deb 依赖 systemctl enable）
     # 用 base64 传输避免 CRLF/编码破坏（PowerShell 管道给原生 stdin 会带 \r）
-    $confLines = "[boot]\nsystemd=true\n[network]\nhostname=TianjiArchive\ngenerateHosts=false"
+    # 2026-11-13 真机缺陷修复：换行转义必须是 PowerShell 的反引号 `n，
+    # 此前误用 C 风格 \n → 写出的 conf 是字面量 \n 字符，wsl 解析报
+    # "Expected ' ' or '\n' in /etc/wsl.conf:1"，systemd 从未生效。
+    $confLines = "[boot]`nsystemd=true`n[network]`nhostname=TianjiArchive`ngenerateHosts=false"
     $confB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($confLines))
     Invoke-WslDistro "echo $confB64 | base64 -d > /etc/wsl.conf" | Out-Null
     if ($LASTEXITCODE -ne 0) { Die 4 'S3：写入 /etc/wsl.conf 失败。' }
@@ -369,11 +403,25 @@ function Invoke-Stage3([hashtable]$Steps) {
     if ($needWrite) {
         $cs = Get-CimInstance Win32_ComputerSystem
         $memGB = [math]::Floor($cs.TotalPhysicalMemory / 1GB)
+        # 2026-11-13 真机缺陷修复：WSL 上限必须给足——安装器 K10 判据要求 WSL 内
+        # MemTotal ≥ 8GB，而 WSL2 的 memory= 上限还要扣内核开销（8GB 上限实测
+        # MemTotal 仅 ~7.4GB）。且 .wslconfig 全部行无效时 WSL2 退到「物理 50%」，
+        # 12GB 机器 MemTotal 只有 6GB → S1 必 FAIL。新梯度：物理 ≥16GB 给 12GB，
+        # ≥12GB 给 10GB（留 2GB 给 Windows），<12GB 保持 6GB 并 WARN（S1 会拦）。
         $wslMem = '6GB'
-        if ($memGB -ge 16) { $wslMem = '12GB' } elseif ($memGB -ge 8) { $wslMem = '8GB' }
-        $cfg = "$marker`nmemory=$wslMem`nprocessors=4`nswap=2GB`nlocalhostForwarding=true"
+        if ($memGB -ge 16) { $wslMem = '12GB' } elseif ($memGB -ge 12) { $wslMem = '10GB' }
+        # 2026-11-13 真机缺陷修复：.wslconfig 必须有 [wsl2] 段头，否则 memory/processors
+        # 等行全部无效（wsl 启动时逐行报 "-N 无效"）。此前以注释行开头，漏了段头。
+        $cfg = "[wsl2]`n$marker`nmemory=$wslMem`nprocessors=4`nswap=2GB`nlocalhostForwarding=true"
         Set-Content -Path $wslconfigPath -Value $cfg -Encoding ASCII
         Write-Log 'OK' "S3：.wslconfig 资源上限 memory=$wslMem processors=4"
+        if ($wslMem -eq '6GB') {
+            Write-Log 'WARN' "S3：物理内存 ${memGB}GB 不足 12GB，WSL 上限只能给 6GB——S1 内存判据会 FAIL，请扩内存后重装。"
+        }
+        # .wslconfig 只在 wsl --shutdown 后生效；此处 terminate 单个发行版不够
+        # （VM 配额是全局的），必须 shutdown。已 DONE 的阶段断点续装会自动跳过。
+        wsl --shutdown 2>$null | Out-Null
+        Start-Sleep -Seconds 3
     }
 
     # systemd 在下次发行版启动时生效
@@ -384,8 +432,11 @@ function Invoke-Stage3([hashtable]$Steps) {
 
 function WslPathOf([string]$WinPath) {
     # D:\x\y → /mnt/d/x/y（编排器与 payload 同盘，drvfs 默认挂载）
-    $p = $WinPath -replace '^([A-Za-z]):', '/mnt/$1'
-    return ($p -replace '\\', '/')
+    # 2026-11-13 真机缺陷修复：盘符必须转小写——WSL2 挂载点固定为小写 /mnt/<drive>，
+    # 实测 /mnt/C 直接 No such file（即便 drvfs 通常大小写不敏感也不可靠）。
+    $drive = $WinPath.Substring(0, 1).ToLowerInvariant()
+    $rest = $WinPath.Substring(2)
+    return ('/mnt/' + $drive + ($rest -replace '\\', '/'))
 }
 
 # ---------------------------------------------------------------------------
@@ -427,23 +478,58 @@ mkdir -p /opt/tianji/logs
 } >> "$LOG" 2>&1
 '@
     $bootSh = $bootSh.Replace('__BOOT_TIMEOUT__', "$BOOT_TIMEOUT_SEC")
+    # 2026-11-13 真机缺陷修复（V6）：here-string 保留 CRLF 行尾，base64 忠实带过去，
+    # bash 报 set: -\r invalid option / ${'\r'} command not found（rc=127/1）。
+    # base64 编码前必须归一为 LF。
+    $bootSh = $bootSh.Replace("`r`n", "`n")
     $bootB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bootSh))
     Invoke-WslDistro "mkdir -p /opt/tianji/bin /opt/tianji/logs && echo $bootB64 | base64 -d > /opt/tianji/bin/boot.sh && chmod +x /opt/tianji/bin/boot.sh" | Out-Null
     if ($LASTEXITCODE -ne 0) { Die 4 'S4：boot.sh 写入失败。' }
     Write-Log 'OK' 'S4：boot.sh 已就位'
 
-    # 启动 .run（Web 向导 localhost:18080），同步等退出——期间提示浏览器操作
+    # 启动 .run（Web 向导 localhost:18080）。**不等待进程退出**——向导在 S10 之后是
+    # 常驻 Web 服务，WaitForExit 会永久阻塞（2026-11-13 真机实测：S10 已 DONE 但进程不退）。
+    # 改为双判据轮询：以 Linux 侧 state.json 的 S10_DONE 为准，进程退出仅作错误早退信号。
     Write-Host ''
     Write-Host '  ▶ 服务端安装器即将在发行版内启动。请在【宿主浏览器】打开：'
     Write-Host "      http://localhost:$PORT_WIZARD"
     Write-Host '    按向导完成 S1→S10（与 Linux 变体完全相同的闸门与单步通道）。'
-    Write-Host '    本脚本等待安装器退出（安装全程可能 10-40 分钟，取决于机器性能）……'
+    Write-Host "    本脚本轮询安装进度（上限 $S4_TIMEOUT_MIN 分钟，安装全程通常 10-40 分钟）……"
     Write-Host ''
     $runArgs = "-d $DISTRO_NAME -u root -- sh $inWsl"
     $proc = Start-Process wsl.exe -ArgumentList $runArgs -PassThru -WindowStyle Hidden
-    $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) {
-        Die 4 "S4：服务端安装器退出码 $($proc.ExitCode) —— 按向导/日志排障后重跑（断点续装，已 DONE 的阶段自动跳过）。"
+    $deadline = (Get-Date).AddMinutes($S4_TIMEOUT_MIN)
+    $s4Done = $false
+    $lastReport = Get-Date
+    while ((Get-Date) -lt $deadline) {
+        $st = Get-WslInstallState
+        if ($st -and $st.steps -and $st.steps.S10_DONE -and $st.steps.S10_DONE.status -eq 'DONE') {
+            $s4Done = $true
+            break
+        }
+        if ($proc.HasExited) {
+            if ($proc.ExitCode -ne 0) {
+                Die 4 "S4：服务端安装器退出码 $($proc.ExitCode) —— 按向导/日志排障后重跑（断点续装，已 DONE 的阶段自动跳过）。"
+            }
+            # 退出码 0 不等于装完：以 state.json 为准再判一次（上面已判，这里必为未完成）
+            Die 4 "S4：安装器已退出（rc=0）但 S10_DONE 未完成 —— 检查 $WIZ_STATE_IN_WSL 与向导日志。"
+        }
+        # 每 60 秒报一次进度，避免长时间静默让用户以为卡死
+        if (((Get-Date) - $lastReport).TotalSeconds -ge 60) {
+            $cur = if ($st -and $st.steps) {
+                (($st.steps.PSObject.Properties | Where-Object { $_.Value.status -eq 'DONE' } | ForEach-Object { $_.Name }) -join ',')
+            } else { '（尚未生成 state.json）' }
+            Write-Log 'INFO' "S4 进行中，已完成步骤：$cur"
+            $lastReport = Get-Date
+        }
+        Start-Sleep -Seconds 5
+    }
+    if (-not $s4Done) {
+        Die 4 "S4：等待安装器完成超时（$S4_TIMEOUT_MIN 分钟）。向导仍在 http://localhost:$PORT_WIZARD，可续装后重跑本脚本（已 DONE 阶段自动跳过）。"
+    }
+    if (-not $proc.HasExited) {
+        # 向导是常驻 Web 服务，留着不杀：它会作为 WSL 的活动会话顺带钉住 VM。
+        Write-Log 'INFO' 'S4：向导进程仍在后台运行（常驻 Web 服务，正常现象）'
     }
     Mark-Step $Steps 'S4' 'DONE'
     Write-Log 'OK' 'S4：服务端安装完成（S1→S10 全 DONE）'
@@ -453,8 +539,23 @@ mkdir -p /opt/tianji/logs
 # WSL IP 与端口暴露
 # ---------------------------------------------------------------------------
 function Get-WslIp {
-    $out = (Invoke-WslDistro 'hostname -I' | Out-String).Trim()
-    if ($out -match '(\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
+    # 2026-11-13 真机缺陷修复：计划任务/重定向环境下 [Console]::OutputEncoding 切换
+    # 不可靠，Invoke-WslDistro 的 UTF-16 解码会得到乱码导致取不到 IP。改为进程
+    # 字节流自读，Unicode / UTF-8 两种解码各试一次（wsl.exe 输出编码随宿主环境变）。
+    foreach ($enc in @([System.Text.Encoding]::Unicode, [System.Text.Encoding]::UTF8)) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "$env:SystemRoot\System32\wsl.exe"
+        $psi.Arguments = "-d $DISTRO_NAME -u root -- hostname -I"
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.StandardOutputEncoding = $enc
+        $psi.CreateNoWindow = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $out = $p.StandardOutput.ReadToEnd()
+        $p.WaitForExit()
+        if ($out -match '(\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
+    }
     return $null
 }
 
@@ -468,6 +569,11 @@ function Invoke-RefreshPortProxy {
         & netsh.exe interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>$null | Out-Null
         & netsh.exe interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=$port connectaddress=$ip connectport=$port | Out-Null
         if ($LASTEXITCODE -ne 0) { Die 4 "端口暴露：portproxy 配置失败（端口 $port）。" }
+        # 2026-11-13 真机缺陷修复：0.0.0.0 的 v4tov4 不覆盖回环流量（127.0.0.1 直连
+        # 不走路由），本机浏览器/冒烟访问 localhost:$port 会挂。补一条回环规则。
+        & netsh.exe interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=$port 2>$null | Out-Null
+        & netsh.exe interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=$port connectaddress=$ip connectport=$port | Out-Null
+        if ($LASTEXITCODE -ne 0) { Die 4 "端口暴露：portproxy 回环规则配置失败（端口 $port）。" }
     }
     foreach ($rule in @(@($FW_WEB_NAME, $PORT_WEB), @($FW_S3_NAME, $PORT_S3))) {
         $name = $rule[0]; $port = $rule[1]
@@ -498,7 +604,10 @@ function Invoke-Stage5([hashtable]$Steps) {
     if ($lanIp) {
         try {
             $resp = Invoke-WebRequest -Uri "http://${lanIp}:${PORT_WEB}/healthz" -UseBasicParsing -TimeoutSec 10
-            if ($resp.StatusCode -eq 200 -and $resp.Content.Trim() -eq 'ok') {
+            # 2026-11-13 真机缺陷修复：-UseBasicParsing 下 Content 可能是 Byte[]
+            # （PS 5.1 按 content-type 判定），直接 .Trim() 抛「Byte[] 不含 Trim」。
+            $ct = if ($resp.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($resp.Content) } else { [string]$resp.Content }
+            if ($resp.StatusCode -eq 200 -and $ct.Trim() -eq 'ok') {
                 Write-Log 'OK' "S5：LAN 自测通过（http://${lanIp}:${PORT_WEB}/healthz = ok）"
             } else {
                 Die 4 "S5：LAN 自测异常（status=$($resp.StatusCode) content=$($resp.Content)）。"
@@ -520,19 +629,40 @@ function Invoke-Stage6([hashtable]$Steps) {
     if (-not (Test-Path $BIN_DIR)) { New-Item -ItemType Directory -Path $BIN_DIR -Force | Out-Null }
 
     # 核心脚本自拷贝：boot 任务调用的 core 版 = 当前脚本（-RefreshPortProxy 模式）
-    Copy-Item $MyInvocation.MyCommand.Path (Join-Path $BIN_DIR 'tianji-windows-setup-core.ps1') -Force
+    # 2026-11-13 真机缺陷修复：函数作用域内 $MyInvocation.MyCommand.Path 指向函数
+    # （null），必须用 $PSCommandPath（任何作用域都指向脚本文件）。
+    Copy-Item $PSCommandPath (Join-Path $BIN_DIR 'tianji-windows-setup-core.ps1') -Force
 
     # 宿主 boot 包装：刷 portproxy（WSL IP 漂移）→ 起栈 → 全程追加日志留痕
+    # 2026-11-13 真机缺陷修复（V6）：开机瞬间发行版尚未启动（WSL 冷启动需数秒到数十秒），
+    # core -RefreshPortProxy 取 IP 失败、boot.sh 也失败。修复：先预热 wsl（true 重试
+    # 12×5s），RefreshPortProxy 失败降级为 WARN 继续（旧 portproxy 大概率仍有效）。
     $bootTpl = @'
 # TianjiArchive 开机自启包装（由安装器生成；不要手工改 portproxy 逻辑）
 $ErrorActionPreference = 'Continue'
 $log = 'C:\tianji\logs\boot-__TS__.log'
 "[boot-ps1] $(Get-Date -Format o) start" | Out-File $log -Append -Encoding utf8
 try {
-    & 'C:\tianji\bin\tianji-windows-setup-core.ps1' -RefreshPortProxy *>> $log
-    "[boot-ps1] portproxy rc=$LASTEXITCODE" | Out-File $log -Append -Encoding utf8
-    & wsl.exe -d __DISTRO__ -u root -- /opt/tianji/bin/boot.sh *>> $log
-    "[boot-ps1] boot.sh rc=$LASTEXITCODE" | Out-File $log -Append -Encoding utf8
+    # 预热：发行版冷启动（开机后 systemd 引导需数秒到数十秒）
+    $okWsl = $false
+    for ($i = 1; $i -le 12; $i++) {
+        & wsl.exe -d __DISTRO__ -u root -- true 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $okWsl = $true; "[boot-ps1] wsl warm after ${i} tries" | Out-File $log -Append -Encoding utf8; break }
+        Start-Sleep -Seconds 5
+    }
+    if ($okWsl) {
+        & 'C:\tianji\bin\tianji-windows-setup-core.ps1' -RefreshPortProxy *>> $log
+        "[boot-ps1] portproxy rc=$LASTEXITCODE（非 0 降级继续，旧规则大概率仍有效）" | Out-File $log -Append -Encoding utf8
+        & wsl.exe -d __DISTRO__ -u root -- /opt/tianji/bin/boot.sh *>> $log
+        "[boot-ps1] boot.sh rc=$LASTEXITCODE" | Out-File $log -Append -Encoding utf8
+        # 2026-11-13 真机缺陷修复（V6 终局）：WSL2 VM 在没有附着会话时自动关闭
+        # （后台容器不算活动会话）→ boot 任务退出后几十秒容器全灭。起一个分离的
+        # 常驻 wsl 会话钉住 VM（任务 ExecutionTimeLimit 必须为 0/无限，见注册处）。
+        Start-Process wsl.exe -ArgumentList '-d','__DISTRO__','-u','root','--','sleep','infinity' -WindowStyle Hidden
+        "[boot-ps1] keep-alive wsl session started" | Out-File $log -Append -Encoding utf8
+    } else {
+        "[boot-ps1] FATAL: wsl warm failed after 60s" | Out-File $log -Append -Encoding utf8
+    }
 } catch {
     ("[boot-ps1] EXC " + $_.Exception.Message) | Out-File $log -Append -Encoding utf8
 }
@@ -544,8 +674,12 @@ try {
     if ($exists) { Unregister-ScheduledTask -TaskName $TASK_NAME -Confirm:$false }
     $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$BOOT_PS1`""
     $trigger   = New-ScheduledTaskTrigger -AtStartup
-    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+    # 2026-11-13 真机缺陷修复（V6）：不能用 SYSTEM——WSL 发行版是 per-user 的，
+    # SYSTEM 上下文里 wsl -d TianjiArchive 报「无效的分发名称」。改用安装用户 +
+    # S4U（免密码、开机自动运行、非交互），RunLevel Highest 保管理员令牌。
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Highest
+    # ExecutionTimeLimit 0 = 无限制：任务里的常驻 keep-alive wsl 会话不能被 1 小时上限杀掉
+    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
     Register-ScheduledTask -TaskName $TASK_NAME -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
     Mark-Step $Steps 'S6' 'DONE'
     Write-Log 'OK' "S6：计划任务 $TASK_NAME 已注册（开机 → 刷 portproxy → 起栈）"
@@ -558,20 +692,30 @@ function Invoke-Smoke {
     $allPass = $true
 
     # 1/3 网站服务
+    # 2026-11-13 真机缺陷修复：portproxy 是 v4tov4（只听 IPv4），而 localhost 在
+    # Server 2022 上优先解析 ::1（IPv6）→ 连接失败假阴性。冒烟一律走 127.0.0.1。
     $ok1 = $false
     try {
-        $r = Invoke-WebRequest -Uri "http://localhost:$PORT_WEB/healthz" -UseBasicParsing -TimeoutSec 10
-        $ok1 = ($r.StatusCode -eq 200 -and $r.Content.Trim() -eq 'ok')
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$PORT_WEB/healthz" -UseBasicParsing -TimeoutSec 10
+        $body1 = if ($r.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($r.Content) } else { [string]$r.Content }
+        $ok1 = ($r.StatusCode -eq 200 -and $body1.Trim() -eq 'ok')
     } catch { }
     if (-not $ok1) { $allPass = $false }
-    Write-Host ("  [{0}] 1/3 网站服务  http://localhost:$PORT_WEB/healthz" -f $(if ($ok1) { 'PASS' } else { 'FAIL' }))
+    Write-Host ("  [{0}] 1/3 网站服务  http://127.0.0.1:$PORT_WEB/healthz" -f $(if ($ok1) { 'PASS' } else { 'FAIL' }))
 
     # 2/3 后端接口（status=ok 且 objectStorage.ok=true）
+    # 2026-11-13 真机缺陷修复：/api/health 实际结构是 {code, data:{status, deps:[{name,ok}]}}
+    # —— status 在 data 里、objectStorage 是 deps 数组元素，原断言 $j.status /
+    # $j.objectStorage.ok 恒为 null 必 FAIL。Content 在 -UseBasicParsing 下还可能是
+    # Byte[]，先归一化。
     $ok2 = $false
     try {
-        $r = Invoke-WebRequest -Uri "http://localhost:$PORT_WEB/api/health" -UseBasicParsing -TimeoutSec 15
-        $j = $r.Content | ConvertFrom-Json
-        $ok2 = ($j.status -eq 'ok' -and $j.objectStorage.ok -eq $true)
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$PORT_WEB/api/health" -UseBasicParsing -TimeoutSec 15
+        $body = if ($r.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($r.Content) } else { [string]$r.Content }
+        $j = $body | ConvertFrom-Json
+        $d = if ($j.data) { $j.data } else { $j }
+        $os = @($d.deps | Where-Object { $_.name -eq 'objectStorage' })
+        $ok2 = ($d.status -eq 'ok' -and $os.Count -gt 0 -and $os[0].ok -eq $true)
     } catch { }
     if (-not $ok2) { $allPass = $false }
     Write-Host ("  [{0}] 2/3 后端接口  /api/health (status=ok, objectStorage.ok=true)" -f $(if ($ok2) { 'PASS' } else { 'FAIL' }))
