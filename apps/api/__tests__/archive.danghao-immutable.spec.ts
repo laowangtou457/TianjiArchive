@@ -106,6 +106,15 @@ function makeHarness(initial: Row = itemRow()) {
       ...v,
     })),
     increment: vi.fn(async () => ({ affected: 1 })),
+    // transitionStage 阶段流转：锁行读取（manager.getRepository(ArchiveItem).createQueryBuilder()）
+    getRepository: vi.fn(() => ({
+      createQueryBuilder: vi.fn(() => ({
+        setLock: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        andWhere: vi.fn().mockReturnThis(),
+        getMany: vi.fn(async () => [state.row]),
+      })),
+    })),
   };
 
   const dataSource = {
@@ -128,6 +137,7 @@ function makeHarness(initial: Row = itemRow()) {
     { findOne: vi.fn(async () => null) } as never, // orgRepo
     { findOne: vi.fn(async () => null) } as never, // categoryRepo
     { count: vi.fn(async () => 0), query: vi.fn(async () => []) } as never, // fileRepo
+    { create: vi.fn((_e: unknown, v: unknown) => v), save: vi.fn(async () => undefined), find: vi.fn(async () => []) } as never, // stageLogRepo
     ruleService as never,
     fondsService as never,
     categoryService as never,

@@ -21,6 +21,7 @@ import type {
   IntakeReport,
   IntegrityCheckResult,
   ItemDto,
+  ItemStageLogDto,
   LoginRequest,
   LoginResponse,
   OrgNodeDto,
@@ -35,6 +36,7 @@ import type {
   RecycleBinDto,
   RoleDto,
   SearchHistoryDto,
+  StageTransitionResult,
   StockReport,
   SystemParamDto,
   ParamDef,
@@ -159,6 +161,31 @@ export const archiveApi = {
 
   confirmItems: (ids: string[]): Promise<{ confirmed: number }> =>
     api.post('/archive/items/confirm', { ids }),
+
+  // ---- 归档阶段流转（未处理→预归档→待审核→已归档，旁路无需归档）----
+  stagePreArchive: (ids: string[]): Promise<StageTransitionResult> =>
+    api.post('/archive/items/stage/pre-archive', { ids }),
+
+  stageCancelPreArchive: (ids: string[]): Promise<StageTransitionResult> =>
+    api.post('/archive/items/stage/pre-archive/cancel', { ids }),
+
+  stageSubmit: (ids: string[]): Promise<StageTransitionResult> =>
+    api.post('/archive/items/stage/submit', { ids }),
+
+  stageReject: (ids: string[], reason: string): Promise<StageTransitionResult> =>
+    api.post('/archive/items/stage/reject', { ids, reason }),
+
+  stageConfirm: (ids: string[]): Promise<StageTransitionResult> =>
+    api.post('/archive/items/stage/confirm', { ids }),
+
+  stageNoArchive: (ids: string[]): Promise<StageTransitionResult> =>
+    api.post('/archive/items/stage/no-archive', { ids }),
+
+  stageWithdrawNoArchive: (ids: string[]): Promise<StageTransitionResult> =>
+    api.post('/archive/items/stage/no-archive/withdraw', { ids }),
+
+  stageLogs: (itemId: string): Promise<ItemStageLogDto[]> =>
+    api.get(`/archive/items/${itemId}/stage-logs`),
 
   batchUpdate: (ids: string[], patch: Record<string, unknown>) =>
     api.post('/archive/items/batch-update', { ids, patch }),

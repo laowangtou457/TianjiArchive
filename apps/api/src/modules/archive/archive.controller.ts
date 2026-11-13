@@ -33,8 +33,10 @@ import {
   type CreateItemDto,
   type CreateVolumeDto,
   type ItemDto,
+  type ItemStageLogDto,
   type PageResult,
   type PermissionSnapshot,
+  type StageTransitionResult,
   type VoidReassignResult,
   type VolumeDto,
 } from '@tianji/shared';
@@ -204,6 +206,19 @@ class VoidReassignBodyDto {
 
   @IsOptional()
   public reassign?: boolean;
+}
+
+/** 批量阶段流转请求体 */
+class StageTransitionBodyDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: '请选择要操作的条目' })
+  @IsUUID('all', { each: true })
+  public ids!: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  public reason?: string;
 }
 
 /**
@@ -380,6 +395,99 @@ export class ArchiveController {
     @Body() dto: UpdateItemBodyDto,
   ): Promise<ItemDto> {
     return this.service.updateItem({ ...dto, id });
+  }
+
+  // ---------------------------------------------------------------- 阶段流转
+  //   未处理 → 预归档 → 待审核 → 已归档，旁路 无需归档（对齐泰坦收集链路）
+
+  /** 预归档（未处理 → 预归档） */
+  @Post('items/stage/pre-archive')
+  @RequirePerm({ domain: 'ITEM', op: 'WRITE', checkScope: true, objectType: 'ITEM' })
+  @Audit({ action: 'STAGE_PRE_ARCHIVE', objectType: 'ITEM' })
+  public async preArchive(
+    @Body() dto: StageTransitionBodyDto,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<StageTransitionResult> {
+    return this.service.preArchiveItems(dto, user.userId, user.displayName);
+  }
+
+  /** 撤消预归档（预归档 → 未处理） */
+  @Post('items/stage/pre-archive/cancel')
+  @RequirePerm({ domain: 'ITEM', op: 'WRITE', checkScope: true, objectType: 'ITEM' })
+  @Audit({ action: 'STAGE_CANCEL_PRE_ARCHIVE', objectType: 'ITEM' })
+  public async cancelPreArchive(
+    @Body() dto: StageTransitionBodyDto,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<StageTransitionResult> {
+    return this.service.cancelPreArchive(dto, user.userId, user.displayName);
+  }
+
+  /** 提交审核（未处理/预归档 → 待审核） */
+  @Post('items/stage/submit')
+  @RequirePerm({ domain: 'ITEM', op: 'WRITE', checkScope: true, objectType: 'ITEM' })
+  @Audit({ action: 'STAGE_SUBMIT_REVIEW', objectType: 'ITEM' })
+  public async submitForReview(
+    @Body() dto: StageTransitionBodyDto,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<StageTransitionResult> {
+    return this.service.submitForReview(dto, user.userId, user.displayName);
+  }
+
+  /** 审核不通过（待审核 → 未处理，R1 专属，必须留原因） */
+  @Post('items/stage/reject')
+  @RequirePerm({ domain: 'ARCHIVE_CONFIRM', op: 'APPROVE', checkScope: false, objectType: 'ITEM' })
+  @Audit({ action: 'STAGE_REJECT_REVIEW', objectType: 'ITEM' })
+  public async rejectReview(
+    @Body() dto: StageTransitionBodyDto,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<StageTransitionResult> {
+    return this.service.rejectReview(dto, user.userId, user.displayName);
+  }
+
+  /** 确认归档（未处理/预归档/待审核 → 已归档，R1 专属） */
+  @Post('items/stage/confirm')
+  @RequirePerm({ domain: 'ARCHIVE_CONFIRM', op: 'APPROVE', checkScope: false, objectType: 'ITEM' })
+  @Audit({ action: 'STAGE_CONFIRM_ARCHIVE', objectType: 'ITEM' })
+  public async confirmArchive(
+    @Body() dto: StageTransitionBodyDto,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<StageTransitionResult> {
+    return this.service.confirmArchive(dto, user.userId, user.displayName);
+  }
+
+  /** 无需归档（未处理 → 无需归档，旁路） */
+  @Post('items/stage/no-archive')
+  @RequirePerm({ domain: 'ITEM', op: 'WRITE', checkScope: true, objectType: 'ITEM' })
+  @Audit({ action: 'STAGE_SET_NO_ARCHIVE', objectType: 'ITEM' })
+  public async setNoArchive(
+    @Body() dto: StageTransitionBodyDto,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<StageTransitionResult> {
+    return this.service.setNoArchive(dto, user.userId, user.displayName);
+  }
+
+  /** 撤回未处理（无需归档 → 未处理） */
+  @Post('items/stage/no-archive/withdraw')
+  @RequirePerm({ domain: 'ITEM', op: 'WRITE', checkScope: true, objectType: 'ITEM' })
+  @Audit({ action: 'STAGE_WITHDRAW_NO_ARCHIVE', objectType: 'ITEM' })
+  public async withdrawNoArchive(
+    @Body() dto: StageTransitionBodyDto,
+    @CurrentUser() user: PermissionSnapshot,
+  ): Promise<StageTransitionResult> {
+    return this.service.withdrawNoArchive(dto, user.userId, user.displayName);
+  }
+
+  /** 某件的阶段流转记录（全程留痕查询） */
+  @Get('items/:id/stage-logs')
+  @RequirePerm({
+    domain: 'ITEM',
+    op: 'READ',
+    checkScope: false,
+    objectType: 'ITEM',
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
+  public async stageLogs(@Param('id') id: string): Promise<ItemStageLogDto[]> {
+    return this.service.listStageLogs(id);
   }
 
   /** 提交归档 */

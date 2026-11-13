@@ -306,6 +306,9 @@ export interface ItemDto {
   extra: Record<string, unknown>;
   fileCount?: number;
   createdBy: string | null;
+  /** 归档人/归档时间（确认归档时写入） */
+  archivedBy: string | null;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -357,6 +360,37 @@ export interface VoidReassignResult {
   oldDanghao: string;
   newDanghao: string | null;
   status: ItemStatus;
+}
+
+// ============================================================================
+// 归档阶段流转（对齐泰坦收集链路：未处理→预归档→待审核→已归档，旁路无需归档）
+// ============================================================================
+/** 批量阶段流转请求 */
+export interface StageTransitionDto {
+  ids: string[];
+  /** 审核不通过原因（REJECT_REVIEW 必填） */
+  reason?: string;
+}
+
+/** 批量阶段流转结果 */
+export interface StageTransitionResult {
+  requested: number;
+  updated: number;
+  failed: Array<{ id: string; reason: string }>;
+}
+
+/** 单条阶段流转日志 */
+export interface ItemStageLogDto {
+  id: string;
+  itemId: string;
+  action: string;
+  actionLabel: string;
+  fromStatus: ItemStatus | null;
+  toStatus: ItemStatus;
+  reason: string | null;
+  operatorId: string | null;
+  operatorName: string | null;
+  createdAt: string;
 }
 
 // ============================================================================

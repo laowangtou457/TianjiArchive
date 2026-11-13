@@ -5,6 +5,8 @@ import {
   BizException,
   ErrorCode,
   ItemStatus,
+  ITEM_STAGE_ACTION_LABELS,
+  ITEM_STAGE_TRANSITIONS,
   OpenFlag,
   Retention,
   SecurityLevel,
@@ -14,7 +16,11 @@ import {
   type CreateItemDto,
   type CreateVolumeDto,
   type ItemDto,
+  ItemStageAction,
+  type ItemStageLogDto,
   type PageResult,
+  type StageTransitionDto,
+  type StageTransitionResult,
   type UpdateItemDto,
   type VoidReassignDto,
   type VoidReassignResult,
@@ -25,6 +31,7 @@ import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
 import { BATCH_UPDATE_MAX } from '../../common/constants/enums';
 import { asPartialUpdate } from '../../common/types/typeorm-helpers';
 import { ArchiveItem } from '../../infra/database/entities/archive-item.entity';
+import { ItemStageLog } from '../../infra/database/entities/item-stage-log.entity';
 import { Volume } from '../../infra/database/entities/volume.entity';
 import { Fonds } from '../../infra/database/entities/fonds.entity';
 import { OrgNode } from '../../infra/database/entities/org-node.entity';
@@ -56,6 +63,7 @@ export class ArchiveService {
     @InjectRepository(OrgNode) private readonly orgRepo: Repository<OrgNode>,
     @InjectRepository(Category) private readonly categoryRepo: Repository<Category>,
     @InjectRepository(ElectronicFile) private readonly fileRepo: Repository<ElectronicFile>,
+    @InjectRepository(ItemStageLog) private readonly stageLogRepo: Repository<ItemStageLog>,
     private readonly ruleService: DanghaoRuleService,
     private readonly fondsService: FondsService,
     private readonly categoryService: CategoryService,
@@ -469,37 +477,171 @@ export class ArchiveService {
   }
 
   /**
-   * 提交归档（R2 部门档案员仅能提交，由 R1 确认）。
-   * 并发防护：CAS（WHERE status=DRAFT），重复提交/与作废并发时不会互相覆盖。
+   * 提交归档（单件兼容入口）—— R2 部门档案员提交，由 R1 审核。
+   * 单件语义保持旧行为：失败即抛错（批量接口才是明细反馈）。
    */
   public async submitItem(id: string): Promise<ItemDto> {
-    const row = await this.itemRepo.findOne({ where: { id, deleted: false } });
-    if (!row) throw new BizException(ErrorCode.NOT_FOUND, '档案条目不存在');
-    if (row.status !== ItemStatus.DRAFT) {
-      throw new BizException(ErrorCode.BAD_REQUEST, '仅草稿状态可提交归档');
-    }
-    const cas = await this.itemRepo.update(
-      { id, status: ItemStatus.DRAFT },
-      { status: ItemStatus.SUBMITTED },
-    );
-    if (!cas.affected) {
-      throw new BizException(ErrorCode.CONFLICT, '该条目状态已变更，请刷新后重试');
+    const r = await this.transitionStage({ ids: [id] }, ItemStageAction.SUBMIT_REVIEW, null, null);
+    if (r.updated === 0) {
+      throw new BizException(
+        ErrorCode.BAD_REQUEST,
+        r.failed[0]?.reason ?? '该条目状态不允许提交审核',
+      );
     }
     return this.itemDetail(id);
   }
 
-  /** 归档确认（R1）：SUBMITTED/DRAFT → ARCHIVED */
+  /**
+   * 归档确认（批量，兼容旧路由）—— R1：DRAFT/PRE_ARCHIVED/SUBMITTED → ARCHIVED。
+   */
   public async confirmItems(ids: string[]): Promise<{ confirmed: number }> {
-    if (!ids || ids.length === 0) throw new BizException(ErrorCode.BAD_REQUEST, '请选择要归档的条目');
-    const result = await this.itemRepo
-      .createQueryBuilder()
-      .update(ArchiveItem)
-      .set({ status: ItemStatus.ARCHIVED })
-      .where('id IN (:...ids)', { ids })
-      .andWhere('deleted = FALSE')
-      .andWhere('status IN (:...states)', { states: [ItemStatus.DRAFT, ItemStatus.SUBMITTED] })
-      .execute();
-    return { confirmed: result.affected ?? 0 };
+    const r = await this.transitionStage({ ids }, ItemStageAction.CONFIRM_ARCHIVE, null, null);
+    return { confirmed: r.updated };
+  }
+
+  // ==========================================================================
+  // 归档阶段状态机（对齐泰坦：未处理→预归档→待审核→已归档，旁路无需归档）
+  // ==========================================================================
+
+  /**
+   * 批量阶段流转 —— 全部阶段动作的唯一入口。
+   *
+   * 并发防护：事务内 SELECT ... FOR UPDATE 锁行 → 校验来源状态 → 逐行 CAS 更新 →
+   * 同事务写 item_stage_log（只插不改删）。任一行状态不符即记入 failed，
+   * 不阻断其余行（泰坦批量操作的「尽力而为 + 明细反馈」语义）。
+   */
+  public async transitionStage(
+    dto: StageTransitionDto,
+    action: ItemStageAction,
+    operatorId: string | null,
+    operatorName: string | null,
+  ): Promise<StageTransitionResult> {
+    const ids = Array.isArray(dto.ids) ? dto.ids : [];
+    if (ids.length === 0) throw new BizException(ErrorCode.BAD_REQUEST, '请选择要操作的条目');
+    if (ids.length > BATCH_UPDATE_MAX) {
+      throw new BizException(ErrorCode.BAD_REQUEST, `单次批量操作不得超过 ${BATCH_UPDATE_MAX} 条`);
+    }
+    const rule = ITEM_STAGE_TRANSITIONS[action];
+    if (!rule) throw new BizException(ErrorCode.BAD_REQUEST, '未知的阶段动作');
+    if (action === ItemStageAction.REJECT_REVIEW && !(dto.reason ?? '').trim()) {
+      throw new BizException(ErrorCode.BAD_REQUEST, '审核不通过必须填写原因');
+    }
+    const reason = dto.reason?.trim() || null;
+
+    return this.dataSource.transaction(async (manager) => {
+      // 锁行读：防双开页面并发流转互相覆盖
+      const rows = await manager
+        .getRepository(ArchiveItem)
+        .createQueryBuilder('i')
+        .setLock('pessimistic_write')
+        .where('i.id IN (:...ids)', { ids })
+        .andWhere('i.deleted = FALSE')
+        .getMany();
+
+      const failed: Array<{ id: string; reason: string }> = [];
+      const now = new Date();
+      const logs: ItemStageLog[] = [];
+      const toStatus = rule.to;
+
+      for (const row of rows) {
+        if (!rule.from.includes(row.status)) {
+          failed.push({
+            id: row.id,
+            reason: `当前状态「${row.status}」不允许该操作（仅 ${rule.from.join('/')}）`,
+          });
+          continue;
+        }
+        const fromStatus = row.status;
+        row.status = toStatus;
+        if (toStatus === ItemStatus.ARCHIVED) {
+          row.archivedBy = operatorId;
+          row.archivedAt = now;
+        } else if (fromStatus === ItemStatus.ARCHIVED) {
+          row.archivedBy = null;
+          row.archivedAt = null;
+        }
+        logs.push(
+          manager.create(ItemStageLog, {
+            itemId: row.id,
+            action,
+            actionLabel: ITEM_STAGE_ACTION_LABELS[action],
+            fromStatus,
+            toStatus,
+            reason,
+            operatorId,
+            operatorName,
+          }),
+        );
+      }
+
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      for (const id of ids) {
+        if (!byId.has(id)) failed.push({ id, reason: '条目不存在或已删除' });
+      }
+
+      if (logs.length > 0) {
+        const changedIds = new Set(logs.map((l) => l.itemId));
+        await manager.save(rows.filter((r) => changedIds.has(r.id)));
+        await manager.save(logs);
+      }
+
+      return { requested: ids.length, updated: logs.length, failed };
+    });
+  }
+
+  /** 预归档（未处理 → 预归档） */
+  public async preArchiveItems(dto: StageTransitionDto, userId: string | null, userName: string | null) {
+    return this.transitionStage(dto, ItemStageAction.PRE_ARCHIVE, userId, userName);
+  }
+
+  /** 撤消预归档（预归档 → 未处理） */
+  public async cancelPreArchive(dto: StageTransitionDto, userId: string | null, userName: string | null) {
+    return this.transitionStage(dto, ItemStageAction.CANCEL_PRE_ARCHIVE, userId, userName);
+  }
+
+  /** 批量提交审核（未处理/预归档 → 待审核） */
+  public async submitForReview(dto: StageTransitionDto, userId: string | null, userName: string | null) {
+    return this.transitionStage(dto, ItemStageAction.SUBMIT_REVIEW, userId, userName);
+  }
+
+  /** 审核不通过（待审核 → 未处理，必须留原因） */
+  public async rejectReview(dto: StageTransitionDto, userId: string | null, userName: string | null) {
+    return this.transitionStage(dto, ItemStageAction.REJECT_REVIEW, userId, userName);
+  }
+
+  /** 确认归档（未处理/预归档/待审核 → 已归档，R1 专属） */
+  public async confirmArchive(dto: StageTransitionDto, userId: string | null, userName: string | null) {
+    return this.transitionStage(dto, ItemStageAction.CONFIRM_ARCHIVE, userId, userName);
+  }
+
+  /** 无需归档（未处理 → 无需归档，旁路） */
+  public async setNoArchive(dto: StageTransitionDto, userId: string | null, userName: string | null) {
+    return this.transitionStage(dto, ItemStageAction.SET_NO_ARCHIVE, userId, userName);
+  }
+
+  /** 撤回未处理（无需归档 → 未处理） */
+  public async withdrawNoArchive(dto: StageTransitionDto, userId: string | null, userName: string | null) {
+    return this.transitionStage(dto, ItemStageAction.WITHDRAW_NO_ARCHIVE, userId, userName);
+  }
+
+  /** 某件的全量阶段流转记录（时间正序） */
+  public async listStageLogs(itemId: string): Promise<ItemStageLogDto[]> {
+    const rows = await this.stageLogRepo.find({
+      where: { itemId },
+      order: { createdAt: 'ASC' },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      itemId: r.itemId,
+      action: r.action,
+      actionLabel: r.actionLabel,
+      fromStatus: r.fromStatus,
+      toStatus: r.toStatus,
+      reason: r.reason,
+      operatorId: r.operatorId,
+      operatorName: r.operatorName,
+      createdAt: new Date(r.createdAt).toISOString(),
+    }));
   }
 
   /**
@@ -867,6 +1009,8 @@ export class ArchiveService {
       extra: r.extra ?? {},
       fileCount,
       createdBy: r.createdBy,
+      archivedBy: r.archivedBy,
+      archivedAt: r.archivedAt ? new Date(r.archivedAt).toISOString() : null,
       createdAt: new Date(r.createdAt).toISOString(),
       updatedAt: new Date(r.updatedAt).toISOString(),
     };

@@ -29,7 +29,9 @@ import { useSnackbar } from 'notistack';
 import {
   BORROW_MODE_LABELS,
   ITEM_STATUS_LABELS,
+  ITEM_STATUS_VALUES,
   BorrowMode,
+  ItemStatus,
   type ElectronicFileDto,
   type ItemDto,
   type MetadataFieldDef,
@@ -204,14 +206,79 @@ export function ItemEditorPage(): ReactElement {
   });
 
   const submitMutation = useMutation({
-    mutationFn: (id: string) => archiveApi.submitItem(id),
+    mutationFn: (id: string) => archiveApi.stageSubmit([id]),
     onSuccess: () => {
-      enqueueSnackbar('已提交待归档', { variant: 'success' });
+      enqueueSnackbar('已提交审核', { variant: 'success' });
       void qc.invalidateQueries({ queryKey: ['items', volumeId] });
+      void qc.invalidateQueries({ queryKey: ['item', itemId] });
     },
     onError: (err: unknown) =>
       enqueueSnackbar(err instanceof ApiError ? err.message : '提交失败', { variant: 'error' }),
   });
+
+  // ---------------------------------------------------------------- 阶段流转（对齐泰坦收集链路）
+  const [rejectDialog, setRejectDialog] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const stageMutation = useMutation({
+    mutationFn: async (args: { action: 'pre' | 'cancelPre' | 'confirm' | 'noArchive' | 'withdrawNoArchive' }) => {
+      if (!selected) throw new Error('未选中档案');
+      const ids = [selected.id];
+      switch (args.action) {
+        case 'pre':
+          return archiveApi.stagePreArchive(ids);
+        case 'cancelPre':
+          return archiveApi.stageCancelPreArchive(ids);
+        case 'confirm':
+          return archiveApi.stageConfirm(ids);
+        case 'noArchive':
+          return archiveApi.stageNoArchive(ids);
+        case 'withdrawNoArchive':
+          return archiveApi.stageWithdrawNoArchive(ids);
+      }
+    },
+    onSuccess: (r) => {
+      const ok = r?.updated ?? 0;
+      const bad = r?.failed ?? [];
+      if (ok > 0) enqueueSnackbar(`操作成功（${ok} 件）`, { variant: 'success' });
+      if (bad.length > 0) enqueueSnackbar(bad[0].reason, { variant: 'warning' });
+      void qc.invalidateQueries({ queryKey: ['items', volumeId] });
+      void qc.invalidateQueries({ queryKey: ['item', itemId] });
+    },
+    onError: (err: unknown) =>
+      enqueueSnackbar(err instanceof ApiError ? err.message : '操作失败', { variant: 'error' }),
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: () => {
+      if (!selected) throw new Error('未选中档案');
+      return archiveApi.stageReject([selected.id], rejectReason.trim());
+    },
+    onSuccess: () => {
+      enqueueSnackbar('已驳回，条目回到未处理', { variant: 'success' });
+      setRejectDialog(false);
+      setRejectReason('');
+      void qc.invalidateQueries({ queryKey: ['items', volumeId] });
+      void qc.invalidateQueries({ queryKey: ['item', itemId] });
+    },
+    onError: (err: unknown) =>
+      enqueueSnackbar(err instanceof ApiError ? err.message : '驳回失败', { variant: 'error' }),
+  });
+
+  // ---------------------------------------------------------------- 流转记录
+  const stageLogsQuery = useQuery({
+    queryKey: ['stageLogs', selected?.id],
+    queryFn: () => archiveApi.stageLogs(selected!.id),
+    enabled: Boolean(selected),
+  });
+
+  // ---------------------------------------------------------------- 左列阶段筛选
+  const [stageFilter, setStageFilter] = useState<string>('ALL');
+  const filteredItems = useMemo(() => {
+    const list = itemsQuery.data?.list ?? [];
+    if (stageFilter === 'ALL') return list;
+    return list.filter((it) => it.status === stageFilter);
+  }, [itemsQuery.data, stageFilter]);
 
   // ---------------------------------------------------------------- 申请借阅（检索利用链路入口）
   const [borrowDialog, setBorrowDialog] = useState(false);
@@ -248,8 +315,8 @@ export function ItemEditorPage(): ReactElement {
       enqueueSnackbar('请先修正表单错误', { variant: 'warning' });
       return;
     }
-    if (selected && selected.status !== 'DRAFT' && selected.status !== 'SUBMITTED') {
-      enqueueSnackbar('该状态不可修改', { variant: 'warning' });
+    if (selected && selected.status !== 'DRAFT' && selected.status !== 'PRE_ARCHIVED' && selected.status !== 'SUBMITTED') {
+      enqueueSnackbar('该状态不可修改（已归档/无需归档/作废条目需先流转回未处理）', { variant: 'warning' });
       return;
     }
     if (selected) saveMutation.mutate();
@@ -295,12 +362,32 @@ export function ItemEditorPage(): ReactElement {
                 </PermGate>
               </Stack>
               <Divider sx={{ mb: 1 }} />
-              {(itemsQuery.data?.list ?? []).length === 0 && (
+              {/* 阶段筛选（对齐泰坦：未处理/预归档/待审核/已归档/无需归档） */}
+              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
+                {['ALL', ...ITEM_STATUS_VALUES].map((s) => {
+                  const count =
+                    s === 'ALL'
+                      ? (itemsQuery.data?.list ?? []).length
+                      : (itemsQuery.data?.list ?? []).filter((it) => it.status === s).length;
+                  return (
+                    <Chip
+                      key={s}
+                      size="small"
+                      clickable
+                      color={stageFilter === s ? 'primary' : 'default'}
+                      variant={stageFilter === s ? 'filled' : 'outlined'}
+                      label={`${s === 'ALL' ? '全部' : ITEM_STATUS_LABELS[s as ItemStatus]} ${count}`}
+                      onClick={() => setStageFilter(s)}
+                    />
+                  );
+                })}
+              </Stack>
+              {filteredItems.length === 0 && (
                 <Typography variant="body2" color="text.secondary">
-                  暂无件，点击「+ 新增」开始著录
+                  {stageFilter === 'ALL' ? '暂无件，点击「+ 新增」开始著录' : '该阶段暂无件'}
                 </Typography>
               )}
-              {(itemsQuery.data?.list ?? []).map((it) => (
+              {filteredItems.map((it) => (
                 <Box
                   key={it.id}
                   onClick={() => {
@@ -345,10 +432,86 @@ export function ItemEditorPage(): ReactElement {
                         申请借阅
                       </Button>
                     </PermGate>
-                    {selected.status === 'DRAFT' && (
+                    {selected.status === ItemStatus.DRAFT && (
+                      <PermGate domain="ITEM" op="WRITE">
+                        <Stack direction="row" spacing={0.5}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={stageMutation.isPending}
+                            onClick={() => stageMutation.mutate({ action: 'pre' })}
+                          >
+                            预归档
+                          </Button>
+                          <Button size="small" disabled={submitMutation.isPending} onClick={() => submitMutation.mutate(selected.id)}>
+                            提交审核
+                          </Button>
+                          <Button
+                            size="small"
+                            color="inherit"
+                            disabled={stageMutation.isPending}
+                            onClick={() => stageMutation.mutate({ action: 'noArchive' })}
+                          >
+                            无需归档
+                          </Button>
+                        </Stack>
+                      </PermGate>
+                    )}
+                    {selected.status === ItemStatus.PRE_ARCHIVED && (
+                      <>
+                        <PermGate domain="ITEM" op="WRITE">
+                          <Button
+                            size="small"
+                            disabled={stageMutation.isPending}
+                            onClick={() => stageMutation.mutate({ action: 'cancelPre' })}
+                          >
+                            撤消预归档
+                          </Button>
+                        </PermGate>
+                        <PermGate domain="ITEM" op="WRITE">
+                          <Button size="small" disabled={submitMutation.isPending} onClick={() => submitMutation.mutate(selected.id)}>
+                            提交审核
+                          </Button>
+                        </PermGate>
+                        <PermGate domain="ARCHIVE_CONFIRM" op="APPROVE">
+                          <Button
+                            size="small"
+                            color="success"
+                            variant="contained"
+                            disabled={stageMutation.isPending}
+                            onClick={() => stageMutation.mutate({ action: 'confirm' })}
+                          >
+                            确认归档
+                          </Button>
+                        </PermGate>
+                      </>
+                    )}
+                    {selected.status === ItemStatus.SUBMITTED && (
                       <PermGate domain="ARCHIVE_CONFIRM" op="APPROVE">
-                        <Button size="small" onClick={() => submitMutation.mutate(selected.id)}>
-                          提交归档
+                        <Stack direction="row" spacing={0.5}>
+                          <Button
+                            size="small"
+                            color="success"
+                            variant="contained"
+                            disabled={stageMutation.isPending}
+                            onClick={() => stageMutation.mutate({ action: 'confirm' })}
+                          >
+                            确认归档
+                          </Button>
+                          <Button size="small" color="warning" onClick={() => setRejectDialog(true)}>
+                            不通过
+                          </Button>
+                        </Stack>
+                      </PermGate>
+                    )}
+                    {selected.status === ItemStatus.NO_ARCHIVE && (
+                      <PermGate domain="ITEM" op="WRITE">
+                        <Button
+                          size="small"
+                          disabled={stageMutation.isPending}
+                          onClick={() => stageMutation.mutate({ action: 'withdrawNoArchive' })}
+                        >
+                          撤回未处理
                         </Button>
                       </PermGate>
                     )}
@@ -501,6 +664,34 @@ export function ItemEditorPage(): ReactElement {
               </CardContent>
             </Card>
           )}
+
+          {/* 阶段流转记录（全程留痕） */}
+          {selected && (stageLogsQuery.data?.length ?? 0) > 0 && (
+            <Card sx={{ mt: 1.5 }}>
+              <CardContent>
+                <Typography variant="h6" sx={{ mb: 1 }}>
+                  流转记录
+                </Typography>
+                <Stack spacing={0.5}>
+                  {stageLogsQuery.data!.map((log) => (
+                    <Stack key={log.id} direction="row" spacing={1} alignItems="center">
+                      <Typography variant="caption" color="text.secondary" width={170}>
+                        {new Date(log.createdAt).toLocaleString('zh-CN')}
+                      </Typography>
+                      <Chip size="small" variant="outlined" label={log.actionLabel} />
+                      <Typography variant="caption">
+                        {log.fromStatus ? `${ITEM_STATUS_LABELS[log.fromStatus]} → ${ITEM_STATUS_LABELS[log.toStatus]}` : ITEM_STATUS_LABELS[log.toStatus]}
+                        {log.reason ? `（${log.reason}）` : ''}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {log.operatorName ?? ''}
+                      </Typography>
+                    </Stack>
+                  ))}
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
         </Box>
       </Stack>
 
@@ -533,6 +724,34 @@ export function ItemEditorPage(): ReactElement {
             onClick={() => voidMutation.mutate()}
           >
             确认作废并重编
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 审核不通过（驳回原因必填，写入流转记录） */}
+      <Dialog open={rejectDialog} onClose={() => setRejectDialog(false)} maxWidth="sm">
+        <DialogTitle>审核不通过 · {selected?.danghao ?? ''}</DialogTitle>
+        <DialogContent>
+          <TextField
+            label="不通过原因 *"
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            fullWidth
+            multiline
+            minRows={3}
+            sx={{ mt: 1 }}
+            helperText="条目将回到「未处理」，原因记入流转记录与审计日志"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRejectDialog(false)}>取消</Button>
+          <Button
+            color="warning"
+            variant="contained"
+            disabled={rejectReason.trim().length < 2 || rejectMutation.isPending}
+            onClick={() => rejectMutation.mutate()}
+          >
+            确认驳回
           </Button>
         </DialogActions>
       </Dialog>

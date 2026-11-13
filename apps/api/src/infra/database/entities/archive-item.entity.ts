@@ -73,6 +73,14 @@ export class ArchiveItem {
   @Column({ type: 'varchar', length: 16, default: 'DRAFT' })
   status!: ItemStatus;
 
+  /** 归档人（确认归档时写入；泰坦 GDUSER 同位） */
+  @Column({ name: 'archived_by', type: 'uuid', nullable: true })
+  archivedBy!: string | null;
+
+  /** 归档时间（确认归档时写入；泰坦 GDTIME 同位） */
+  @Column({ name: 'archived_at', type: 'timestamptz', nullable: true })
+  archivedAt!: Date | null;
+
   @Column({ name: 'open_flag', type: 'varchar', length: 16, default: 'CONTROLLED' })
   openFlag!: OpenFlag;
 

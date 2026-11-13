@@ -261,22 +261,82 @@ export const VOLUME_STATUS_LABELS: Readonly<Record<VolumeStatus, string>> = {
   VOID: '已作废',
 };
 
+/**
+ * 件级归档阶段状态机（对齐泰坦 DARMS 收集链路）：
+ *
+ *   DRAFT（未处理）──预归档──▶ PRE_ARCHIVED ──确认归档──▶ ARCHIVED
+ *      │  ├──提交审核──▶ SUBMITTED ──通过──▶ ARCHIVED          │
+ *      │  │                  │（不通过回到 DRAFT）              │
+ *      │  └──无需归档──▶ NO_ARCHIVE ──撤回──▶ DRAFT            │
+ *      └──────────────────（确认归档可跨态直达）◀───────────────┘
+ *
+ *   VOID（作废）为旁路态，只能来自作废重编通道。
+ */
 export const ItemStatus = {
   DRAFT: 'DRAFT',
+  PRE_ARCHIVED: 'PRE_ARCHIVED',
   SUBMITTED: 'SUBMITTED',
   ARCHIVED: 'ARCHIVED',
+  NO_ARCHIVE: 'NO_ARCHIVE',
   VOID: 'VOID',
 } as const;
 export type ItemStatus = (typeof ItemStatus)[keyof typeof ItemStatus];
 
 export const ITEM_STATUS_LABELS: Readonly<Record<ItemStatus, string>> = {
-  DRAFT: '草稿',
-  SUBMITTED: '待归档确认',
+  DRAFT: '未处理',
+  PRE_ARCHIVED: '预归档',
+  SUBMITTED: '待审核',
   ARCHIVED: '已归档',
+  NO_ARCHIVE: '无需归档',
   VOID: '已作废',
 };
 
-export const ITEM_STATUS_VALUES: readonly ItemStatus[] = ['DRAFT', 'SUBMITTED', 'ARCHIVED', 'VOID'];
+export const ITEM_STATUS_VALUES: readonly ItemStatus[] = [
+  'DRAFT',
+  'PRE_ARCHIVED',
+  'SUBMITTED',
+  'ARCHIVED',
+  'NO_ARCHIVE',
+  'VOID',
+];
+
+/** 归档阶段流转动作（服务端校验唯一入口） */
+export const ItemStageAction = {
+  PRE_ARCHIVE: 'PRE_ARCHIVE',
+  CANCEL_PRE_ARCHIVE: 'CANCEL_PRE_ARCHIVE',
+  SUBMIT_REVIEW: 'SUBMIT_REVIEW',
+  REJECT_REVIEW: 'REJECT_REVIEW',
+  CONFIRM_ARCHIVE: 'CONFIRM_ARCHIVE',
+  SET_NO_ARCHIVE: 'SET_NO_ARCHIVE',
+  WITHDRAW_NO_ARCHIVE: 'WITHDRAW_NO_ARCHIVE',
+} as const;
+export type ItemStageAction = (typeof ItemStageAction)[keyof typeof ItemStageAction];
+
+export const ITEM_STAGE_ACTION_LABELS: Readonly<Record<ItemStageAction, string>> = {
+  PRE_ARCHIVE: '预归档',
+  CANCEL_PRE_ARCHIVE: '撤消预归档',
+  SUBMIT_REVIEW: '提交审核',
+  REJECT_REVIEW: '审核不通过',
+  CONFIRM_ARCHIVE: '确认归档',
+  SET_NO_ARCHIVE: '无需归档',
+  WITHDRAW_NO_ARCHIVE: '撤回未处理',
+};
+
+/** 每个动作允许的来源状态（服务端 CAS 校验依据） */
+export const ITEM_STAGE_TRANSITIONS: Readonly<
+  Record<ItemStageAction, { from: readonly ItemStatus[]; to: ItemStatus }>
+> = {
+  [ItemStageAction.PRE_ARCHIVE]: { from: ['DRAFT'], to: 'PRE_ARCHIVED' },
+  [ItemStageAction.CANCEL_PRE_ARCHIVE]: { from: ['PRE_ARCHIVED'], to: 'DRAFT' },
+  [ItemStageAction.SUBMIT_REVIEW]: { from: ['DRAFT', 'PRE_ARCHIVED'], to: 'SUBMITTED' },
+  [ItemStageAction.REJECT_REVIEW]: { from: ['SUBMITTED'], to: 'DRAFT' },
+  [ItemStageAction.CONFIRM_ARCHIVE]: {
+    from: ['DRAFT', 'PRE_ARCHIVED', 'SUBMITTED'],
+    to: 'ARCHIVED',
+  },
+  [ItemStageAction.SET_NO_ARCHIVE]: { from: ['DRAFT'], to: 'NO_ARCHIVE' },
+  [ItemStageAction.WITHDRAW_NO_ARCHIVE]: { from: ['NO_ARCHIVE'], to: 'DRAFT' },
+};
 
 // ============================================================================
 // 开放/划控标识（F-19 / DA/T 22-2015 开放审核）

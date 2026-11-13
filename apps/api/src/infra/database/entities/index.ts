@@ -10,6 +10,7 @@ export * from './danghao-rule.entity';
 export * from './danghao-sequence.entity';
 export * from './volume.entity';
 export * from './archive-item.entity';
+export * from './item-stage-log.entity';
 export * from './electronic-file.entity';
 export * from './document-text.entity';
 export * from './borrow-order.entity';
