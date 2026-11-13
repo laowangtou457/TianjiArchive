@@ -26,6 +26,11 @@ import { ReportModule } from './modules/report/report.module';
 import { BackupModule } from './modules/backup/backup.module';
 import { KbModule } from './modules/kb/kb.module';
 import { RecycleModule } from './modules/recycle/recycle.module';
+import { WorkflowModule } from './modules/workflow/workflow.module';
+import { AppraisalModule } from './modules/appraisal/appraisal.module';
+import { OpenModule } from './modules/open/open.module';
+import { RagModule } from './modules/rag/rag.module';
+import { WikiModule } from './modules/wiki/wiki.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionGuard } from './common/guards/permission.guard';
@@ -69,6 +74,11 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
     KbModule,
     RecycleModule,
     DashboardModule,
+    WorkflowModule,
+    AppraisalModule,
+    OpenModule,
+    RagModule,
+    WikiModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

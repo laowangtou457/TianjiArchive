@@ -728,3 +728,253 @@ export function toInt(value: unknown, fallback = 0): number {
   const n = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
   return Number.isFinite(n) ? n : fallback;
 }
+
+// ============================================================================
+// 鉴定（对齐泰坦 DARMS：鉴定任务 → 任务处理 → 鉴定处置表）
+// ============================================================================
+
+/**
+ * 鉴定任务状态机：
+ *
+ *   DRAFT（草稿，可改筛选条件/重建明细）
+ *     └─开始鉴定─▶ IN_PROGRESS（逐件处置中）
+ *                    ├─执行处置─▶ FINISHED（处置已落库，任务封存）
+ *                    └─作废────▶ CANCELLED（未执行，明细保留留痕）
+ *
+ * 约束：只有 FINISHED 之前允许修改筛选条件；CANCELLED/FINISHED 为终态。
+ */
+export const AppraisalTaskStatus = {
+  DRAFT: 'DRAFT',
+  IN_PROGRESS: 'IN_PROGRESS',
+  FINISHED: 'FINISHED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type AppraisalTaskStatus = (typeof AppraisalTaskStatus)[keyof typeof AppraisalTaskStatus];
+
+export const APPRAISAL_TASK_STATUS_LABELS: Readonly<Record<AppraisalTaskStatus, string>> = {
+  DRAFT: '草稿',
+  IN_PROGRESS: '鉴定中',
+  FINISHED: '已完成',
+  CANCELLED: '已作废',
+};
+
+export const APPRAISAL_TASK_STATUS_VALUES: readonly AppraisalTaskStatus[] = [
+  'DRAFT',
+  'IN_PROGRESS',
+  'FINISHED',
+  'CANCELLED',
+];
+
+/**
+ * 鉴定处置结论（DA/T 22-2015 §9 到期鉴定）：
+ *   KEEP     继续保管（维持原期限，仅留鉴定记录）
+ *   EXTEND   延期保管（改期限：10 年→30 年 / 30 年→永久 / 或按年顺延）
+ *   TRANSFER 移交（进移交清单，等待档案馆接收）
+ *   DESTROY  销毁（须经销毁审批流通过后才真正落库软删除）
+ */
+export const AppraisalDecision = {
+  PENDING: 'PENDING',
+  KEEP: 'KEEP',
+  EXTEND: 'EXTEND',
+  TRANSFER: 'TRANSFER',
+  DESTROY: 'DESTROY',
+} as const;
+export type AppraisalDecision = (typeof AppraisalDecision)[keyof typeof AppraisalDecision];
+
+export const APPRAISAL_DECISION_LABELS: Readonly<Record<AppraisalDecision, string>> = {
+  PENDING: '待鉴定',
+  KEEP: '继续保管',
+  EXTEND: '延期保管',
+  TRANSFER: '移交',
+  DESTROY: '销毁',
+};
+
+export const APPRAISAL_DECISION_VALUES: readonly AppraisalDecision[] = [
+  'PENDING',
+  'KEEP',
+  'EXTEND',
+  'TRANSFER',
+  'DESTROY',
+];
+
+/** 需要审批流介入的处置结论（销毁：不可逆，必须先审批） */
+export const APPRAISAL_NEEDS_APPROVAL: readonly AppraisalDecision[] = ['DESTROY'];
+
+// ============================================================================
+// 开放管理（对齐泰坦：未处理 → 条目开放 / 原文开放 / 不开放 / 再审查 + 开放批次）
+// ============================================================================
+
+/**
+ * 开放批次状态：
+ *   DRAFT → IN_PROGRESS（审核中）→ APPROVING（已提交审批）→ FINISHED（审批通过并应用）
+ *   旁路 CANCELLED
+ *
+ * 说明：审批不通过 → 回到 IN_PROGRESS，允许调整后重新提交（保留审批历史）。
+ */
+export const OpenBatchStatus = {
+  DRAFT: 'DRAFT',
+  IN_PROGRESS: 'IN_PROGRESS',
+  APPROVING: 'APPROVING',
+  FINISHED: 'FINISHED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type OpenBatchStatus = (typeof OpenBatchStatus)[keyof typeof OpenBatchStatus];
+
+export const OPEN_BATCH_STATUS_LABELS: Readonly<Record<OpenBatchStatus, string>> = {
+  DRAFT: '草稿',
+  IN_PROGRESS: '审核中',
+  APPROVING: '待审批',
+  FINISHED: '已开放',
+  CANCELLED: '已作废',
+};
+
+/**
+ * 单件开放审核结论（泰坦四态 + 未处理）：
+ *   PENDING      未处理
+ *   OPEN_ENTRY   条目开放（目录可检索，原文仍受控）
+ *   OPEN_FULLTEXT 原文开放（目录 + 全文均可在线利用）
+ *   DENY         不开放（控制使用，记明理由）
+ *   REREVIEW     再审查（存疑，转入再审查队列，暂不改变开放标识）
+ */
+export const OpenDecision = {
+  PENDING: 'PENDING',
+  OPEN_ENTRY: 'OPEN_ENTRY',
+  OPEN_FULLTEXT: 'OPEN_FULLTEXT',
+  DENY: 'DENY',
+  REREVIEW: 'REREVIEW',
+} as const;
+export type OpenDecision = (typeof OpenDecision)[keyof typeof OpenDecision];
+
+export const OPEN_DECISION_LABELS: Readonly<Record<OpenDecision, string>> = {
+  PENDING: '未处理',
+  OPEN_ENTRY: '条目开放',
+  OPEN_FULLTEXT: '原文开放',
+  DENY: '不开放',
+  REREVIEW: '再审查',
+};
+
+export const OPEN_DECISION_VALUES: readonly OpenDecision[] = [
+  'PENDING',
+  'OPEN_ENTRY',
+  'OPEN_FULLTEXT',
+  'DENY',
+  'REREVIEW',
+];
+
+/**
+ * 开放范围（落到 archive_item.open_scope）：
+ *   NONE     不开放（含「不开放」与「未审核」）
+ *   ENTRY    仅条目开放
+ *   FULLTEXT 条目 + 原文开放
+ *
+ * 与 open_flag 的关系：open_scope=NONE ⇔ open_flag=CONTROLLED；
+ * 检索限阅判断以 open_scope 为准（open_flag 保留兼容 ES 侧既有过滤）。
+ */
+export const OpenScope = {
+  NONE: 'NONE',
+  ENTRY: 'ENTRY',
+  FULLTEXT: 'FULLTEXT',
+} as const;
+export type OpenScope = (typeof OpenScope)[keyof typeof OpenScope];
+
+export const OPEN_SCOPE_LABELS: Readonly<Record<OpenScope, string>> = {
+  NONE: '未开放',
+  ENTRY: '条目开放',
+  FULLTEXT: '原文开放',
+};
+
+/** 审核结论 → 落库范围（REREVIEW/PENDING 不改库） */
+export const OPEN_DECISION_SCOPE: Readonly<Record<OpenDecision, OpenScope | null>> = {
+  PENDING: null,
+  OPEN_ENTRY: 'ENTRY',
+  OPEN_FULLTEXT: 'FULLTEXT',
+  DENY: 'NONE',
+  REREVIEW: null,
+};
+
+// ============================================================================
+// 审批流引擎（对齐泰坦：流程类型 / 环节流向 / 环节回调 / 环节权限）
+// ============================================================================
+
+/** 流程业务类型（一种业务对应一组流程定义） */
+export const WorkflowBizType = {
+  OPEN_BATCH: 'OPEN_BATCH',
+  APPRAISAL_DESTROY: 'APPRAISAL_DESTROY',
+  ARCHIVE_CONFIRM: 'ARCHIVE_CONFIRM',
+  BORROW: 'BORROW',
+} as const;
+export type WorkflowBizType = (typeof WorkflowBizType)[keyof typeof WorkflowBizType];
+
+export const WORKFLOW_BIZ_TYPE_LABELS: Readonly<Record<WorkflowBizType, string>> = {
+  OPEN_BATCH: '开放批次审批',
+  APPRAISAL_DESTROY: '鉴定销毁审批',
+  ARCHIVE_CONFIRM: '归档确认审批',
+  BORROW: '借阅审批',
+};
+
+export const WORKFLOW_BIZ_TYPE_VALUES: readonly WorkflowBizType[] = [
+  'OPEN_BATCH',
+  'APPRAISAL_DESTROY',
+  'ARCHIVE_CONFIRM',
+  'BORROW',
+];
+
+/** 流程实例状态 */
+export const WorkflowInstanceStatus = {
+  RUNNING: 'RUNNING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type WorkflowInstanceStatus =
+  (typeof WorkflowInstanceStatus)[keyof typeof WorkflowInstanceStatus];
+
+export const WORKFLOW_INSTANCE_STATUS_LABELS: Readonly<
+  Record<WorkflowInstanceStatus, string>
+> = {
+  RUNNING: '流转中',
+  APPROVED: '已通过',
+  REJECTED: '已驳回',
+  CANCELLED: '已撤回',
+};
+
+/** 环节任务状态 */
+export const WorkflowTaskStatus = {
+  PENDING: 'PENDING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  SKIPPED: 'SKIPPED',
+} as const;
+export type WorkflowTaskStatus = (typeof WorkflowTaskStatus)[keyof typeof WorkflowTaskStatus];
+
+export const WORKFLOW_TASK_STATUS_LABELS: Readonly<Record<WorkflowTaskStatus, string>> = {
+  PENDING: '待处理',
+  APPROVED: '已同意',
+  REJECTED: '已驳回',
+  SKIPPED: '已跳过',
+};
+
+/** 环节处理动作 */
+export const WorkflowAction = {
+  APPROVE: 'APPROVE',
+  REJECT: 'REJECT',
+} as const;
+export type WorkflowAction = (typeof WorkflowAction)[keyof typeof WorkflowAction];
+
+/**
+ * 环节回调键 —— 审批通过后由业务模块注册的「落库动作」。
+ *
+ * 引擎本身不认识任何业务表：它只在最后一个环节通过时按 `onApprove` 查注册表，
+ * 调用业务模块实现（开放批次应用开放标识 / 销毁执行软删除）。
+ * 这样新增业务只需注册回调，不必改引擎。
+ */
+export const WorkflowCallback = {
+  OPEN_BATCH_APPLY: 'OPEN_BATCH_APPLY',
+  APPRAISAL_DESTROY_EXEC: 'APPRAISAL_DESTROY_EXEC',
+} as const;
+export type WorkflowCallback = (typeof WorkflowCallback)[keyof typeof WorkflowCallback];
+
+export const WORKFLOW_CALLBACK_LABELS: Readonly<Record<WorkflowCallback, string>> = {
+  OPEN_BATCH_APPLY: '应用开放标识',
+  APPRAISAL_DESTROY_EXEC: '执行销毁（进回收站）',
+};

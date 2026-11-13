@@ -4,6 +4,8 @@
  */
 
 import type {
+  AppraisalDecision,
+  AppraisalTaskStatus,
   ApprovalAction,
   AuditAction,
   AuditResult,
@@ -12,7 +14,10 @@ import type {
   ExtractStatus,
   FondsStatus,
   ItemStatus,
+  OpenBatchStatus,
+  OpenDecision,
   OpenFlag,
+  OpenScope,
   PermissionGrant,
   PreviewKind,
   Retention,
@@ -20,6 +25,10 @@ import type {
   SecurityLevel,
   UserStatus,
   VolumeStatus,
+  WorkflowAction,
+  WorkflowBizType,
+  WorkflowInstanceStatus,
+  WorkflowTaskStatus,
 } from './enums';
 import type { DanghaoSegment, ResetCycle } from './danghao';
 import type { PermissionSnapshot } from './permission';
@@ -302,6 +311,8 @@ export interface ItemDto {
   note: string | null;
   status: ItemStatus;
   openFlag: OpenFlag;
+  /** 开放范围（P3-B 开放管理落库；NONE=未开放，ENTRY=仅条目，FULLTEXT=原文开放） */
+  openScope?: OpenScope;
   fullText: string | null;
   extra: Record<string, unknown>;
   fileCount?: number;
@@ -927,4 +938,347 @@ export interface HealthStatus {
   version: string;
   uptimeSeconds: number;
   deps: Array<{ name: string; ok: boolean; latencyMs: number | null; message?: string }>;
+}
+
+// ============================================================================
+// 鉴定 F-19（对齐泰坦：鉴定任务 / 任务处理 / 鉴定处置表）
+// ============================================================================
+export interface AppraisalTaskDto {
+  id: string;
+  taskNo: string;
+  name: string;
+  status: AppraisalTaskStatus;
+  fondsId: string | null;
+  fondsName: string | null;
+  yearFrom: number;
+  yearTo: number;
+  /** 纳入鉴定的保管期限（空数组 = 不限） */
+  retentions: Retention[];
+  categoryCode: string | null;
+  /** 仅纳入已到期件（按 RETENTION_YEARS 与年度差计算） */
+  dueOnly: boolean;
+  /** 期限依据文档/说明 */
+  basis: string | null;
+  remark: string | null;
+  total: number;
+  pending: number;
+  keep: number;
+  extend: number;
+  transfer: number;
+  destroy: number;
+  /** 销毁审批实例（DESTROY 结论提交审批后生成） */
+  workflowInstanceId: string | null;
+  workflowStatus: WorkflowInstanceStatus | null;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface AppraisalEntryDto {
+  id: string;
+  taskId: string;
+  itemId: string;
+  danghao: string;
+  title: string;
+  year: number;
+  retentionBefore: Retention;
+  retentionAfter: Retention | null;
+  decision: AppraisalDecision;
+  reason: string | null;
+  decidedBy: string | null;
+  decidedByName: string | null;
+  decidedAt: string | null;
+  executed: boolean;
+  executedAt: string | null;
+}
+
+export interface CreateAppraisalTaskDto {
+  name: string;
+  fondsId?: string | null;
+  yearFrom: number;
+  yearTo: number;
+  retentions?: Retention[];
+  categoryCode?: string | null;
+  dueOnly?: boolean;
+  basis?: string | null;
+  remark?: string | null;
+}
+
+/** 逐件/批量处置 */
+export interface DecideAppraisalDto {
+  ids: string[];
+  decision: Exclude<AppraisalDecision, 'PENDING'>;
+  /** EXTEND 必填：新的保管期限 */
+  retentionAfter?: Retention | null;
+  reason?: string | null;
+}
+
+export interface AppraisalExecuteResult {
+  requested: number;
+  kept: number;
+  extended: number;
+  transferred: number;
+  /** 已执行软删除（进回收站）的件数 */
+  destroyed: number;
+  /** 结论为销毁但审批未通过，暂缓执行的件数 */
+  pendingApproval: number;
+  failed: Array<{ id: string; reason: string }>;
+}
+
+// ============================================================================
+// 开放管理 F-19（未处理 → 条目开放 / 原文开放 / 不开放 / 再审查）
+// ============================================================================
+export interface OpenBatchDto {
+  id: string;
+  batchNo: string;
+  name: string;
+  status: OpenBatchStatus;
+  fondsId: string | null;
+  fondsName: string | null;
+  yearFrom: number | null;
+  yearTo: number | null;
+  securityLevels: SecurityLevel[];
+  total: number;
+  pending: number;
+  openedEntry: number;
+  openedFulltext: number;
+  denied: number;
+  rereview: number;
+  workflowInstanceId: string | null;
+  workflowStatus: WorkflowInstanceStatus | null;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface OpenReviewDto {
+  id: string;
+  batchId: string;
+  itemId: string;
+  danghao: string;
+  title: string;
+  year: number;
+  securityLevel: SecurityLevel;
+  decision: OpenDecision;
+  reason: string | null;
+  reviewerId: string | null;
+  reviewerName: string | null;
+  reviewedAt: string | null;
+  appliedAt: string | null;
+}
+
+export interface CreateOpenBatchDto {
+  name: string;
+  fondsId?: string | null;
+  yearFrom?: number | null;
+  yearTo?: number | null;
+  securityLevels?: SecurityLevel[];
+  /** 仅纳入未开放件（open_scope = NONE），默认 true */
+  unopenedOnly?: boolean;
+}
+
+/** 审核结论提交（批量） */
+export interface ReviewOpenBatchDto {
+  ids: string[];
+  decision: Exclude<OpenDecision, 'PENDING'>;
+  /** DENY / REREVIEW 建议填理由 */
+  reason?: string | null;
+}
+
+export interface OpenApplyResult {
+  applied: number;
+  openedEntry: number;
+  openedFulltext: number;
+  denied: number;
+  failed: Array<{ id: string; reason: string }>;
+}
+
+// ============================================================================
+// 审批流引擎 F-07（流程类型 / 环节 / 实例 / 任务）
+// ============================================================================
+export interface WorkflowNodeDto {
+  id?: string;
+  seq: number;
+  name: string;
+  /** 处理角色（R0-R4）；'*' 表示不限角色（仅需权限域匹配） */
+  roleCode: RoleCode | '*';
+  /** 该环节要求的权限域（为空则只校验角色） */
+  permDomain?: string | null;
+  /** 最后一个环节通过后触发的业务回调键 */
+  onApprove?: string | null;
+  /** 是否允许驳回（默认 true） */
+  allowReject?: boolean;
+  /** 超时提醒小时数（0/空 = 不提醒） */
+  timeoutHours?: number | null;
+}
+
+export interface WorkflowDefDto {
+  id: string;
+  code: string;
+  name: string;
+  bizType: WorkflowBizType;
+  version: number;
+  enabled: boolean;
+  description: string | null;
+  nodes: WorkflowNodeDto[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWorkflowDefDto {
+  code: string;
+  name: string;
+  bizType: WorkflowBizType;
+  description?: string | null;
+  enabled?: boolean;
+  nodes: WorkflowNodeDto[];
+}
+
+export interface WorkflowTaskDto {
+  id: string;
+  instanceId: string;
+  nodeId: string;
+  seq: number;
+  nodeName: string;
+  roleCode: RoleCode | '*';
+  status: WorkflowTaskStatus;
+  actedBy: string | null;
+  actedByName: string | null;
+  opinion: string | null;
+  actedAt: string | null;
+  createdAt: string;
+}
+
+export interface WorkflowInstanceDto {
+  id: string;
+  defId: string;
+  defCode: string;
+  defName: string;
+  bizType: WorkflowBizType;
+  bizId: string;
+  title: string;
+  summary: string | null;
+  status: WorkflowInstanceStatus;
+  currentSeq: number;
+  currentNodeName: string | null;
+  initiatorId: string | null;
+  initiatorName: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  /** 当前用户是否可处理（角色匹配且实例流转中） */
+  canAct: boolean;
+  tasks: WorkflowTaskDto[];
+}
+
+export interface StartWorkflowDto {
+  bizType: WorkflowBizType;
+  bizId: string;
+  title: string;
+  summary?: string | null;
+  payload?: Record<string, unknown>;
+}
+
+export interface WorkflowActionDto {
+  action: WorkflowAction;
+  /** 意见（驳回必填） */
+  opinion: string;
+}
+
+// ============================================================================
+// P4 向量检索 / RAG / LLM Wiki
+// ============================================================================
+export interface RagChunkHit {
+  chunkId: string;
+  itemId: string;
+  danghao: string;
+  title: string;
+  chunkNo: number;
+  content: string;
+  /** 相似度 0-1（向量余弦；词法模式为相关度归一化值） */
+  score: number;
+  securityLevel: SecurityLevel;
+}
+
+export interface RagRetrieveResult {
+  query: string;
+  hits: RagChunkHit[];
+  /** VECTOR=向量召回；LEXICAL=嵌入不可用时降级为全文词法召回 */
+  mode: 'VECTOR' | 'LEXICAL';
+  tookMs: number;
+  note: string | null;
+}
+
+export interface RagAskRequest {
+  question: string;
+  topK?: number;
+}
+
+export interface RagCitation {
+  index: number;
+  itemId: string;
+  danghao: string;
+  title: string;
+  chunkNo: number;
+  snippet: string;
+}
+
+export interface RagAskResult {
+  answer: string;
+  citations: RagCitation[];
+  mode: 'VECTOR' | 'LEXICAL';
+  model: string | null;
+  tookMs: number;
+  /** true = 生成模型不可用或未启用，answer 为抽取式摘要 */
+  degraded: boolean;
+  note: string | null;
+}
+
+export interface RagStatusDto {
+  embeddingProvider: string;
+  embeddingModel: string | null;
+  embeddingDim: number;
+  embeddingAvailable: boolean;
+  llmModel: string | null;
+  llmAvailable: boolean;
+  vectorStore: 'PGVECTOR' | 'ARRAY_FALLBACK';
+  chunkCount: number;
+  itemCount: number;
+  lastIndexedAt: string | null;
+}
+
+export interface RagReindexResult {
+  items: number;
+  chunks: number;
+  skipped: number;
+  failed: number;
+  tookMs: number;
+}
+
+export interface WikiTopicDto {
+  keyword: string;
+  count: number;
+  sampleTitles: string[];
+}
+
+export interface WikiRelationDto {
+  id: string;
+  sourceItemId: string;
+  targetItemId: string;
+  targetDanghao: string | null;
+  targetTitle: string | null;
+  relationType: string;
+  weight: number;
+  source: 'AUTO' | 'MANUAL';
+  createdAt: string;
+}
+
+export interface WikiSummaryDto {
+  itemId: string;
+  summary: string;
+  keywords: string[];
+  degraded: boolean;
+  model: string | null;
 }

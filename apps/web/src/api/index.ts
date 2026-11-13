@@ -39,6 +39,27 @@ import type {
   SearchSynonymDto,
   StageTransitionResult,
   StockReport,
+  AppraisalEntryDto,
+  AppraisalExecuteResult,
+  AppraisalTaskDto,
+  CreateAppraisalTaskDto,
+  CreateOpenBatchDto,
+  CreateWorkflowDefDto,
+  OpenApplyResult,
+  OpenBatchDto,
+  OpenReviewDto,
+  RagAskResult,
+  RagReindexResult,
+  RagRetrieveResult,
+  RagStatusDto,
+  ReviewOpenBatchDto,
+  DecideAppraisalDto,
+  WorkflowDefDto,
+  WorkflowInstanceDto,
+  WorkflowTaskDto,
+  WikiRelationDto,
+  WikiSummaryDto,
+  WikiTopicDto,
   SystemParamDto,
   ParamDef,
   ParamMetaDto,
@@ -417,6 +438,113 @@ export const kbApi = {
   /** 重建片段索引（传空数组 = 自动挑选陈旧/未索引条目） */
   reindex: (itemIds: string[]): Promise<{ indexed: number; items: number; failed: number }> =>
     api.post('/kb/reindex', { itemIds }),
+};
+
+
+// ---------------------------------------------------------------- 鉴定（P3-A）
+export const appraisalApi = {
+  list: (params?: { status?: string; keyword?: string; page?: number; size?: number }): Promise<{
+    items: AppraisalTaskDto[];
+    total: number;
+    page: number;
+    size: number;
+  }> => api.get('/appraisal/tasks', params),
+  create: (body: CreateAppraisalTaskDto): Promise<AppraisalTaskDto> =>
+    api.post('/appraisal/tasks', body),
+  detail: (id: string): Promise<AppraisalTaskDto> => api.get(`/appraisal/tasks/${id}`),
+  regenerate: (id: string): Promise<AppraisalTaskDto> =>
+    api.post(`/appraisal/tasks/${id}/regenerate`),
+  cancel: (id: string): Promise<AppraisalTaskDto> => api.post(`/appraisal/tasks/${id}/cancel`),
+  entries: (
+    id: string,
+    params?: { decision?: string; keyword?: string; page?: number; size?: number },
+  ): Promise<{ items: AppraisalEntryDto[]; total: number; page: number; size: number }> =>
+    api.get(`/appraisal/tasks/${id}/entries`, params),
+  decide: (id: string, body: DecideAppraisalDto): Promise<{ updated: number }> =>
+    api.post(`/appraisal/tasks/${id}/decide`, body),
+  execute: (id: string): Promise<AppraisalExecuteResult> =>
+    api.post(`/appraisal/tasks/${id}/execute`),
+  submitDestroy: (id: string): Promise<AppraisalTaskDto> =>
+    api.post(`/appraisal/tasks/${id}/submit-destroy`),
+};
+
+// ---------------------------------------------------------------- 开放管理（P3-B）
+export const openApi = {
+  list: (params?: {
+    status?: string;
+    keyword?: string;
+    fondsId?: string;
+    page?: number;
+    size?: number;
+  }): Promise<{ items: OpenBatchDto[]; total: number; page: number; size: number }> =>
+    api.get('/open/batches', params),
+  create: (body: CreateOpenBatchDto): Promise<OpenBatchDto> => api.post('/open/batches', body),
+  detail: (id: string): Promise<OpenBatchDto> => api.get(`/open/batches/${id}`),
+  cancel: (id: string): Promise<OpenBatchDto> => api.post(`/open/batches/${id}/cancel`),
+  reviews: (
+    id: string,
+    params?: { decision?: string; keyword?: string; page?: number; size?: number },
+  ): Promise<{ items: OpenReviewDto[]; total: number; page: number; size: number }> =>
+    api.get(`/open/batches/${id}/reviews`, params),
+  review: (id: string, body: ReviewOpenBatchDto): Promise<{ updated: number }> =>
+    api.post(`/open/batches/${id}/reviews`, body),
+  submit: (id: string): Promise<OpenBatchDto> => api.post(`/open/batches/${id}/submit`),
+  apply: (id: string): Promise<OpenApplyResult> => api.post(`/open/batches/${id}/apply`),
+  rereview: (params?: {
+    keyword?: string;
+    page?: number;
+    size?: number;
+  }): Promise<{ items: OpenReviewDto[]; total: number; page: number; size: number }> =>
+    api.get('/open/rereview', params),
+};
+
+// ---------------------------------------------------------------- 审批流（P3-C）
+export const workflowApi = {
+  defs: (): Promise<WorkflowDefDto[]> => api.get('/workflow/defs'),
+  createDef: (body: CreateWorkflowDefDto): Promise<WorkflowDefDto> =>
+    api.post('/workflow/defs', body),
+  updateDef: (id: string, body: Partial<CreateWorkflowDefDto>): Promise<WorkflowDefDto> =>
+    api.patch(`/workflow/defs/${id}`, body),
+  deleteDef: (id: string): Promise<{ deleted: boolean }> => api.delete(`/workflow/defs/${id}`),
+  instances: (params?: {
+    bizType?: string;
+    status?: string;
+    bizId?: string;
+    mine?: boolean;
+    page?: number;
+    size?: number;
+  }): Promise<{ items: WorkflowInstanceDto[]; total: number; page: number; size: number }> =>
+    api.get('/workflow/instances', params),
+  detail: (id: string): Promise<WorkflowInstanceDto> => api.get(`/workflow/instances/${id}`),
+  act: (id: string, action: 'APPROVE' | 'REJECT', opinion: string): Promise<WorkflowInstanceDto> =>
+    api.post(`/workflow/instances/${id}/action`, { action, opinion }),
+  cancel: (id: string, reason?: string): Promise<WorkflowInstanceDto> =>
+    api.post(`/workflow/instances/${id}/cancel`, { reason }),
+  myTasks: (): Promise<Array<WorkflowTaskDto & { title: string; bizType: string; bizId: string }>> =>
+    api.get('/workflow/tasks/my'),
+  forBiz: (bizType: string, bizId: string): Promise<WorkflowInstanceDto | null> =>
+    api.get(`/workflow/biz/${bizType}/${bizId}`),
+};
+
+// ---------------------------------------------------------------- RAG / 知识库（P4）
+export const ragApi = {
+  status: (): Promise<RagStatusDto> => api.get('/rag/status'),
+  retrieve: (query: string, topK?: number): Promise<RagRetrieveResult> =>
+    api.post('/rag/retrieve', { query, topK }),
+  ask: (question: string, topK?: number): Promise<RagAskResult> =>
+    api.post('/rag/ask', { question, topK }),
+  reindex: (body?: { ids?: string[]; limit?: number; force?: boolean }): Promise<RagReindexResult> =>
+    api.post('/rag/reindex', body ?? {}),
+  relations: (itemId: string): Promise<WikiRelationDto[]> =>
+    api.get(`/wiki/items/${itemId}/relations`),
+  addRelation: (itemId: string, targetItemId: string, relationType?: string): Promise<WikiRelationDto> =>
+    api.post(`/wiki/items/${itemId}/relations`, { targetItemId, relationType }),
+  removeRelation: (id: string): Promise<{ deleted: boolean }> => api.delete(`/wiki/relations/${id}`),
+  autoLink: (itemId: string): Promise<{ created: number }> =>
+    api.post(`/wiki/items/${itemId}/auto-link`),
+  topics: (limit?: number, keyword?: string): Promise<WikiTopicDto[]> =>
+    api.get('/wiki/topics', { limit, keyword }),
+  summary: (itemId: string): Promise<WikiSummaryDto> => api.post(`/wiki/items/${itemId}/summary`),
 };
 
 // ---------------------------------------------------------------- 健康检查

@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { AppConfig } from '../../config/configuration';
 import {
+  AppraisalEntry,
+  AppraisalTask,
   ArchiveItem,
   AuditLog,
   BackupRecord,
@@ -15,8 +17,12 @@ import {
   DocumentText,
   ElectronicFile,
   Fonds,
+  ItemChunk,
+  ItemRelation,
   ItemStageLog,
   KbEntry,
+  OpenBatch,
+  OpenReview,
   OrgNode,
   RecycleBin,
   Role,
@@ -26,6 +32,10 @@ import {
   SystemParam,
   UserDataScope,
   Volume,
+  WorkflowDef,
+  WorkflowInstance,
+  WorkflowNodeRow,
+  WorkflowTask,
   AppUser,
 } from './entities';
 
@@ -55,6 +65,16 @@ export const ALL_ENTITIES = [
   SearchHistory,
   SearchSynonym,
   BackupRecord,
+  AppraisalTask,
+  AppraisalEntry,
+  OpenBatch,
+  OpenReview,
+  WorkflowDef,
+  WorkflowNodeRow,
+  WorkflowInstance,
+  WorkflowTask,
+  ItemChunk,
+  ItemRelation,
 ] as const;
 
 /**

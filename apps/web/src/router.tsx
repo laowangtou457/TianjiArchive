@@ -19,6 +19,10 @@ import { SynonymPage } from './pages/system/SynonymPage';
 import { AuditPage } from './pages/system/AuditPage';
 import { RecyclePage } from './pages/RecyclePage';
 import { KbPage } from './pages/KbPage';
+import { AppraisalPage } from './pages/appraisal/AppraisalPage';
+import { OpenPage } from './pages/open/OpenPage';
+import { WorkflowPage } from './pages/workflow/WorkflowPage';
+import { KnowledgePage } from './pages/knowledge/KnowledgePage';
 
 /** 路由守卫：未登录跳 /login */
 function RequireAuth(props: { children: ReactElement }): ReactElement {
@@ -73,6 +77,38 @@ export function AppRoutes(): ReactElement {
           element={
             <RequireAuth>
               <BorrowPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/appraisal"
+          element={
+            <RequireAuth>
+              <AppraisalPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/open"
+          element={
+            <RequireAuth>
+              <OpenPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/workflow"
+          element={
+            <RequireAuth>
+              <WorkflowPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/knowledge"
+          element={
+            <RequireAuth>
+              <KnowledgePage />
             </RequireAuth>
           }
         />

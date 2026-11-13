@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import { ItemStatus, OpenFlag, Retention, SecurityLevel } from '@tianji/shared';
+import { ItemStatus, OpenFlag, OpenScope, Retention, SecurityLevel } from '@tianji/shared';
 import { Volume } from './volume.entity';
 
 /**
@@ -83,6 +83,16 @@ export class ArchiveItem {
 
   @Column({ name: 'open_flag', type: 'varchar', length: 16, default: 'CONTROLLED' })
   openFlag!: OpenFlag;
+
+  /**
+   * 开放范围（P3-B 开放管理落库）：
+   *   NONE（未开放）/ ENTRY（仅条目开放）/ FULLTEXT（原文开放）
+   *
+   * 与 openFlag 的分工：openFlag 是 DA/T 22 的二元「开放/控制」标识（对外口径），
+   * openScope 是**利用粒度**（能否看原文）。二者由开放批次统一写入，不允许各自改。
+   */
+  @Column({ name: 'open_scope', type: 'varchar', length: 16, default: 'NONE' })
+  openScope!: OpenScope;
 
   /** 全文文本（由 extractor 抽取写入，可人工编辑） */
   @Column({ name: 'full_text', type: 'text', nullable: true })

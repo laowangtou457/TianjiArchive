@@ -80,6 +80,20 @@ export function loadConfiguration(): {
   features: { previewWatermark: boolean; downloadEnabled: boolean };
   queue: { extract: string; extractConcurrency: number };
   backup: { dir: string; retentionDays: number; cron: string };
+  rag: {
+    embeddingBaseUrl: string;
+    embeddingModel: string;
+    embeddingDim: number;
+    embeddingTimeoutMs: number;
+    llmBaseUrl: string;
+    llmModel: string;
+    llmTimeoutMs: number;
+    topK: number;
+    minScore: number;
+    autoIndex: boolean;
+    autoIndexBatch: number;
+    maxChunksPerItem: number;
+  };
 } {
   const env = str(process.env.NODE_ENV, 'development');
   return {
@@ -162,6 +176,26 @@ export function loadConfiguration(): {
       dir: str(process.env.BACKUP_DIR, '/backup'),
       retentionDays: int(process.env.BACKUP_RETENTION_DAYS, 30),
       cron: str(process.env.BACKUP_CRON, '0 2 * * *'),
+    },
+    // ---------------- P4 向量检索 / RAG ----------------
+    // 默认指向宿主机 Ollama（容器内用 host.docker.internal；compose 已注入 extra_hosts）。
+    // 未部署 Ollama 时所有接口仍可用：自动降级为词法召回 + 抽取式摘要。
+    rag: {
+      embeddingBaseUrl: str(process.env.EMBEDDING_BASE_URL, 'http://host.docker.internal:11434'),
+      embeddingModel: str(process.env.EMBEDDING_MODEL, 'nomic-embed-text'),
+      // 维度必须与 item_chunk.embedding 列一致（vector(768)）；换模型必须重建列
+      embeddingDim: int(process.env.EMBEDDING_DIM, 768),
+      embeddingTimeoutMs: int(process.env.EMBEDDING_TIMEOUT_MS, 60000),
+      llmBaseUrl: str(process.env.LLM_BASE_URL, 'http://host.docker.internal:11434'),
+      // 默认 8b：32b 在本机单卡上单轮 30s+，RAG 问答会被前端判超时；
+      // 需要更强表述能力时改 LLM_MODEL=qwen3:32b（响应会明显变慢）
+      llmModel: str(process.env.LLM_MODEL, 'qwen3:8b'),
+      llmTimeoutMs: int(process.env.LLM_TIMEOUT_MS, 180000),
+      topK: int(process.env.RAG_TOP_K, 6),
+      minScore: Number.parseFloat(str(process.env.RAG_MIN_SCORE, '0.2')),
+      autoIndex: bool(process.env.RAG_AUTO_INDEX, true),
+      autoIndexBatch: int(process.env.RAG_AUTO_INDEX_BATCH, 20),
+      maxChunksPerItem: int(process.env.RAG_MAX_CHUNKS_PER_ITEM, 40),
     },
   };
 }

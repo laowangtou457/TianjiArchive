@@ -45,6 +45,7 @@ import { AppLayout } from '../../components/AppLayout';
 import { ArchiveNo, SecurityChip } from '../../components/ArchiveNo';
 import { PermGate } from '../../components/PermGate';
 import { useAuthStore } from '../../stores/authStore';
+import { printBorrowSlip } from '../../utils/print';
 
 /** 状态对应的 MUI 颜色 */
 const STATUS_COLOR: Record<BorrowStatus, 'default' | 'warning' | 'info' | 'success' | 'error'> = {
@@ -521,6 +522,11 @@ export function BorrowPage(): ReactElement {
                           </Button>
                         </PermGate>
                       )}
+                      <Tooltip title="打印 A4 档案利用单（含利用者、档号、审批意见与签字栏）">
+                        <Button size="small" onClick={() => printBorrowSlip(o)}>
+                          利用单
+                        </Button>
+                      </Tooltip>
                       {/* BR-06-4/BR-06-5：仅「已借出且未逾期、未续过」可续借。
                           逾期单与待审批单不展示按钮，避免用户触发必然失败的请求。 */}
                       {o.status === 'LENT' &&
