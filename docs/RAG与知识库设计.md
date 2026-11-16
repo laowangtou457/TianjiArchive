@@ -210,6 +210,34 @@ user:   档案片段：[1] 档号｜题名 + 正文(700 字) …  问题：xxx
 关系类型：`RELATED`（主题相关）/ `SERIES`（同卷）/ `CITES`（引用，人工）/ `SAME_DOC`（同文件不同版本，人工）。
 `source='AUTO'` 可被重建覆盖/删除，`MANUAL` 保留。
 
+### 7.1 可编辑 Wiki 页面库（`/wiki/spaces*`、`/wiki/pages*`）
+
+四张表（迁移 `1700000000011` / `1700000000012`）：
+
+| 表 | 作用 | 关键列 |
+|---|---|---|
+| `wiki_space` | 空间（按书籍类型建：中文书籍/剧本/裁判文书…） | `security_level` 作**上限** |
+| `wiki_page` | 页面树 + Markdown 正文 | `parent_id`、`version_no`、`security_level`（**页面级**，继承来源条目）、`source_item_id`（导入幂等键） |
+| `wiki_page_version` | 每次保存全量快照，每页留 50 版 | `version_no`、`content_md`、`edited_by` |
+| `wiki_chunk` | 页面切片向量（与档案 `item_chunk` 隔离） | `page_id`、`embedding`（pgvector，不可用降级数组） |
+
+**为什么页面级密级**：批量导入按书籍类型建空间，而「裁判文书」同一类型内有涉密卷——若只按空间密级判定，要么整体锁死要么泄密。因此空间密级只作上限，**页面、页面树、召回、引用、搜索全部逐页判定**。
+
+| 能力 | 接口 | 要点 |
+|---|---|---|
+| 空间 | `GET/POST/PUT/DELETE /wiki/spaces` | 列表带页数；密级可见才返回 |
+| 页面树 | `GET /wiki/spaces/:id/tree` | 按 `order_no`；父页缺失时提升为根 |
+| 页面 CRUD | `GET/POST/PUT/DELETE /wiki/pages` | 保存即 `version_no+1` 并留快照；删除级联子页 |
+| 版本 | `GET /wiki/pages/:id/versions`、`POST .../restore` | 回滚本身也生成新版本 |
+| 页面问答 | `POST /wiki/pages/ask` | 向量召回（仅 Wiki 块）+ qwen3 生成，答案带 `[n]` 页面引用；模型不可用降级摘录并标 `degraded` |
+| **页面搜索** | `GET /wiki/pages/search?q=&spaceId=` | 标题 + 正文 `ILIKE`，标题命中优先；返回命中片段与来源档号；逐页/逐空间密级过滤；`LIMIT 50` |
+| 批量导入 | `GET /wiki/import/sources`、`POST /wiki/import/start|status|cancel` | dryRun 试运行、后台单例任务、进度轮询、幂等续跑（`source_item_id` 去重） |
+| 向量状态 | `GET /wiki/pages/index-status`、`POST /wiki/pages/reindex` | 嵌入分批 16 条/次，整本书数百块不撞超时 |
+
+**路由顺序坑**：`GET pages/index-status`、`GET pages/search` 这类静态路径必须声明在 `GET pages/:id` **之前**，否则被 `:id` 吞掉。
+
+搜索实测（3,460 页 / 64,834 块）：单关键词约 **0.5s**；`紅樓夢` 全库 10 条（中文书籍 6 / 维基文库 4），限定 `spaceId` 后 4 条；涉密页面对 `reader1`（内部级）搜索 0 条、对 `archivist1`（秘密级）1 条，密级隔离生效。同名不同版本（如 3 个《千字文》）靠返回的**来源档号**区分。
+
 ---
 
 ## 8. 配置项（`.env` / compose）

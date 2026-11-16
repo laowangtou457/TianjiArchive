@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
   CircularProgress,
   Collapse,
   Divider,
+  InputAdornment,
   LinearProgress,
   MenuItem,
   Stack,
@@ -16,7 +17,11 @@ import {
   Typography,
 } from '@mui/material';
 import { useSnackbar } from 'notistack';
-import { SECURITY_LEVEL_LABELS, type WikiPageDto, type WikiPageTreeNode } from '@tianji/shared';
+import {
+  SECURITY_LEVEL_LABELS,
+  type WikiPageDto,
+  type WikiPageTreeNode,
+} from '@tianji/shared';
 import { wikiPageApi } from '../../api';
 import { ApiError } from '../../api/client';
 import { AppLayout } from '../../components/AppLayout';
@@ -40,6 +45,8 @@ export function WikiHomePage(): ReactElement {
   const [question, setQuestion] = useState('');
   const [askResult, setAskResult] = useState<Awaited<ReturnType<typeof wikiPageApi.ask>> | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const spacesQuery = useQuery({ queryKey: ['wiki-spaces'], queryFn: wikiPageApi.listSpaces });
   const treeQuery = useQuery({
@@ -58,6 +65,18 @@ export function WikiHomePage(): ReactElement {
     enabled: Boolean(pageId) && showVersions,
   });
   const indexStatusQuery = useQuery({ queryKey: ['wiki-index'], queryFn: wikiPageApi.indexStatus });
+
+  // 搜索：300ms 防抖，全空间范围（不局限于当前空间），命中后跳转到所属空间
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchTerm(query.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [query]);
+  const searching = searchTerm.length >= 2;
+  const searchQuery = useQuery({
+    queryKey: ['wiki-search', searchTerm],
+    queryFn: () => wikiPageApi.search(searchTerm),
+    enabled: searching,
+  });
 
   const errText = (err: unknown): string => (err instanceof ApiError ? err.message : '操作失败');
 
@@ -153,14 +172,32 @@ export function WikiHomePage(): ReactElement {
           </Stack>
         </Card>
 
-        {/* 中栏：页面树 */}
-        <Card variant="outlined" sx={{ width: 260, flex: '0 0 260px' }}>
-          <Stack sx={{ p: 1.25 }} spacing={0.5}>
+        {/* 中栏：搜索 + 页面树 */}
+        <Card variant="outlined" sx={{ width: 280, flex: '0 0 280px' }}>
+          <Stack sx={{ p: 1.25 }} spacing={0.75}>
+            <TextField
+              size="small"
+              fullWidth
+              placeholder="搜索页面（标题+正文）"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              InputProps={{
+                startAdornment: <InputAdornment position="start">⌕</InputAdornment>,
+                endAdornment:
+                  query.length > 0 ? (
+                    <InputAdornment position="end">
+                      <Button size="small" sx={{ minWidth: 0, px: 0.5 }} onClick={() => setQuery('')}>
+                        ✕
+                      </Button>
+                    </InputAdornment>
+                  ) : undefined,
+              }}
+            />
             <Stack direction="row" alignItems="center" spacing={1}>
               <Typography variant="subtitle2" sx={{ flex: 1 }}>
-                页面
+                {searching ? '搜索结果' : '页面'}
               </Typography>
-              {spaceId && (
+              {spaceId && !searching && (
                 <PermGate domain="WIKI" op="WRITE">
                   <Button
                     size="small"
@@ -181,42 +218,112 @@ export function WikiHomePage(): ReactElement {
                   </Button>
                 </PermGate>
               )}
+              {searching && (
+                <Typography variant="caption" color="text.secondary">
+                  {searchQuery.isFetching ? '检索中…' : `${searchQuery.data?.length ?? 0} 条`}
+                </Typography>
+              )}
             </Stack>
-            {!spaceId && (
-              <Typography variant="caption" color="text.secondary">
-                先在左侧选择一个空间
-              </Typography>
-            )}
-            {treeQuery.isLoading && <CircularProgress size={18} />}
-            {(treeQuery.data ?? []).map((n) => (
-              <TreeNodeView
-                key={n.id}
-                node={n}
-                activeId={pageId}
-                depth={0}
-                onOpen={(id) => {
-                  setPageId(id);
-                  setEditing(false);
-                  setAskResult(null);
-                }}
-                onAddChild={async (parent) => {
-                  const title = window.prompt('子页面标题：');
-                  if (!title) return;
-                  try {
-                    const p = await wikiPageApi.createPage({ spaceId: spaceId!, parentId: parent, title });
-                    invalidate();
-                    setPageId(p.id);
-                    setEditing(true);
-                  } catch (err) {
-                    enqueueSnackbar(errText(err), { variant: 'error' });
-                  }
-                }}
-              />
-            ))}
-            {spaceId && !treeQuery.isLoading && (treeQuery.data ?? []).length === 0 && (
-              <Typography variant="caption" color="text.secondary">
-                空空间，点「新建」开始
-              </Typography>
+
+            {searching ? (
+              <>
+                {searchQuery.isFetching && <LinearProgress sx={{ mt: 0.5 }} />}
+                {!searchQuery.isFetching && (searchQuery.data ?? []).length === 0 && (
+                  <Typography variant="caption" color="text.secondary">
+                    没有匹配的页面，换个关键词试试
+                  </Typography>
+                )}
+                {(searchQuery.data ?? []).map((h) => (
+                  <Box
+                    key={h.pageId}
+                    sx={{
+                      px: 1,
+                      py: 0.75,
+                      borderRadius: 1,
+                      cursor: 'pointer',
+                      bgcolor: h.pageId === pageId ? 'action.selected' : 'transparent',
+                      '&:hover': { bgcolor: 'action.hover' },
+                    }}
+                    onClick={() => {
+                      setSpaceId(h.spaceId);
+                      setPageId(h.pageId);
+                      setEditing(false);
+                      setAskResult(null);
+                      setQuery('');
+                    }}
+                  >
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>
+                        <Highlight text={h.title} term={searchTerm} />
+                      </Typography>
+                      <Chip size="small" label={h.spaceName} sx={{ maxWidth: 92 }} />
+                    </Stack>
+                    {h.snippet && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          mt: 0.25,
+                          lineHeight: 1.5,
+                          overflow: 'hidden',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                        }}
+                      >
+                        <Highlight text={h.snippet} term={searchTerm} />
+                      </Typography>
+                    )}
+                    {h.sourceNo && (
+                      <Typography
+                        variant="caption"
+                        sx={{ display: 'block', mt: 0.25, color: 'text.disabled', fontFamily: 'monospace', fontSize: '0.66rem' }}
+                      >
+                        {h.sourceNo}
+                      </Typography>
+                    )}
+                  </Box>
+                ))}
+              </>
+            ) : (
+              <>
+                {!spaceId && (
+                  <Typography variant="caption" color="text.secondary">
+                    先在左侧选择一个空间
+                  </Typography>
+                )}
+                {treeQuery.isLoading && <CircularProgress size={18} />}
+                {(treeQuery.data ?? []).map((n) => (
+                  <TreeNodeView
+                    key={n.id}
+                    node={n}
+                    activeId={pageId}
+                    depth={0}
+                    onOpen={(id) => {
+                      setPageId(id);
+                      setEditing(false);
+                      setAskResult(null);
+                    }}
+                    onAddChild={async (parent) => {
+                      const title = window.prompt('子页面标题：');
+                      if (!title) return;
+                      try {
+                        const p = await wikiPageApi.createPage({ spaceId: spaceId!, parentId: parent, title });
+                        invalidate();
+                        setPageId(p.id);
+                        setEditing(true);
+                      } catch (err) {
+                        enqueueSnackbar(errText(err), { variant: 'error' });
+                      }
+                    }}
+                  />
+                ))}
+                {spaceId && !treeQuery.isLoading && (treeQuery.data ?? []).length === 0 && (
+                  <Typography variant="caption" color="text.secondary">
+                    空空间，点「新建」开始
+                  </Typography>
+                )}
+              </>
             )}
           </Stack>
         </Card>
@@ -639,5 +746,42 @@ function MarkdownLite(options: { md: string }): ReactElement {
         }
       })}
     </Box>
+  );
+}
+
+/** 搜索命中词高亮：纯文本分段渲染，不注入 HTML */
+function Highlight(options: { text: string; term: string }): ReactElement {
+  const { text, term } = options;
+  if (!term) return <>{text}</>;
+  const lower = text.toLowerCase();
+  const needle = term.toLowerCase();
+  const parts: Array<{ s: string; hit: boolean }> = [];
+  let i = 0;
+  while (i < text.length) {
+    const idx = lower.indexOf(needle, i);
+    if (idx < 0) {
+      parts.push({ s: text.slice(i), hit: false });
+      break;
+    }
+    if (idx > i) parts.push({ s: text.slice(i, idx), hit: false });
+    parts.push({ s: text.slice(idx, idx + needle.length), hit: true });
+    i = idx + needle.length;
+  }
+  return (
+    <>
+      {parts.map((p, k) =>
+        p.hit ? (
+          <Box
+            component="mark"
+            key={k}
+            sx={{ bgcolor: 'warning.light', color: 'inherit', px: 0.25, borderRadius: 0.5 }}
+          >
+            {p.s}
+          </Box>
+        ) : (
+          <span key={k}>{p.s}</span>
+        ),
+      )}
+    </>
   );
 }

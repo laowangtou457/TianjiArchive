@@ -68,6 +68,7 @@ import type {
   WikiIndexStatusDto,
   WikiImportSourceDto,
   WikiImportStatusDto,
+  WikiSearchHitDto,
   SystemParamDto,
   ParamDef,
   ParamMetaDto,
@@ -582,6 +583,8 @@ export const wikiPageApi = {
     api.post(`/wiki/pages/${id}/restore`, { versionNo }),
   ask: (question: string, spaceId?: string): Promise<WikiAskResult> =>
     api.post('/wiki/pages/ask', { question, spaceId }),
+  search: (q: string, spaceId?: string): Promise<WikiSearchHitDto[]> =>
+    api.get('/wiki/pages/search', { q, spaceId }),
   indexStatus: (): Promise<WikiIndexStatusDto> => api.get('/wiki/pages/index-status'),
   reindex: (): Promise<{ pages: number; chunks: number }> => api.post('/wiki/pages/reindex', {}),
   importSources: (): Promise<WikiImportSourceDto[]> => api.get('/wiki/import/sources'),

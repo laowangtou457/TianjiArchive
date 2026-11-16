@@ -12,6 +12,7 @@ import {
   type WikiPageDto,
   type WikiPageTreeNode,
   type WikiPageVersionDto,
+  type WikiSearchHitDto,
   type WikiSpaceDto,
 } from '@tianji/shared';
 import { WikiChunk } from '../../infra/database/entities/wiki-chunk.entity';
@@ -486,9 +487,66 @@ export class WikiPagesService {
     };
   }
 
+  /**
+   * 页面搜索：标题 + 正文（wiki_chunk）ILIKE，逐页/逐空间密级过滤。
+   * 标题命中排前；正文命中截取命中词前后片段。
+   */
+  public async search(
+    q: string,
+    spaceId: string | null,
+    user: PermissionSnapshot,
+  ): Promise<WikiSearchHitDto[]> {
+    const term = q.replace(/[%_\\]/g, ' ').trim();
+    if (term.length === 0) return [];
+    const levels = this.levelsFor(user);
+    if (levels.length === 0) return [];
+    const pattern = `%${term}%`;
+    const rows: Array<{
+      id: string;
+      title: string;
+      space_id: string;
+      space_name: string;
+      level: string;
+      title_hit: boolean;
+      snippet: string | null;
+      source_no: string | null;
+    }> = await this.pageRepo.query(
+      `SELECT p.id, p.title, p.space_id, s.name AS space_name,
+              p.security_level AS level,
+              (p.title ILIKE $1) AS title_hit,
+              a.danghao AS source_no,
+              (SELECT substring(c.content FROM GREATEST(1, POSITION(LOWER($2) IN LOWER(c.content)) - 40) FOR 200)
+                 FROM wiki_chunk c
+                WHERE c.page_id = p.id AND c.deleted = FALSE AND c.content ILIKE $1
+                LIMIT 1) AS snippet
+         FROM wiki_page p
+         JOIN wiki_space s ON s.id = p.space_id AND s.deleted = FALSE
+         LEFT JOIN archive_item a ON a.id = p.source_item_id
+        WHERE p.deleted = FALSE
+          AND p.security_level = ANY($3::varchar[])
+          AND s.security_level = ANY($3::varchar[])
+          AND ($4::uuid IS NULL OR p.space_id = $4)
+          AND (p.title ILIKE $1
+               OR EXISTS (SELECT 1 FROM wiki_chunk c
+                           WHERE c.page_id = p.id AND c.deleted = FALSE AND c.content ILIKE $1))
+        ORDER BY (p.title ILIKE $1) DESC, p.updated_at DESC
+        LIMIT 50`,
+      [pattern, term, levels, spaceId],
+    );
+    return rows.map((r) => ({
+      pageId: r.id,
+      title: r.title,
+      spaceId: r.space_id,
+      spaceName: r.space_name,
+      securityLevel: r.level as SecurityLevel,
+      titleHit: r.title_hit,
+      snippet: r.snippet,
+      sourceNo: r.source_no,
+    }));
+  }
+
   /** 重建全部页面向量（嵌入模型可用时补齐历史空块） */
-  public async reindex(user: PermissionSnapshot): Promise<{ pages: number; chunks: number }> {
-    const spaces = (await this.spaceRepo.find({ where: { deleted: false } })).filter((s) =>
+  public async reindex(user: PermissionSnapshot): Promise<{ pages: number; chunks: number }> {    const spaces = (await this.spaceRepo.find({ where: { deleted: false } })).filter((s) =>
       this.canAccessSpace(user, s),
     );
     const scopeIds = spaces.map((s) => s.id);

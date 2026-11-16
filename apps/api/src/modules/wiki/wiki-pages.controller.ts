@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
@@ -58,6 +58,11 @@ export class RestoreVersionBodyDto {
 
 export class WikiAskBodyDto {
   @IsString() @MaxLength(500) public question!: string;
+  @IsOptional() @IsUUID() public spaceId?: string;
+}
+
+export class SearchQueryDto {
+  @IsString() @MaxLength(100) public q!: string;
   @IsOptional() @IsUUID() public spaceId?: string;
 }
 
@@ -129,6 +134,15 @@ export class WikiPagesController {
   @RequirePerm({ domain: 'WIKI', op: 'READ', checkScope: false, objectType: 'WIKI_PAGE' })
   public async indexStatus(@CurrentUser() user: AuthenticatedUser) {
     return this.service.indexStatus(user as PermissionSnapshot);
+  }
+
+  @Get('pages/search')
+  @RequirePerm({ domain: 'WIKI', op: 'READ', checkScope: false, objectType: 'WIKI_PAGE' })
+  public async search(
+    @Query() dto: SearchQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.search(dto.q, dto.spaceId ?? null, user as PermissionSnapshot);
   }
 
   @Get('pages/:id')

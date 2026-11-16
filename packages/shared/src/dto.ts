@@ -1407,3 +1407,18 @@ export interface WikiImportStatusDto {
   startedAt: string | null;
   finishedAt: string | null;
 }
+
+/** 页面搜索命中（标题/正文 ILIKE，逐页密级过滤） */
+export interface WikiSearchHitDto {
+  pageId: string;
+  title: string;
+  spaceId: string;
+  spaceName: string;
+  securityLevel: SecurityLevel;
+  /** 标题命中（排序权重更高） */
+  titleHit: boolean;
+  /** 来源档案档号（批量导入页面有值，用于区分同名不同版本） */
+  sourceNo: string | null;
+  /** 正文命中片段（命中词前后各约 40/160 字符），标题命中时可能为 null */
+  snippet: string | null;
+}
