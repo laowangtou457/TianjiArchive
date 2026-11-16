@@ -8,6 +8,7 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  Chip,
   Stack,
   Tooltip,
   Typography,
@@ -24,6 +25,11 @@ export interface FilePreviewProps {
   onClose: () => void;
   /** 是否允许下载（受系统参数与权限控制，默认隐藏） */
   allowDownload?: boolean;
+  /**
+   * 定位文本（可选）：打开后自动跳转到正文中包含该内容的页/段，
+   * 用于「智能问答 → 打开原件」直达引用出处。PDF/图片等无文本层格式忽略。
+   */
+  locateText?: string | null;
 }
 
 /**
@@ -39,7 +45,7 @@ export interface FilePreviewProps {
  * 强制留痕：调用 /files/:id/preview 时后端记录 PREVIEW 审计（不可关闭）。
  */
 export function FilePreview(props: FilePreviewProps): ReactElement {
-  const { file, open, onClose, allowDownload = false } = props;
+  const { file, open, onClose, allowDownload = false, locateText = null } = props;
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -187,10 +193,17 @@ export function FilePreview(props: FilePreviewProps): ReactElement {
               </Box>
             )}
 
-            {preview.kind === 'EBOOK' && <EpubReader url={preview.url} fontScale={fontScale} />}
+            {preview.kind === 'EBOOK' && (
+              <EpubReader url={preview.url} fontScale={fontScale} locateText={locateText} />
+            )}
 
             {preview.kind === 'TEXT' && (
-              <TextReader url={preview.url} fontScale={fontScale} title={preview.filename} />
+              <TextReader
+                url={preview.url}
+                fontScale={fontScale}
+                title={preview.filename}
+                locateText={locateText}
+              />
             )}
 
             {preview.kind === 'NONE' && (
@@ -206,23 +219,122 @@ export function FilePreview(props: FilePreviewProps): ReactElement {
 }
 
 // ============================================================================
+// 文本定位（智能问答「打开原件」直达引用出处）
+// ============================================================================
+
+/** 归一化：去空白；stripPunct 时再去掉全部标点（抽取文本与原书标点可能有差异） */
+function normForLocate(s: string, stripPunct: boolean): string {
+  const t = s.replace(/\s+/g, '');
+  return stripPunct ? t.replace(/[^\p{Script=Han}A-Za-z0-9]+/gu, '') : t;
+}
+
+/**
+ * 由待定位文本构造候选串：从长到短取前缀（整串太长容易因抽取差异对不上）。
+ * 先试仅去空白的原形，再试去标点的宽松形；最短候选 12 字，避免误跳到无关处。
+ */
+function locateNeedles(text: string): string[] {
+  const out = new Set<string>();
+  for (const stripPunct of [false, true]) {
+    const t = normForLocate(text, stripPunct);
+    if (t.length === 0) continue;
+    for (const n of [60, 36, 20, 12]) {
+      if (t.length >= n) out.add(t.slice(0, n));
+    }
+    if (t.length < 12) out.add(t);
+  }
+  return [...out];
+}
+
+/**
+ * 在 EPUB 各章节正文中搜索定位文本，命中后跳转到该处并叠加高亮。
+ * 逐章加载文档搜索：单章失败跳过；全书搜不到时保持原位置（封面）。
+ */
+async function locateInBook(
+  book: Book,
+  rendition: Rendition,
+  locateText: string,
+): Promise<boolean> {
+  const needles = locateNeedles(locateText);
+  if (needles.length === 0) return false;
+  // 高亮样式注入 iframe（themes.default 的 CSS 会进入每个内容文档）
+  try {
+    rendition.themes.default({ '.tj-locate': { 'background-color': 'rgba(255, 200, 0, 0.4)' } });
+  } catch {
+    /* 忽略主题注入失败 */
+  }
+  await book.loaded.spine;
+  const items = (book.spine as unknown as { spineItems?: unknown[] }).spineItems ?? [];
+  // 先在段落级元素找（精确），再退回容器级 div（整章容器匹配也能跳对章）
+  const selectorPasses = ['p, li, blockquote, td, h1, h2, h3, h4, h5, h6', 'div, section'];
+  for (const spineItem of items) {
+    const item = spineItem as {
+      load: (req?: unknown) => Promise<unknown>;
+      unload: () => Promise<void> | void;
+      cfiFromElement: (el: Element) => string;
+    };
+    try {
+      const doc = (await item.load(book.load)) as unknown as Document;
+      try {
+        for (const selector of selectorPasses) {
+          const elements = Array.from(doc.querySelectorAll(selector));
+          for (const el of elements) {
+            const raw = el.textContent ?? '';
+            if (raw.trim().length === 0) continue;
+            for (const stripPunct of [false, true]) {
+              const t = normForLocate(raw, stripPunct);
+              const needle = needles.find((n) => n.length >= 8 && t.includes(n));
+              if (needle) {
+                const cfi = item.cfiFromElement(el as HTMLElement);
+                if (cfi) {
+                  await item.unload();
+                  await rendition.display(cfi);
+                  try {
+                    rendition.annotations.highlight(cfi, {}, () => undefined, 'tj-locate');
+                  } catch {
+                    /* 高亮失败不影响跳转 */
+                  }
+                  return true;
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        try {
+          item.unload();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* 单章加载失败继续下一章 */
+    }
+  }
+  return false;
+}
+
+// ============================================================================
 // EPUB 阅读器（epub.js）—— 图书式翻页排版
 // ============================================================================
 
-function EpubReader(props: { url: string; fontScale: number }): ReactElement {
-  const { url, fontScale } = props;
+function EpubReader(props: { url: string; fontScale: number; locateText?: string | null }): ReactElement {
+  const { url, fontScale, locateText } = props;
   const holderRef = useRef<HTMLDivElement | null>(null);
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
+  const locatedRef = useRef(false);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errMsg, setErrMsg] = useState('');
   const [progress, setProgress] = useState(0);
+  const [locating, setLocating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const holder = holderRef.current;
     if (!holder) return;
     setState('loading');
+    locatedRef.current = false;
+    setLocating(false);
     let book: Book | null = null;
     try {
       book = ePub(url);
@@ -273,6 +385,19 @@ function EpubReader(props: { url: string; fontScale: number }): ReactElement {
     renditionRef.current?.themes.fontSize(`${Math.round(16 * fontScale)}px`);
   }, [fontScale, state]);
 
+  // 定位搜索内容：渲染就绪后在书内搜索并跳转（只执行一次，换文件由主 effect 复位）
+  useEffect(() => {
+    if (state !== 'ready' || !locateText || locatedRef.current) return;
+    const rendition = renditionRef.current;
+    const book = bookRef.current;
+    if (!rendition || !book) return;
+    locatedRef.current = true;
+    setLocating(true);
+    void locateInBook(book, rendition, locateText)
+      .catch(() => undefined)
+      .finally(() => setLocating(false));
+  }, [state, locateText]);
+
   const prev = (): void => {
     void renditionRef.current?.prev();
   };
@@ -289,6 +414,19 @@ function EpubReader(props: { url: string; fontScale: number }): ReactElement {
             正在打开图书…
           </Typography>
         </Stack>
+      )}
+      {state === 'ready' && locating && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 8,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 2,
+          }}
+        >
+          <Chip size="small" color="primary" label="正在定位引用内容…" />
+        </Box>
       )}
       {state === 'error' && (
         <Box sx={{ p: 2 }}>
@@ -329,15 +467,24 @@ function EpubReader(props: { url: string; fontScale: number }): ReactElement {
 // 文本阅读视图 —— 书籍排版（衬线、行距、页宽、字号可调）
 // ============================================================================
 
-function TextReader(props: { url: string; fontScale: number; title: string }): ReactElement {
-  const { url, fontScale, title } = props;
+function TextReader(props: {
+  url: string;
+  fontScale: number;
+  title: string;
+  locateText?: string | null;
+}): ReactElement {
+  const { url, fontScale, title, locateText } = props;
   const [text, setText] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  /** 命中定位文本的段落下标（null = 未定位） */
+  const [locateIdx, setLocateIdx] = useState<number | null>(null);
+  const matchedRef = useRef<HTMLParagraphElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setText(null);
     setFailed(false);
+    setLocateIdx(null);
     fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(String(r.status));
@@ -354,6 +501,31 @@ function TextReader(props: { url: string; fontScale: number; title: string }): R
       cancelled = true;
     };
   }, [url]);
+
+  // 定位：找到第一个包含目标文本的段落，滚动到屏幕中央并高亮
+  useEffect(() => {
+    if (text === null || !locateText) return;
+    const paras = text
+      .split(/\r?\n\s*\r?\n|\r?\n/)
+      .filter((p) => p.trim().length > 0);
+    const needles = locateNeedles(locateText);
+    const idx = paras.findIndex((p) =>
+      needles.some((n) => n.length >= 8 && normForLocate(p, false).includes(n)),
+    );
+    const looseIdx =
+      idx >= 0
+        ? idx
+        : paras.findIndex((p) =>
+            needles.some((n) => n.length >= 8 && normForLocate(p, true).includes(n)),
+          );
+    setLocateIdx(looseIdx >= 0 ? looseIdx : null);
+  }, [text, locateText]);
+
+  useEffect(() => {
+    if (locateIdx !== null) {
+      matchedRef.current?.scrollIntoView({ block: 'center' });
+    }
+  }, [locateIdx]);
 
   if (failed) {
     return (
@@ -383,22 +555,33 @@ function TextReader(props: { url: string; fontScale: number; title: string }): R
       }}
     >
       <Box sx={{ maxWidth: 720, mx: 'auto' }}>
-        {paragraphs.map((p, i) => (
-          <Typography
-            key={i}
-            component="p"
-            sx={{
-              fontSize: `${Math.round(15 * fontScale)}px`,
-              lineHeight: 1.9,
-              textIndent: '2em',
-              fontFamily: '"Noto Serif SC", "Source Han Serif SC", serif',
-              color: '#2d2a24',
-              mb: 1.2,
-            }}
-          >
-            {p.trim()}
-          </Typography>
-        ))}
+        {paragraphs.map((p, i) => {
+          const located = i === locateIdx;
+          return (
+            <Typography
+              key={i}
+              component="p"
+              ref={located ? matchedRef : undefined}
+              sx={{
+                fontSize: `${Math.round(15 * fontScale)}px`,
+                lineHeight: 1.9,
+                textIndent: '2em',
+                fontFamily: '"Noto Serif SC", "Source Han Serif SC", serif',
+                color: '#2d2a24',
+                mb: 1.2,
+                ...(located && {
+                  backgroundColor: 'rgba(255, 200, 0, 0.4)',
+                  borderRadius: 1,
+                  textIndent: 0,
+                  px: 1,
+                  py: 0.5,
+                }),
+              }}
+            >
+              {p.trim()}
+            </Typography>
+          );
+        })}
         {paragraphs.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', pt: 4 }}>
             （无正文内容）

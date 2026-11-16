@@ -1,5 +1,6 @@
 import { useState, type ReactElement } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -14,12 +15,17 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useQuery } from '@tanstack/react-query';
 import { useSnackbar } from 'notistack';
-import { SECURITY_LEVEL_LABELS, type RagAskResult, type RagChunkHit } from '@tianji/shared';
-import { ragApi } from '../../api';
+import {
+  SECURITY_LEVEL_LABELS,
+  type ElectronicFileDto,
+  type RagAskResult,
+  type RagChunkHit,
+} from '@tianji/shared';
+import { fileApi, ragApi } from '../../api';
 import { ApiError } from '../../api/client';
 import { ArchiveNo } from '../../components/ArchiveNo';
+import { FilePreview } from '../../components/FilePreview';
 
 /**
  * 智能问答面板（检索增强 + 引用溯源）。
@@ -33,10 +39,14 @@ import { ArchiveNo } from '../../components/ArchiveNo';
 export function SmartQaPanel(options: { showTopics?: boolean }): ReactElement {
   const { showTopics = false } = options;
   const { enqueueSnackbar } = useSnackbar();
+  const navigate = useNavigate();
   const [question, setQuestion] = useState('');
   const [lastQuery, setLastQuery] = useState('');
   const [result, setResult] = useState<RagAskResult | null>(null);
   const [rawHits, setRawHits] = useState<RagChunkHit[] | null>(null);
+  /** 「打开原件」预览中的电子文件 + 要跳转到的正文内容 */
+  const [previewFile, setPreviewFile] = useState<ElectronicFileDto | null>(null);
+  const [locateText, setLocateText] = useState<string | null>(null);
 
   const topicsQuery = useQuery({ queryKey: ['wiki-topics'], queryFn: () => ragApi.topics(36) });
 
@@ -70,6 +80,35 @@ export function SmartQaPanel(options: { showTopics?: boolean }): ReactElement {
     if (text.length === 0) return;
     setQuestion(text);
     askMutation.mutate(text);
+  };
+
+  /**
+   * 打开原件：直接弹出在线预览，并跳转到正文中包含引用内容的页/段。
+   *
+   * 选文件策略：按可定位性排序（EPUB/文本可精确跳转，PDF 次之）；
+   * 无可预览原件时退回著录详情页（不再只给一个著录列表页）。
+   */
+  const openOriginal = async (itemId: string, locate: string): Promise<void> => {
+    try {
+      const files = await fileApi.listByItem(itemId);
+      const order: Record<string, number> = { EBOOK: 0, TEXT: 1, PDF: 2, IMAGE: 3, OFFICE: 4, AUDIO: 5, VIDEO: 6, NONE: 9 };
+      const candidates = files
+        .filter((f) => f.previewKind !== 'NONE')
+        .sort((a, b) => (order[a.previewKind] ?? 8) - (order[b.previewKind] ?? 8));
+      if (candidates.length === 0) {
+        enqueueSnackbar('该条目暂无电子原件，已转到著录详情页', { variant: 'info' });
+        navigate(`/items/${itemId}`);
+        return;
+      }
+      setLocateText(locate);
+      setPreviewFile(candidates[0]);
+    } catch (err) {
+      // 无 FILE 域权限等情况：至少把用户带到能看到条目信息的位置
+      enqueueSnackbar(err instanceof ApiError ? err.message : '无法打开原件，已转到著录详情页', {
+        variant: 'warning',
+      });
+      navigate(`/items/${itemId}`);
+    }
   };
 
   return (
@@ -150,9 +189,11 @@ export function SmartQaPanel(options: { showTopics?: boolean }): ReactElement {
                           {c.title}
                         </Typography>
                         <Link
-                          href={`/catalog?item=${c.itemId}`}
+                          component="button"
+                          type="button"
                           underline="hover"
                           variant="caption"
+                          onClick={() => void openOriginal(c.itemId, c.snippet)}
                         >
                           打开原件
                         </Link>
@@ -182,6 +223,15 @@ export function SmartQaPanel(options: { showTopics?: boolean }): ReactElement {
                     <Typography variant="body2" sx={{ flex: 1 }} noWrap>
                       {h.title}
                     </Typography>
+                    <Link
+                      component="button"
+                      type="button"
+                      underline="hover"
+                      variant="caption"
+                      onClick={() => void openOriginal(h.itemId, h.content)}
+                    >
+                      打开原件
+                    </Link>
                     <Chip size="small" label={SECURITY_LEVEL_LABELS[h.securityLevel]} />
                   </Stack>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
@@ -208,7 +258,7 @@ export function SmartQaPanel(options: { showTopics?: boolean }): ReactElement {
             上一次查询：{lastQuery}
           </Typography>
         )}
-        </Card>
+      </Card>
 
       {/* ---------------------------------------------------------- 主题聚合（可选） */}
       {showTopics && (
@@ -238,6 +288,15 @@ export function SmartQaPanel(options: { showTopics?: boolean }): ReactElement {
           </Box>
         </Card>
       )}
+
+      {/* ---------------------------------------------------------- 原件预览（直达引用出处） */}
+      <FilePreview
+        file={previewFile}
+        open={Boolean(previewFile)}
+        onClose={() => setPreviewFile(null)}
+        allowDownload={false}
+        locateText={locateText}
+      />
     </Stack>
   );
 }

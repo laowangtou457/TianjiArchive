@@ -147,6 +147,8 @@ export class RagService {
     }
     // 繁简归一：古籍/诗词多为繁体，用户打简体时「西游记」必须能命中「西遊記」
     const variants = this.queryVariants(q);
+    // 章节意图：「西游记第一章」要定位到正文「第一回」，单独抽出章节标记
+    const chapters = this.extractChapters(q);
 
     const available = await this.embedding.health();
     if (available) {
@@ -162,13 +164,14 @@ export class RagService {
         const [vecHits, lexHits, titleHits] = await Promise.all([
           this.vectorSearch(vec, user, k * 4, kind),
           this.lexicalSearchMulti(variants, user, k * 4),
-          this.titleSearch(this.titleTerms(variants), user, k),
+          this.titleSearch(this.titleTerms(variants), user, k, chapters),
         ]);
         const hits = this.mergeHits(
           vecHits.filter((h) => !this.isNoise(h.content)),
           [...titleHits, ...lexHits.filter((h) => !this.isNoise(h.content))],
           k,
           this.titleTerms(variants),
+          chapters,
         );
         return {
           query: q,
@@ -188,13 +191,14 @@ export class RagService {
     const terms = this.titleTerms(variants);
     const [lexHits, titleHits] = await Promise.all([
       this.lexicalSearchMulti(variants, user, k),
-      this.titleSearch(terms, user, k),
+      this.titleSearch(terms, user, k, chapters),
     ]);
     const hits = this.mergeHits(
       [],
       [...titleHits, ...lexHits.filter((h) => !this.isNoise(h.content))],
       k,
       terms,
+      chapters,
     );
     return {
       query: q,
@@ -276,11 +280,13 @@ export class RagService {
     terms: string[],
     user: PermissionSnapshot,
     k: number,
+    chapters: string[] = [],
   ): Promise<RagChunkHit[]> {
     if (terms.length === 0) return [];
-    const filter = this.accessFilter.buildSql(user, 'i', { startIndex: 2 });
+    const filter = this.accessFilter.buildSql(user, 'i', { startIndex: 3 });
     const patterns = terms.map((t) => `%${t.replace(/[%_\\]/g, ' ')}%`);
-    const limitIdx = 2 + filter.params.length;
+    const chapterPatterns = chapters.map((c) => `%${c}%`);
+    const limitIdx = 3 + filter.params.length;
     const rows: Array<Record<string, unknown>> = await this.dataSource.query(
       `SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level,
               i.danghao, i.title, i.responsible
@@ -289,14 +295,14 @@ export class RagService {
            SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level
              FROM item_chunk c
             WHERE c.item_id = i.id AND c.deleted = FALSE
-            ORDER BY c.chunk_no
+            ORDER BY (c.content ILIKE ANY($2::text[])) DESC, c.chunk_no
             LIMIT 8
          ) c
         WHERE i.deleted = FALSE
           AND i.title ILIKE ANY($1::text[])
           AND ${filter.clause}
         LIMIT $${limitIdx}`,
-      [patterns, ...filter.params, k * 12],
+      [patterns, chapterPatterns, ...filter.params, k * 12],
     );
     // 每件最多留 2 块（噪声过滤后再计），避免一本书占满候选池
     const perItem = new Map<string, number>();
@@ -316,6 +322,37 @@ export class RagService {
   private queryVariants(q: string): string[] {
     const set = new Set<string>([q, toHant(q), toHans(q)]);
     return [...set].filter((s) => s.trim().length > 0);
+  }
+
+  /**
+   * 章节意图抽取：「西游记第一章」→ 章节标记变体集。
+   *
+   * 古籍用「回/卷/篇」，现代书用「章/节」；用户问「第一章」时正文写的是「第一回」。
+   * 产出原标记 + 数字相同、量词互换的变体，供标题通道内优先定位正文切片，
+   * 以及融合阶段对内容含标记的片段加权（0.97，压过标题命中 0.95）。
+   */
+  private extractChapters(q: string): string[] {
+    const re = /第[0-9〇零一二三四五六七八九十百千两]+[回章节節卷篇部集]/g;
+    const swaps: Record<string, string[]> = {
+      章: ['回', '節', '节'],
+      回: ['章', '節', '节'],
+      節: ['章', '回', '节'],
+      节: ['章', '回', '節'],
+      卷: ['回', '章'],
+      篇: ['回', '章'],
+      部: ['卷', '章'],
+      集: ['回', '章'],
+    };
+    const out = new Set<string>();
+    for (const v of this.queryVariants(q)) {
+      for (const m of v.match(re) ?? []) {
+        out.add(m);
+        const num = m.slice(1, -1);
+        const unit = m.slice(-1);
+        for (const alt of swaps[unit] ?? []) out.add(`第${num}${alt}`);
+      }
+    }
+    return [...out].slice(0, 10);
   }
 
   /** 标题命中词：去问句套话后的实词（≥2 字，含繁简变体） */
@@ -472,6 +509,7 @@ export class RagService {
     lexHits: RagChunkHit[],
     k: number,
     titleTerms: string[] = [],
+    chapters: string[] = [],
   ): RagChunkHit[] {
     const map = new Map<string, RagChunkHit>();
     for (const h of vecHits) {
@@ -495,7 +533,22 @@ export class RagService {
         if (this.titleHit(h.title, titleTerms)) h.score = Math.max(h.score, 0.95);
       }
     }
-    const ranked = [...map.values()].sort((a, b) => b.score - a.score);
+    // 章节命中：问「第一章/第一回」时，正文里带该章节标记的片段是最强定位信号，
+    // 压过标题命中（0.95）——用户要的是那一章的内容，不是书的开头几页。
+    if (chapters.length > 0) {
+      for (const h of map.values()) {
+        if (chapters.some((c) => h.content.includes(c))) h.score = Math.max(h.score, 0.97);
+      }
+    }
+    const all = [...map.values()].sort((a, b) => b.score - a.score);
+    // 相对截断：强命中存在时，远弱于头部的片段属于污染——查「西游记第一章」时
+    // 0.86/0.66 的命中后面跟着 0.5 的《司法院手册》、0.46 的《史记》，这些
+    // 不该进引用也不该进模型上下文。规则：头部 ≥0.55 时只保留
+    // ≥ max(0.7*top, 0.42) 的片段；头部本身弱（如降级词法）则不截断，
+    // 避免把本就稀少的结果清空。
+    const top = all[0]?.score ?? 0;
+    const cutoff = top >= 0.55 ? Math.max(top * 0.7, 0.42) : 0;
+    const ranked = cutoff > 0 ? all.filter((h) => h.score >= cutoff) : all;
     // 件级多样性：同一件往往有几十个切片，若不做限制，一个问题会被同一本书的
     // 相邻片段占满（实测「司法院」查询 Top5 有 3 条来自同一件），引用就失去意义。
     // 先按「每件最多 2 条」取，取不满再用被压下的按原序补齐。
