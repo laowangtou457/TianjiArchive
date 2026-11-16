@@ -1200,6 +1200,8 @@ export interface RagChunkHit {
   /** 相似度 0-1（向量余弦；词法模式为相关度归一化值） */
   score: number;
   securityLevel: SecurityLevel;
+  /** 责任者（作者/编者），用于「作者是谁」类问题；无元数据时为 null */
+  responsible?: string | null;
 }
 
 export interface RagRetrieveResult {

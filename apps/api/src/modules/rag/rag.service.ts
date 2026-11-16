@@ -14,6 +14,7 @@ import type {
 } from '@tianji/shared';
 import type { AppConfig } from '../../config/configuration';
 import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
+import { toHans, toHant } from '../../common/zh-hans-hant';
 import { LlmGateway, OllamaEmbeddingProvider } from './embedding.provider';
 
 /**
@@ -29,6 +30,11 @@ const RAG_QUERY_FILLERS: readonly string[] = [
   '是什麼', '是什么', '有哪些', '哪些', '如何', '怎麼', '怎么', '怎樣', '怎样',
   '為什麼', '为什么', '是否', '有沒有', '有没有', '可以', '能否',
   '下一句', '上一句', '指的是', '什麼意思', '什么意思', '含義', '含义', '所謂', '所谓',
+  // 意图型套话（「水浒传讲什么」「红楼梦的作者是谁」）——不剔掉会把整句当书名去匹配
+  '講的是什麼', '讲的是什么', '講的是', '讲的是', '說的什麼', '说的是什么', '說的是', '说的是',
+  '講什麼', '讲什么', '講講', '讲讲', '講一下', '讲一下', '說一下', '说一下', '介紹一下', '介绍一下',
+  '主要內容', '主要内容', '內容', '内容', '介紹', '介绍', '簡介', '简介', '概述', '概括', '大意',
+  '作者是誰', '作者是谁', '作者',
   '的', '了', '嗎', '吗', '呢', '吧', '啊', '呀',
 ];
 
@@ -139,6 +145,8 @@ export class RagService {
     if (q.length === 0) {
       return { query: q, hits: [], mode: 'LEXICAL', tookMs: 0, note: '查询为空' };
     }
+    // 繁简归一：古籍/诗词多为繁体，用户打简体时「西游记」必须能命中「西遊記」
+    const variants = this.queryVariants(q);
 
     const available = await this.embedding.health();
     if (available) {
@@ -151,11 +159,17 @@ export class RagService {
         // 词法补上精确匹配，向量补上同义/改写，两者互补远好于二选一。
         // 各取 4k 候选：融合后会按「每件最多 2 条」做件级去重，
         // 只取 k 条的话去重后常常凑不满（同一件占满候选池）。
-        const [vecHits, lexHits] = await Promise.all([
+        const [vecHits, lexHits, titleHits] = await Promise.all([
           this.vectorSearch(vec, user, k * 4, kind),
-          this.lexicalSearch(q, user, k * 4),
+          this.lexicalSearchMulti(variants, user, k * 4),
+          this.titleSearch(this.titleTerms(variants), user, k),
         ]);
-        const hits = this.mergeHits(vecHits, lexHits, k);
+        const hits = this.mergeHits(
+          vecHits.filter((h) => !this.isNoise(h.content)),
+          [...titleHits, ...lexHits.filter((h) => !this.isNoise(h.content))],
+          k,
+          this.titleTerms(variants),
+        );
         return {
           query: q,
           hits,
@@ -171,7 +185,17 @@ export class RagService {
       }
     }
 
-    const hits = await this.lexicalSearch(q, user, k);
+    const terms = this.titleTerms(variants);
+    const [lexHits, titleHits] = await Promise.all([
+      this.lexicalSearchMulti(variants, user, k),
+      this.titleSearch(terms, user, k),
+    ]);
+    const hits = this.mergeHits(
+      [],
+      [...titleHits, ...lexHits.filter((h) => !this.isNoise(h.content))],
+      k,
+      terms,
+    );
     return {
       query: q,
       hits,
@@ -196,7 +220,7 @@ export class RagService {
     if (kind === 'PGVECTOR') {
       const rows: Array<Record<string, unknown>> = await this.dataSource.query(
         `SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level,
-                i.danghao, i.title,
+                i.danghao, i.title, i.responsible,
                 1 - (c.embedding <=> $1::vector) AS score
            FROM item_chunk c
            JOIN archive_item i ON i.id = c.item_id
@@ -216,7 +240,7 @@ export class RagService {
     const rows: Array<{ id: string; item_id: string; chunk_no: number; content: string; security_level: string; danghao: string; title: string; embedding: number[] | null }> =
       await this.dataSource.query(
         `SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level,
-                i.danghao, i.title, c.embedding
+                i.danghao, i.title, i.responsible, c.embedding
            FROM item_chunk c
            JOIN archive_item i ON i.id = c.item_id
           WHERE c.deleted = FALSE AND c.embedding IS NOT NULL
@@ -241,14 +265,129 @@ export class RagService {
   }
 
   /**
+   * 标题召回：题名命中即视为「用户要找的那本书/那篇文」。
+   *
+   * 为什么必须独立成路：书名往往只出现在封面/目录，正文里并不重复出现
+   * （《西遊記》正文不会写「西遊記」三个字），纯词法打不进正文；
+   * 而向量模型对中文书名易漂移（「西游记」→「西湖」）。这条通道按题名
+   * 取每件前若干块，交由噪声过滤与件级去重收口。
+   */
+  private async titleSearch(
+    terms: string[],
+    user: PermissionSnapshot,
+    k: number,
+  ): Promise<RagChunkHit[]> {
+    if (terms.length === 0) return [];
+    const filter = this.accessFilter.buildSql(user, 'i', { startIndex: 2 });
+    const patterns = terms.map((t) => `%${t.replace(/[%_\\]/g, ' ')}%`);
+    const limitIdx = 2 + filter.params.length;
+    const rows: Array<Record<string, unknown>> = await this.dataSource.query(
+      `SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level,
+              i.danghao, i.title, i.responsible
+         FROM archive_item i
+         CROSS JOIN LATERAL (
+           SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level
+             FROM item_chunk c
+            WHERE c.item_id = i.id AND c.deleted = FALSE
+            ORDER BY c.chunk_no
+            LIMIT 8
+         ) c
+        WHERE i.deleted = FALSE
+          AND i.title ILIKE ANY($1::text[])
+          AND ${filter.clause}
+        LIMIT $${limitIdx}`,
+      [patterns, ...filter.params, k * 12],
+    );
+    // 每件最多留 2 块（噪声过滤后再计），避免一本书占满候选池
+    const perItem = new Map<string, number>();
+    const out: RagChunkHit[] = [];
+    for (const r of rows) {
+      const hit = { ...this.toHit(r), score: 1 };
+      if (this.isNoise(hit.content)) continue;
+      const n = perItem.get(hit.itemId) ?? 0;
+      if (n >= 2) continue;
+      perItem.set(hit.itemId, n + 1);
+      out.push(hit);
+    }
+    return out.slice(0, k);
+  }
+
+  /** 查询变体：原串 + 繁/简归一（去重） */
+  private queryVariants(q: string): string[] {
+    const set = new Set<string>([q, toHant(q), toHans(q)]);
+    return [...set].filter((s) => s.trim().length > 0);
+  }
+
+  /** 标题命中词：去问句套话后的实词（≥2 字，含繁简变体） */
+  private titleTerms(variants: string[]): string[] {
+    const terms = new Set<string>();
+    for (const v of variants) {
+      let cleaned = v.normalize('NFKC');
+      for (const w of RAG_QUERY_FILLERS) cleaned = cleaned.split(w).join(' ');
+      // 章节标记不参与书名匹配：「红楼梦第一回讲什么」应命中《紅樓夢》，
+      // 而不是拿「红楼梦第一回」整串去比题名（永远比不中）
+      cleaned = cleaned.replace(/第[0-9〇零一二三四五六七八九十百千两]+[回章节節卷篇部集]/g, ' ');
+      for (const seg of cleaned.split(/[^\p{Script=Han}A-Za-z0-9]+/u)) {
+        const s = seg.trim();
+        if (s.length >= 2) terms.add(s);
+      }
+    }
+    return [...terms].slice(0, 12);
+  }
+
+  /** 多写法词法召回：各变体分别召回后按 chunk 取最高分 */
+  private async lexicalSearchMulti(
+    queries: string[],
+    user: PermissionSnapshot,
+    k: number,
+  ): Promise<RagChunkHit[]> {
+    const lists = await Promise.all(queries.map((q) => this.lexicalSearch(q, user, k)));
+    const best = new Map<string, RagChunkHit>();
+    for (const hits of lists) {
+      for (const h of hits) {
+        const cur = best.get(h.chunkId);
+        if (!cur || h.score > cur.score) best.set(h.chunkId, h);
+      }
+    }
+    return [...best.values()].sort((a, b) => b.score - a.score).slice(0, k);
+  }
+
+  /**
+   * 乱码片段判定：部分 PDF 抽取出的文本是 GBK/Big5 误码（成片 U+FFFD、◆■〓）。
+   * 这类片段进模型只会误导出「无相关内容」的结论，检索阶段直接剔除。
+   */
+  private isGarbled(text: string): boolean {
+    if (!text || text.trim().length === 0) return true;
+    const sample = text.slice(0, 2000);
+    const bad = (sample.match(/[\uFFFD\uE000-\uF8FF\u25C6\u25A0\u25A1\u3013]/g) ?? []).length;
+    return bad >= 3 && bad / sample.length >= 0.01;
+  }
+
+  /**
+   * 电子书前言噪声：Gutenberg 等来源的封面/版权/书目页会被切成独立片段，
+   * 内容里全是 "Project Gutenberg eBook" 与元数据，既不能回答正文问题，
+   * 又会因为题名重复而排到最前（实测《西遊記》Top4 全是这类页）。
+   */
+  private isBoilerplate(text: string): boolean {
+    const t = text.slice(0, 800);
+    return /project gutenberg|here you are located before using this ebook|this ebook is for the use of anyone anywhere|\*\*\*\s*(start|end) of/i.test(
+      t,
+    );
+  }
+
+  /** 片段是否不适合进模型：乱码或电子书前言噪声 */
+  private isNoise(text: string): boolean {
+    return this.isGarbled(text) || this.isBoilerplate(text);
+  }
+
+  /**
    * 词法召回（嵌入不可用时的兜底）。
    *
    * 中文没有空格，PG 的 tsvector 'simple' 分词对中文近乎无效，因此这里按
    * 「查询串整体 + 2-gram 切片」做 ILIKE 命中计数排序。召回质量不如向量，
    * 但足以让「没装模型」的环境仍能演示问答链路（并明确标注 degraded）。
    */
-  private async lexicalSearch(
-    query: string,
+  private async lexicalSearch(    query: string,
     user: PermissionSnapshot,
     k: number,
   ): Promise<RagChunkHit[]> {
@@ -257,7 +396,7 @@ export class RagService {
     // LIMIT 的占位符序号 = 3（grams、phrases 之后是 filter 参数）+ filter 参数个数
     const limitIdx = 3 + filter.params.length;
     const rows: Array<Record<string, unknown>> = await this.dataSource.query(
-      `SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level, i.danghao, i.title,
+      `SELECT c.id, c.item_id, c.chunk_no, c.content, c.security_level, i.danghao, i.title, i.responsible,
               (SELECT COUNT(*) FROM unnest($1::text[]) g WHERE c.content ILIKE '%' || g || '%') AS hits,
               EXISTS (SELECT 1 FROM unnest($2::text[]) p WHERE c.content ILIKE '%' || p || '%') AS exact
          FROM item_chunk c
@@ -328,7 +467,12 @@ export class RagService {
    * 词法强相关（整串命中或覆盖率 ≥0.8）时给 0.9 保底：这种情况下向量分常因
    * 嵌入模型对中文长句漂移而偏低，若只做加权求和会被无关长文档压掉。
    */
-  private mergeHits(vecHits: RagChunkHit[], lexHits: RagChunkHit[], k: number): RagChunkHit[] {
+  private mergeHits(
+    vecHits: RagChunkHit[],
+    lexHits: RagChunkHit[],
+    k: number,
+    titleTerms: string[] = [],
+  ): RagChunkHit[] {
     const map = new Map<string, RagChunkHit>();
     for (const h of vecHits) {
       map.set(h.chunkId, { ...h, score: h.score * 0.65 });
@@ -341,6 +485,14 @@ export class RagService {
         cur.score = Math.min(1, Math.max(cur.score + weighted, floor));
       } else {
         map.set(h.chunkId, { ...h, score: Math.min(1, Math.max(weighted, floor)) });
+      }
+    }
+    // 标题命中：题名直接含检索词时给 0.95 保底。
+    // 「西游记」必须召回《西遊記》本身，不能因为正文是文言文、向量分低，
+    // 被一批「西湖」诗词（字面含「西」）压下去——标题是最强相关信号。
+    if (titleTerms.length > 0) {
+      for (const h of map.values()) {
+        if (this.titleHit(h.title, titleTerms)) h.score = Math.max(h.score, 0.95);
       }
     }
     const ranked = [...map.values()].sort((a, b) => b.score - a.score);
@@ -366,6 +518,13 @@ export class RagService {
       picked.push(h);
     }
     return picked.slice(0, k);
+  }
+
+  /** 题名是否含检索词（繁简同为一条：把两边都归一到简体再比） */
+  private titleHit(title: string, terms: string[]): boolean {
+    if (!title) return false;
+    const t = toHans(title).toLowerCase();
+    return terms.some((term) => t.includes(toHans(term).toLowerCase()));
   }
 
   // ==========================================================================
@@ -401,19 +560,40 @@ export class RagService {
     }
 
     const context = retrieved.hits
-      .map((h, i) => `[${i + 1}] 档号：${h.danghao}｜题名：${h.title}\n${h.content.slice(0, 700)}`)
+      .map(
+        (h, i) =>
+          `[${i + 1}] 档号：${h.danghao}｜题名：${h.title}${
+            h.responsible ? `｜责任者：${h.responsible}` : ''
+          }\n${h.content.slice(0, 900)}`,
+      )
       .join('\n\n');
 
-    const system =
-      '你是档案查询助手。只能依据给定的档案片段回答，禁止使用片段以外的知识或推测。' +
-      '回答末尾用 [序号] 标注依据的片段；片段不足以回答时直接说明缺少哪些信息。' +
-      '保持客观、简洁，使用中文。';
+    // 提示词的三条关键约束（都是实测踩出来的）：
+    //  1) 繁简视为同一词——库里《西遊記》是繁体，用户问「西游记」；不写这条，
+    //     模型会以「未涉及西游记」收场。
+    //  2) 只要有相关记载就必须作答——旧提示词只说「片段不足时说明缺少什么」，
+    //     模型对文言片段极保守，明明有原文也回「未提供原句」。
+    //  3) 问「下一句/出处/作者」时直接在片段里定位原句——这是档案问答的高频意图。
+    const system = [
+      '你是档案检索问答助手，只能依据用户提供的「档案片段」回答。',
+      '',
+      '规则：',
+      '1. 片段中的繁体、异体字与简体视为同一个词（「西遊記」＝西游记，「紅樓夢」＝红楼梦）。',
+      '2. 只要片段中出现与问题相关的记载（同一书名、同一作者、同一诗句、同一事件），就必须依据片段作答，禁止回答「未涉及」「无直接关联」。',
+      '3. 若问「下一句 / 续句 / 出处 / 作者 / 是谁」这类问题：先在片段原文中定位用户所指的那句，紧接其后的原文就是答案；若有多个版本（如不同作者的《一剪梅》），逐个列出并以 [序号] 标注。问作者、成书年代时优先采用片段头部的「档号/题名/责任者」元数据。',
+      '4. 回答先给结论（1–3 句），再列要点；引用原文时保持原字形，不要改写。',
+      '5. 只能使用片段内容，不得补充片段之外的知识；只有全部片段确实与问题无关时，才说明未找到，并简述检索到的片段方向。',
+      '6. 中文、简洁、不加寒暄。',
+    ].join('\n');
 
     {
       try {
         const ok = await this.llm.available();
         if (ok) {
-          const answer = await this.llm.chat(system, `档案片段：\n${context}\n\n问题：${question}`);
+          const answer = await this.llm.chat(
+            system,
+            `档案片段（共 ${retrieved.hits.length} 条，已同时匹配简体与繁体写法）：\n${context}\n\n问题：${question}`,
+          );
           if (answer) {
             return {
               answer,
@@ -596,6 +776,7 @@ export class RagService {
       content: String(r.content ?? ''),
       score: Number(r.score ?? 0),
       securityLevel: String(r.security_level ?? 'PUBLIC') as SecurityLevel,
+      responsible: r.responsible == null ? null : String(r.responsible),
     };
   }
 

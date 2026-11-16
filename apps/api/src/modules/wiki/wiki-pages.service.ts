@@ -20,6 +20,7 @@ import { WikiPage } from '../../infra/database/entities/wiki-page.entity';
 import { WikiPageVersion } from '../../infra/database/entities/wiki-page-version.entity';
 import { WikiSpace } from '../../infra/database/entities/wiki-space.entity';
 import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
+import { toHans, toHant } from '../../common/zh-hans-hant';
 import {
   LlmGateway,
   OllamaEmbeddingProvider,
@@ -500,7 +501,9 @@ export class WikiPagesService {
     if (term.length === 0) return [];
     const levels = this.levelsFor(user);
     if (levels.length === 0) return [];
-    const pattern = `%${term}%`;
+    // 繁简归一：页面题名多为繁体（075_西遊記），用户打「西游记」也要能搜到
+    const termList = [...new Set([term, toHant(term), toHans(term)])];
+    const patterns = termList.map((t) => `%${t}%`);
     const rows: Array<{
       id: string;
       title: string;
@@ -513,11 +516,11 @@ export class WikiPagesService {
     }> = await this.pageRepo.query(
       `SELECT p.id, p.title, p.space_id, s.name AS space_name,
               p.security_level AS level,
-              (p.title ILIKE $1) AS title_hit,
+              (p.title ILIKE ANY($1::text[])) AS title_hit,
               a.danghao AS source_no,
               (SELECT substring(c.content FROM GREATEST(1, POSITION(LOWER($2) IN LOWER(c.content)) - 40) FOR 200)
                  FROM wiki_chunk c
-                WHERE c.page_id = p.id AND c.deleted = FALSE AND c.content ILIKE $1
+                WHERE c.page_id = p.id AND c.deleted = FALSE AND c.content ILIKE ANY($1::text[])
                 LIMIT 1) AS snippet
          FROM wiki_page p
          JOIN wiki_space s ON s.id = p.space_id AND s.deleted = FALSE
@@ -526,12 +529,12 @@ export class WikiPagesService {
           AND p.security_level = ANY($3::varchar[])
           AND s.security_level = ANY($3::varchar[])
           AND ($4::uuid IS NULL OR p.space_id = $4)
-          AND (p.title ILIKE $1
+          AND (p.title ILIKE ANY($1::text[])
                OR EXISTS (SELECT 1 FROM wiki_chunk c
-                           WHERE c.page_id = p.id AND c.deleted = FALSE AND c.content ILIKE $1))
-        ORDER BY (p.title ILIKE $1) DESC, p.updated_at DESC
+                           WHERE c.page_id = p.id AND c.deleted = FALSE AND c.content ILIKE ANY($1::text[])))
+        ORDER BY (p.title ILIKE ANY($1::text[])) DESC, p.updated_at DESC
         LIMIT 50`,
-      [pattern, term, levels, spaceId],
+      [patterns, term, levels, spaceId],
     );
     return rows.map((r) => ({
       pageId: r.id,
