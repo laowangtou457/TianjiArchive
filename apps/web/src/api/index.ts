@@ -60,6 +60,12 @@ import type {
   WikiRelationDto,
   WikiSummaryDto,
   WikiTopicDto,
+  WikiSpaceDto,
+  WikiPageDto,
+  WikiPageTreeNode,
+  WikiPageVersionDto,
+  WikiAskResult,
+  WikiIndexStatusDto,
   SystemParamDto,
   ParamDef,
   ParamMetaDto,
@@ -545,6 +551,37 @@ export const ragApi = {
   topics: (limit?: number, keyword?: string): Promise<WikiTopicDto[]> =>
     api.get('/wiki/topics', { limit, keyword }),
   summary: (itemId: string): Promise<WikiSummaryDto> => api.post(`/wiki/items/${itemId}/summary`),
+};
+
+/** 可编辑 Wiki 页面库（知识 Wiki） */
+export const wikiPageApi = {
+  listSpaces: (): Promise<WikiSpaceDto[]> => api.get('/wiki/spaces'),
+  createSpace: (body: { name: string; description?: string; securityLevel?: string }): Promise<WikiSpaceDto> =>
+    api.post('/wiki/spaces', body),
+  updateSpace: (id: string, body: { name?: string; description?: string; securityLevel?: string }): Promise<WikiSpaceDto> =>
+    api.put(`/wiki/spaces/${id}`, body),
+  deleteSpace: (id: string): Promise<{ deleted: boolean }> => api.delete(`/wiki/spaces/${id}`),
+  pageTree: (spaceId: string): Promise<WikiPageTreeNode[]> => api.get(`/wiki/spaces/${spaceId}/tree`),
+  createPage: (body: {
+    spaceId: string;
+    parentId?: string | null;
+    title: string;
+    contentMd?: string;
+    orderNo?: number;
+  }): Promise<WikiPageDto> => api.post('/wiki/pages', body),
+  getPage: (id: string): Promise<WikiPageDto> => api.get(`/wiki/pages/${id}`),
+  updatePage: (
+    id: string,
+    body: { title?: string; contentMd?: string; parentId?: string | null; orderNo?: number },
+  ): Promise<WikiPageDto> => api.put(`/wiki/pages/${id}`, body),
+  deletePage: (id: string): Promise<{ deleted: number }> => api.delete(`/wiki/pages/${id}`),
+  versions: (id: string): Promise<WikiPageVersionDto[]> => api.get(`/wiki/pages/${id}/versions`),
+  restoreVersion: (id: string, versionNo: number): Promise<WikiPageDto> =>
+    api.post(`/wiki/pages/${id}/restore`, { versionNo }),
+  ask: (question: string, spaceId?: string): Promise<WikiAskResult> =>
+    api.post('/wiki/pages/ask', { question, spaceId }),
+  indexStatus: (): Promise<WikiIndexStatusDto> => api.get('/wiki/pages/index-status'),
+  reindex: (): Promise<{ pages: number; chunks: number }> => api.post('/wiki/pages/reindex', {}),
 };
 
 // ---------------------------------------------------------------- 健康检查

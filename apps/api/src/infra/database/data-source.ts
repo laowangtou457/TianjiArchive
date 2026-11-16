@@ -37,6 +37,10 @@ import {
   WorkflowNodeRow,
   WorkflowTask,
   AppUser,
+  WikiSpace,
+  WikiPage,
+  WikiPageVersion,
+  WikiChunk,
 } from './entities';
 import { isAbsolute } from 'node:path';
 
@@ -136,6 +140,10 @@ export function buildDataSourceOptions(): DataSourceOptions {
       WorkflowTask,
       ItemChunk,
       ItemRelation,
+      WikiSpace,
+      WikiPage,
+      WikiPageVersion,
+      WikiChunk,
     ],
     migrations: [migrations],
     migrationsTableName: 'typeorm_migrations',

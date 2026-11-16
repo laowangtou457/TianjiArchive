@@ -1282,3 +1282,82 @@ export interface WikiSummaryDto {
   degraded: boolean;
   model: string | null;
 }
+
+// ============================================================================
+// 可编辑 Wiki 页面库（知识 Wiki）
+// ============================================================================
+
+export interface WikiSpaceDto {
+  id: string;
+  name: string;
+  description: string | null;
+  securityLevel: SecurityLevel;
+  pageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 页面树节点（不含正文，列表/树用） */
+export interface WikiPageTreeNode {
+  id: string;
+  spaceId: string;
+  parentId: string | null;
+  title: string;
+  orderNo: number;
+  versionNo: number;
+  updatedAt: string;
+  children: WikiPageTreeNode[];
+}
+
+/** 页面详情（含正文） */
+export interface WikiPageDto {
+  id: string;
+  spaceId: string;
+  spaceName: string;
+  parentId: string | null;
+  title: string;
+  contentMd: string;
+  orderNo: number;
+  versionNo: number;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WikiPageVersionDto {
+  id: string;
+  pageId: string;
+  versionNo: number;
+  title: string;
+  contentMd: string;
+  editedBy: string | null;
+  createdAt: string;
+}
+
+/** Wiki 问答引用（指向页面而非档案） */
+export interface WikiAskCitation {
+  index: number;
+  pageId: string;
+  pageTitle: string;
+  spaceName: string;
+  snippet: string;
+  score: number;
+}
+
+export interface WikiAskResult {
+  answer: string;
+  citations: WikiAskCitation[];
+  mode: 'VECTOR' | 'LEXICAL';
+  model: string | null;
+  tookMs: number;
+  degraded: boolean;
+  note: string | null;
+}
+
+export interface WikiIndexStatusDto {
+  pageCount: number;
+  chunkCount: number;
+  embeddedCount: number;
+  vectorStore: string;
+}

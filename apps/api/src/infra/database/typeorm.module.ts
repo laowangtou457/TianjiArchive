@@ -37,6 +37,10 @@ import {
   WorkflowNodeRow,
   WorkflowTask,
   AppUser,
+  WikiSpace,
+  WikiPage,
+  WikiPageVersion,
+  WikiChunk,
 } from './entities';
 
 /** 全量实体清单（供各模块 import） */
@@ -75,6 +79,10 @@ export const ALL_ENTITIES = [
   WorkflowTask,
   ItemChunk,
   ItemRelation,
+  WikiSpace,
+  WikiPage,
+  WikiPageVersion,
+  WikiChunk,
 ] as const;
 
 /**

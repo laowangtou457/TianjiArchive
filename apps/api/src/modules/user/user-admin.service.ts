@@ -252,7 +252,7 @@ export class UserAdminService {
       'FONDS', 'VOLUME', 'ITEM', 'DANGHAO_RULE', 'ARCHIVE_CONFIRM', 'SEARCH',
       'SEARCH_INTERNAL', 'FILE', 'PREVIEW', 'BORROW_APPLY', 'BORROW_APPROVE',
       'BORROW_RETURN', 'REPORT', 'COMPILATION', 'APPRAISAL', 'RECYCLE', 'USER',
-      'AUDIT_LOG', 'BACKUP', 'IMPORT_EXPORT', 'PARAM', 'DICT', 'KB',
+      'AUDIT_LOG', 'BACKUP', 'IMPORT_EXPORT', 'PARAM', 'DICT', 'KB', 'WIKI',
     ]);
     const opSet = new Set(['READ', 'WRITE', 'APPROVE', 'DELETE', 'EXPORT']);
     const modeSet = new Set(['FULL', 'LIMITED', 'READONLY', 'NONE']);

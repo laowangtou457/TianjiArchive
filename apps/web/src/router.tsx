@@ -23,6 +23,7 @@ import { AppraisalPage } from './pages/appraisal/AppraisalPage';
 import { OpenPage } from './pages/open/OpenPage';
 import { WorkflowPage } from './pages/workflow/WorkflowPage';
 import { KnowledgePage } from './pages/knowledge/KnowledgePage';
+import { WikiHomePage } from './pages/wiki/WikiHomePage';
 
 /** 路由守卫：未登录跳 /login */
 function RequireAuth(props: { children: ReactElement }): ReactElement {
@@ -109,6 +110,14 @@ export function AppRoutes(): ReactElement {
           element={
             <RequireAuth>
               <KnowledgePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/wiki"
+          element={
+            <RequireAuth>
+              <WikiHomePage />
             </RequireAuth>
           }
         />

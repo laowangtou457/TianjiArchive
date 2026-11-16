@@ -25,6 +25,7 @@ export const MENU: MenuItem[] = [
   { key: 'borrow', label: '借阅管理', path: '/borrow', icon: '⇄', group: '检索利用', domains: ['BORROW_APPLY', 'BORROW_APPROVE', 'BORROW_RETURN'] },
   { key: 'kb', label: '片段检索', path: '/kb', icon: '◈', group: '检索利用', domains: ['KB'] },
   { key: 'knowledge', label: '档案知识库', path: '/knowledge', icon: '✧', group: '检索利用', domains: ['SEARCH', 'KB'] },
+  { key: 'wiki', label: '知识 Wiki', path: '/wiki', icon: '✎', group: '检索利用', domains: ['WIKI'] },
   { key: 'workflow', label: '审批中心', path: '/workflow', icon: '⇉', group: '检索利用', domains: ['APPRAISAL', 'BORROW_APPROVE'] },
   { key: 'fonds', label: '全宗管理', path: '/fonds', icon: '▤', group: '档案业务', domains: ['FONDS'] },
   { key: 'catalog', label: '档案著录', path: '/catalog', icon: '▥', group: '档案业务', domains: ['VOLUME', 'ITEM'] },

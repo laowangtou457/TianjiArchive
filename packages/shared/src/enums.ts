@@ -127,6 +127,7 @@ export const PermissionDomain = {
   PARAM: 'PARAM',
   DICT: 'DICT',
   KB: 'KB',
+  WIKI: 'WIKI',
 } as const;
 export type PermissionDomain = (typeof PermissionDomain)[keyof typeof PermissionDomain];
 
@@ -154,6 +155,7 @@ export const PERMISSION_DOMAIN_LABELS: Readonly<Record<PermissionDomain, string>
   PARAM: '系统参数配置',
   DICT: '数据字典',
   KB: '片段检索',
+  WIKI: '知识 Wiki',
 };
 
 export const PERMISSION_DOMAIN_VALUES: readonly PermissionDomain[] = Object.values(PermissionDomain);

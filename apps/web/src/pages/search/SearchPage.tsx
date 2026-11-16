@@ -45,6 +45,7 @@ import { ApiError } from '../../api/client';
 import { AppLayout } from '../../components/AppLayout';
 import { ArchiveNo, SecurityChip } from '../../components/ArchiveNo';
 import { useAuthStore } from '../../stores/authStore';
+import { SmartQaPanel } from '../knowledge/SmartQaPanel';
 
 /** 分面维度定义 */
 interface FacetSpec {
@@ -280,6 +281,7 @@ export function SearchPage(): ReactElement {
       }
     >
       <Paper sx={{ p: 1.5, mb: 1.5 }}>
+        {tab !== 2 && (
         <Stack direction="row" spacing={1} alignItems="center">
           <TextField
             fullWidth
@@ -301,6 +303,7 @@ export function SearchPage(): ReactElement {
             {showAdvanced ? '收起筛选' : '高级筛选'}
           </Button>
         </Stack>
+        )}
 
         <Tabs
           value={tab}
@@ -309,6 +312,7 @@ export function SearchPage(): ReactElement {
         >
           <Tab label="全文检索" sx={{ minHeight: 34, py: 0.5 }} />
           <Tab label="条件检索" sx={{ minHeight: 34, py: 0.5 }} />
+          <Tab label="智能问答" sx={{ minHeight: 34, py: 0.5 }} />
         </Tabs>
 
         <Collapse in={showAdvanced}>
@@ -463,7 +467,8 @@ export function SearchPage(): ReactElement {
       )}
 
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
-        {/* 分面侧栏 */}
+        {/* 分面侧栏（智能问答选项卡下隐藏） */}
+        {tab !== 2 && (
         <Card sx={{ width: 220, flex: '0 0 220px' }}>
           <CardContent sx={{ p: 1.25 }}>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>
@@ -479,6 +484,7 @@ export function SearchPage(): ReactElement {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* 结果列表 */}
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -600,6 +606,8 @@ export function SearchPage(): ReactElement {
               onOpenItem={(id) => window.open(`/items/${id}`, '_self')}
             />
           )}
+
+          {tab === 2 && <SmartQaPanel />}
         </Box>
 
         {/* 右侧：历史 + 保存的检索 */}

@@ -37,3 +37,7 @@ export * from './workflow-instance.entity';
 export * from './workflow-task.entity';
 export * from './item-chunk.entity';
 export * from './item-relation.entity';
+export * from './wiki-space.entity';
+export * from './wiki-page.entity';
+export * from './wiki-page-version.entity';
+export * from './wiki-chunk.entity';
