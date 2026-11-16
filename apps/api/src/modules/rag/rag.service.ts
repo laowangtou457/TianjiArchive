@@ -407,6 +407,16 @@ export class RagService {
    */
   private isBoilerplate(text: string): boolean {
     const t = text.slice(0, 800);
+    const startIdx = t.search(/\*\*\*\s*START OF/i);
+    if (startIdx >= 0) {
+      // START 标记后还有 ≥200 字实质正文的块不算噪声：Gutenberg 元数据与正文
+      // 「顶头拼接」是常态（实测 075_西遊記 chunk1 = 元数据 + 第一回标题与正文），
+      // 真正的封面/版权页在 START 前就结束了（startIdx 之后不足 200 字）。
+      const after = t
+        .slice(startIdx)
+        .replace(/\*\*\*\s*START OF THE (PROJECT )?GUTENBERG EBOOK[^*]*\*\*\*/i, '');
+      return after.trim().length < 200;
+    }
     return /project gutenberg|here you are located before using this ebook|this ebook is for the use of anyone anywhere|\*\*\*\s*(start|end) of/i.test(
       t,
     );
@@ -533,11 +543,16 @@ export class RagService {
         if (this.titleHit(h.title, titleTerms)) h.score = Math.max(h.score, 0.95);
       }
     }
-    // 章节命中：问「第一章/第一回」时，正文里带该章节标记的片段是最强定位信号，
-    // 压过标题命中（0.95）——用户要的是那一章的内容，不是书的开头几页。
-    if (chapters.length > 0) {
+    // 章节命中：问「西游记第一章」时，「题名命中 + 正文含章节标记」的片段是
+    // 最强定位信号（0.97 > 标题 0.95）——用户要的是那一章的内容。
+    // ⚠️ 加权必须以题名命中为前提：任何一本书都有「第一章」，无前提会把
+    // 无关书籍（含「海量小文件存储优化」这类正文里恰好有该词的）全部顶到最前。
+    // 若查询里只有章节标记没有书名（titleTerms 为空），则不做此加权。
+    if (chapters.length > 0 && titleTerms.length > 0) {
       for (const h of map.values()) {
-        if (chapters.some((c) => h.content.includes(c))) h.score = Math.max(h.score, 0.97);
+        if (this.titleHit(h.title, titleTerms) && chapters.some((c) => h.content.includes(c))) {
+          h.score = Math.max(h.score, 0.97);
+        }
       }
     }
     const all = [...map.values()].sort((a, b) => b.score - a.score);
@@ -826,11 +841,27 @@ export class RagService {
       danghao: String(r.danghao ?? ''),
       title: String(r.title ?? ''),
       chunkNo: Number(r.chunk_no ?? 0),
-      content: String(r.content ?? ''),
+      content: this.stripBoilerplateHead(String(r.content ?? '')),
       score: Number(r.score ?? 0),
       securityLevel: String(r.security_level ?? 'PUBLIC') as SecurityLevel,
       responsible: r.responsible == null ? null : String(r.responsible),
     };
+  }
+
+  /**
+   * 剥离块头部的 Gutenberg 元数据（到 START 标记为止）。
+   *
+   * 元数据与正文拼接在同一个块里时（切块按长度、不认语义），元数据头会污染
+   * 引用摘录与「打开原件」的定位文本——定位拿 60 字前缀去书里搜，搜到的全是
+   * 不存在于原书的英文元数据。剥掉后摘录直接从正文开始。
+   */
+  private stripBoilerplateHead(content: string): string {
+    const idx = content.search(/\*\*\*\s*START OF/i);
+    if (idx < 0) return content;
+    const lineEnd = content.indexOf('***', idx + 3);
+    if (lineEnd < 0) return content;
+    const rest = content.slice(lineEnd + 3).trim();
+    return rest.length >= 100 ? rest : content;
   }
 
   /** 余弦相似度（仅数组回退路径使用；向量已 L2 归一化时可退化为点积） */
