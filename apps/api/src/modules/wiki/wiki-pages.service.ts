@@ -160,23 +160,28 @@ export class WikiPagesService {
   // 页面（树 / 详情 / 增删改）
   // ==========================================================================
 
-  /** 页面树（空间内整树，按 orderNo 排序） */
+  /** 页面树（空间内整树，按 orderNo 排序；无权页面整棵隐去） */
   public async pageTree(spaceId: string, user: PermissionSnapshot): Promise<WikiPageTreeNode[]> {
     const space = await this.requireSpace(spaceId, user);
     const pages = await this.pageRepo.find({
       where: { spaceId: space.id, deleted: false },
       order: { orderNo: 'ASC', createdAt: 'ASC' },
     });
+    const userRank = SECURITY_LEVEL_RANK[user.maxSecurityLevel];
+    const visible = pages.filter((p) => {
+      const r = SECURITY_LEVEL_RANK[p.securityLevel as SecurityLevel];
+      return r !== undefined && userRank !== undefined && r <= userRank;
+    });
     const nodes = new Map<string, WikiPageTreeNode>(
-      pages.map((p) => [p.id, this.toTreeNode(p)]),
+      visible.map((p) => [p.id, this.toTreeNode(p)]),
     );
     const roots: WikiPageTreeNode[] = [];
-    for (const p of pages) {
+    for (const p of visible) {
       const node = nodes.get(p.id)!;
       if (p.parentId && nodes.has(p.parentId)) {
         nodes.get(p.parentId)!.children.push(node);
       } else {
-        roots.push(node); // 父页缺失/已删时提升为根，避免孤儿不可见
+        roots.push(node); // 父页缺失/已删/无权时提升为根，避免孤儿不可见
       }
     }
     return roots;
@@ -208,6 +213,7 @@ export class WikiPagesService {
         contentMd: content,
         orderNo: body.orderNo ?? 0,
         versionNo: 1,
+        securityLevel: space.securityLevel,
         createdBy: user.userId,
         updatedBy: user.userId,
       }),
@@ -390,17 +396,18 @@ export class WikiPagesService {
 
     let mode: 'VECTOR' | 'LEXICAL' = 'LEXICAL';
     let hits: Array<{ pageId: string; content: string; score: number }> = [];
+    const levels = this.levelsFor(user);
     try {
       const [vec] = await this.embedding.embed([q]);
       if (vec && (await this.detectStore()) === 'PGVECTOR') {
         mode = 'VECTOR';
-        hits = await this.vectorSearch(vec, scopeIds);
+        hits = await this.vectorSearch(vec, scopeIds, levels);
       }
     } catch (err) {
       this.logger.warn(`Wiki 向量召回失败，退词法：${(err as Error).message}`);
     }
     if (hits.length === 0) {
-      hits = await this.lexicalSearch(q, scopeIds);
+      hits = await this.lexicalSearch(q, scopeIds, levels);
       mode = 'LEXICAL';
     }
     hits = hits.slice(0, ASK_TOPK);
@@ -415,6 +422,10 @@ export class WikiPagesService {
     for (const h of hits) {
       const p = pageMap.get(h.pageId);
       if (!p) continue;
+      // 防御纵深：召回行已按密级过滤，此处再按实体密级逐条复核
+      const r = SECURITY_LEVEL_RANK[p.securityLevel as SecurityLevel];
+      const u = SECURITY_LEVEL_RANK[user.maxSecurityLevel];
+      if (r === undefined || u === undefined || r > u) continue;
       citations.push({
         index: citations.length + 1,
         pageId: p.id,
@@ -506,14 +517,16 @@ export class WikiPagesService {
     const ids = spaces.map((s) => s.id);
     if (ids.length === 0) return { pageCount: 0, chunkCount: 0, embeddedCount: 0, vectorStore: 'UNKNOWN' };
     const kind = await this.detectStore();
+    const levels = this.levelsFor(user);
     const rows: Array<{ pages: string; chunks: string; embedded: string }> = await this.pageRepo.query(
       `SELECT COUNT(DISTINCT p.id)::text AS pages,
               COUNT(c.id)::text AS chunks,
               COUNT(c.id) FILTER (WHERE c.embedding IS NOT NULL)::text AS embedded
          FROM wiki_page p
          LEFT JOIN wiki_chunk c ON c.page_id = p.id AND c.deleted = FALSE
-        WHERE p.deleted = FALSE AND p.space_id = ANY($1::uuid[])`,
-      [ids],
+        WHERE p.deleted = FALSE AND p.space_id = ANY($1::uuid[])
+          AND p.security_level = ANY($2::varchar[])`,
+      [ids, levels],
     );
     const r = rows[0];
     return {
@@ -527,6 +540,11 @@ export class WikiPagesService {
   // ==========================================================================
   // 内部：切片 / 向量库
   // ==========================================================================
+
+  /** 批量导入用公开入口（逐页切片入向量库） */
+  public async indexPageForImport(pageId: string): Promise<number> {
+    return this.indexPage(pageId);
+  }
 
   /**
    * 页面切片并入向量库（全量替换式：先删旧块再写入）。
@@ -543,17 +561,24 @@ export class WikiPagesService {
     const pieces = this.splitChunks(text);
 
     await this.chunkRepo.query(`DELETE FROM wiki_chunk WHERE page_id = $1`, [pageId]);
-    let vectors: number[][] | null = null;
-    try {
-      vectors = await this.embedding.embed(pieces);
-    } catch (err) {
-      this.logger.warn(`页面 ${page.title} 嵌入失败（留空待 reindex）：${(err as Error).message}`);
-    }
 
     const kind = await this.detectStore();
     let n = 0;
+    // 分批嵌入：每批 16 条 —— 整本书数百块时单次调用会撞 20s 超时
+    const BATCH = 16;
+    const vectors: Array<number[] | null> = new Array(pieces.length).fill(null);
+    if (vectors.length > 0) {
+      for (let s = 0; s < pieces.length; s += BATCH) {
+        try {
+          const part = await this.embedding.embed(pieces.slice(s, s + BATCH));
+          for (let i = 0; i < part.length; i++) vectors[s + i] = part[i];
+        } catch (err) {
+          this.logger.warn(`页面 ${page.title} 批次 ${s}-${s + BATCH} 嵌入失败（留空待 reindex）：${(err as Error).message}`);
+        }
+      }
+    }
     for (let i = 0; i < pieces.length; i++) {
-      const vec = vectors?.[i] ?? null;
+      const vec = vectors[i];
       if (kind === 'PGVECTOR' && vec) {
         await this.chunkRepo.query(
           `INSERT INTO wiki_chunk (page_id, chunk_no, content, char_len, embedding)
@@ -609,7 +634,7 @@ export class WikiPagesService {
       }
     }
     if (cur.length > 0) chunks.push(cur);
-    return chunks.slice(0, 64); // 单页块数上限，防异常超长内容
+    return chunks.slice(0, 1024); // 单页块数上限（批量导入整本书可达数百块）
   }
 
   private async detectStore(): Promise<'PGVECTOR' | 'ARRAY'> {
@@ -624,6 +649,7 @@ export class WikiPagesService {
   private async vectorSearch(
     vec: number[],
     spaceIds: string[],
+    levels: string[],
   ): Promise<Array<{ pageId: string; content: string; score: number }>> {
     const literal = OllamaEmbeddingProvider.literal(vec);
     if ((await this.detectStore()) === 'PGVECTOR') {
@@ -635,9 +661,10 @@ export class WikiPagesService {
              JOIN wiki_page p ON p.id = c.page_id AND p.deleted = FALSE
             WHERE c.deleted = FALSE AND c.embedding IS NOT NULL
               AND p.space_id = ANY($2::uuid[])
+              AND p.security_level = ANY($3::varchar[])
             ORDER BY c.embedding <=> $1::vector
             LIMIT 12`,
-          [literal, spaceIds],
+          [literal, spaceIds, levels],
         );
       return rows.map((r) => ({
         pageId: r.page_id,
@@ -652,8 +679,9 @@ export class WikiPagesService {
            FROM wiki_chunk c
            JOIN wiki_page p ON p.id = c.page_id AND p.deleted = FALSE
           WHERE c.deleted = FALSE AND c.embedding IS NOT NULL
-            AND p.space_id = ANY($1::uuid[])`,
-        [spaceIds],
+            AND p.space_id = ANY($1::uuid[])
+            AND p.security_level = ANY($2::varchar[])`,
+        [spaceIds, levels],
       );
     return rows
       .map((r) => ({
@@ -669,6 +697,7 @@ export class WikiPagesService {
   private async lexicalSearch(
     q: string,
     spaceIds: string[],
+    levels: string[],
   ): Promise<Array<{ pageId: string; content: string; score: number }>> {
     const term = q.replace(/[%_]/g, '').trim();
     if (term.length === 0) return [];
@@ -677,9 +706,10 @@ export class WikiPagesService {
          FROM wiki_chunk c
          JOIN wiki_page p ON p.id = c.page_id AND p.deleted = FALSE
         WHERE c.deleted = FALSE AND p.space_id = ANY($2::uuid[])
+          AND p.security_level = ANY($3::varchar[])
           AND (c.content ILIKE $1 OR p.title ILIKE $1)
         LIMIT 12`,
-      [`%${term}%`, spaceIds],
+      [`%${term}%`, spaceIds, levels],
     );
     return rows.map((r) => ({
       pageId: r.page_id,
@@ -770,6 +800,12 @@ export class WikiPagesService {
     if (!space || space.deleted || !this.canAccessSpace(user, space)) {
       throw new BizException(ErrorCode.NOT_FOUND, '页面不存在或无权访问');
     }
+    // 页面级密级（批量导入的同类型空间内密级混合，逐页判定）
+    const pageRank = SECURITY_LEVEL_RANK[page.securityLevel as SecurityLevel];
+    const userRank = SECURITY_LEVEL_RANK[user.maxSecurityLevel];
+    if (pageRank === undefined || userRank === undefined || pageRank > userRank) {
+      throw new BizException(ErrorCode.NOT_FOUND, '页面不存在或无权访问');
+    }
     return page;
   }
 
@@ -780,6 +816,14 @@ export class WikiPagesService {
           AND version_no <= (SELECT MAX(version_no) - $2 FROM wiki_page_version WHERE page_id = $1)`,
       [pageId, MAX_VERSIONS],
     );
+  }
+
+  /** 当前用户可见密级（SQL IN 过滤用；空数组表示无任何可见密级） */
+  private levelsFor(user: PermissionSnapshot): string[] {
+    const order = ['PUBLIC', 'INTERNAL', 'SECRET'];
+    const max = order.indexOf(user.maxSecurityLevel);
+    if (max < 0) return [];
+    return order.slice(0, max + 1);
   }
 
   private toSpaceDto(s: WikiSpace, pageCount: number): WikiSpaceDto {
@@ -802,6 +846,7 @@ export class WikiPagesService {
       title: p.title,
       orderNo: p.orderNo,
       versionNo: p.versionNo,
+      securityLevel: p.securityLevel as WikiPageTreeNode['securityLevel'],
       updatedAt: p.updatedAt.toISOString(),
       children: [],
     };
@@ -817,6 +862,8 @@ export class WikiPagesService {
       contentMd: p.contentMd,
       orderNo: p.orderNo,
       versionNo: p.versionNo,
+      securityLevel: p.securityLevel as WikiPageDto['securityLevel'],
+      sourceItemId: p.sourceItemId,
       createdBy: p.createdBy,
       updatedBy: p.updatedBy,
       createdAt: p.createdAt.toISOString(),

@@ -1,6 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -13,6 +16,13 @@ import type { PermissionSnapshot } from '@tianji/shared';
 import { Audit, CurrentUser, RequirePerm } from '../../common/decorators/require-perm.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { WikiPagesService } from './wiki-pages.service';
+import { WikiImportService } from './wiki-import.service';
+
+export class ImportStartBodyDto {
+  @IsArray() @ArrayNotEmpty() @IsString({ each: true }) public sources!: string[];
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) public limitPerGroup?: number;
+  @IsOptional() @IsBoolean() public dryRun?: boolean;
+}
 
 export class CreateSpaceBodyDto {
   @IsString() @MaxLength(100) public name!: string;
@@ -61,7 +71,10 @@ export class WikiAskBodyDto {
  */
 @Controller('wiki')
 export class WikiPagesController {
-  public constructor(private readonly service: WikiPagesService) {}
+  public constructor(
+    private readonly service: WikiPagesService,
+    private readonly importService: WikiImportService,
+  ) {}
 
   // ---- 空间 ----
 
@@ -173,5 +186,36 @@ export class WikiPagesController {
   @Audit({ action: 'UPDATE', objectType: 'WIKI_INDEX' })
   public async reindex(@CurrentUser() user: AuthenticatedUser) {
     return this.service.reindex(user as PermissionSnapshot);
+  }
+
+  // ---- 批量导入（免费书籍 → 空间/页面自动转化） ----
+
+  @Get('import/sources')
+  @RequirePerm({ domain: 'WIKI', op: 'WRITE', checkScope: false, objectType: 'WIKI_PAGE' })
+  public async importSources(@CurrentUser() user: AuthenticatedUser) {
+    return this.importService.sources(user as PermissionSnapshot);
+  }
+
+  @Get('import/status')
+  @RequirePerm({ domain: 'WIKI', op: 'WRITE', checkScope: false, objectType: 'WIKI_PAGE' })
+  public async importStatus() {
+    return this.importService.status();
+  }
+
+  @Post('import/start')
+  @RequirePerm({ domain: 'WIKI', op: 'WRITE', checkScope: false, objectType: 'WIKI_PAGE' })
+  @Audit({ action: 'CREATE', objectType: 'WIKI_IMPORT', objectIdPath: 'body.sources' })
+  public async importStart(@Body() dto: ImportStartBodyDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.importService.start(
+      { sources: dto.sources, limitPerGroup: dto.limitPerGroup, dryRun: dto.dryRun },
+      user as PermissionSnapshot,
+    );
+  }
+
+  @Post('import/cancel')
+  @RequirePerm({ domain: 'WIKI', op: 'WRITE', checkScope: false, objectType: 'WIKI_PAGE' })
+  @Audit({ action: 'UPDATE', objectType: 'WIKI_IMPORT' })
+  public async importCancel() {
+    return this.importService.cancel();
   }
 }

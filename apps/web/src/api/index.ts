@@ -66,6 +66,8 @@ import type {
   WikiPageVersionDto,
   WikiAskResult,
   WikiIndexStatusDto,
+  WikiImportSourceDto,
+  WikiImportStatusDto,
   SystemParamDto,
   ParamDef,
   ParamMetaDto,
@@ -582,6 +584,14 @@ export const wikiPageApi = {
     api.post('/wiki/pages/ask', { question, spaceId }),
   indexStatus: (): Promise<WikiIndexStatusDto> => api.get('/wiki/pages/index-status'),
   reindex: (): Promise<{ pages: number; chunks: number }> => api.post('/wiki/pages/reindex', {}),
+  importSources: (): Promise<WikiImportSourceDto[]> => api.get('/wiki/import/sources'),
+  importStart: (body: {
+    sources: string[];
+    limitPerGroup?: number;
+    dryRun?: boolean;
+  }): Promise<WikiImportStatusDto> => api.post('/wiki/import/start', body),
+  importStatus: (): Promise<WikiImportStatusDto> => api.get('/wiki/import/status'),
+  importCancel: (): Promise<WikiImportStatusDto> => api.post('/wiki/import/cancel', {}),
 };
 
 // ---------------------------------------------------------------- 健康检查

@@ -21,6 +21,7 @@ import { wikiPageApi } from '../../api';
 import { ApiError } from '../../api/client';
 import { AppLayout } from '../../components/AppLayout';
 import { PermGate } from '../../components/PermGate';
+import { WikiImportDialog } from './WikiImportDialog';
 
 /**
  * 知识 Wiki（可编辑页面库）。
@@ -38,6 +39,7 @@ export function WikiHomePage(): ReactElement {
   const [showVersions, setShowVersions] = useState(false);
   const [question, setQuestion] = useState('');
   const [askResult, setAskResult] = useState<Awaited<ReturnType<typeof wikiPageApi.ask>> | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const spacesQuery = useQuery({ queryKey: ['wiki-spaces'], queryFn: wikiPageApi.listSpaces });
   const treeQuery = useQuery({
@@ -144,6 +146,9 @@ export function WikiHomePage(): ReactElement {
             ))}
             <PermGate domain="WIKI" op="WRITE">
               <NewSpaceButton onDone={invalidate} />
+              <Button size="small" variant="outlined" onClick={() => setImportOpen(true)}>
+                批量导入
+              </Button>
             </PermGate>
           </Stack>
         </Card>
@@ -375,6 +380,11 @@ export function WikiHomePage(): ReactElement {
           </Stack>
         </Box>
       </Stack>
+      <WikiImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={invalidate}
+      />
     </AppLayout>
   );
 }

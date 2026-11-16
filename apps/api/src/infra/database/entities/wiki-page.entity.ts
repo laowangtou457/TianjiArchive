@@ -38,6 +38,18 @@ export class WikiPage {
   @Column({ name: 'created_by', type: 'uuid', nullable: true })
   createdBy!: string | null;
 
+  /** 来源档案条目（批量导入时记录；人工建的页面为 null，幂等续跑的去重键） */
+  @Column({ name: 'source_item_id', type: 'uuid', nullable: true })
+  sourceItemId!: string | null;
+
+  /**
+   * 页面密级（fail-closed）。人工页面继承空间密级；
+   * 批量导入页面取来源条目密级 —— 同一「书籍类型」空间内可混合密级，
+   * 空间密级只作上限，可见性按页面级逐页判定。
+   */
+  @Column({ name: 'security_level', type: 'varchar', length: 16, default: 'INTERNAL' })
+  securityLevel!: string;
+
   @Column({ name: 'updated_by', type: 'uuid', nullable: true })
   updatedBy!: string | null;
 

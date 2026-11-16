@@ -1305,6 +1305,7 @@ export interface WikiPageTreeNode {
   title: string;
   orderNo: number;
   versionNo: number;
+  securityLevel: SecurityLevel;
   updatedAt: string;
   children: WikiPageTreeNode[];
 }
@@ -1319,6 +1320,8 @@ export interface WikiPageDto {
   contentMd: string;
   orderNo: number;
   versionNo: number;
+  securityLevel: SecurityLevel;
+  sourceItemId: string | null;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: string;
@@ -1360,4 +1363,47 @@ export interface WikiIndexStatusDto {
   chunkCount: number;
   embeddedCount: number;
   vectorStore: string;
+}
+
+// ============================================================================
+// Wiki 批量导入（免费书籍 → 空间/页面自动转化）
+// ============================================================================
+
+/** 可导入的书籍类型分组（按类型建空间；同类型内页面继承各自条目密级） */
+export interface WikiImportSourceDto {
+  /** 类型名（已合并 _epub 等同名批次） */
+  source: string;
+  /** 该类型下可导入的条目数 */
+  itemCount: number;
+  /** 已导入为页面的条目数（续跑时会被跳过） */
+  importedCount: number;
+  /** 该类型下的最高密级（决定空间密级上限） */
+  maxSecurityLevel: SecurityLevel;
+}
+
+export interface WikiImportStartDto {
+  /** 要导入的类型名列表（来自 sources 的 source 字段） */
+  sources: string[];
+  /** 每个类型最多导入多少条（0/缺省 = 不限），用于试跑 */
+  limitPerGroup?: number;
+  /** true = 只统计不落库，验证分组与内容抽取 */
+  dryRun?: boolean;
+}
+
+export interface WikiImportStatusDto {
+  running: boolean;
+  dryRun: boolean;
+  /** 本次任务选择的类型 */
+  sources: string[];
+  /** 总条目数（估算，续跑时已导入的不计入待办） */
+  total: number;
+  done: number;
+  createdPages: number;
+  skipped: number;
+  failed: number;
+  /** 最近一次失败原因（导入继续，不中断） */
+  lastError: string | null;
+  currentTitle: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
 }

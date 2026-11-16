@@ -13,6 +13,7 @@ import { WikiController } from './wiki.controller';
 import { WikiService } from './wiki.service';
 import { WikiPagesController } from './wiki-pages.controller';
 import { WikiPagesService } from './wiki-pages.service';
+import { WikiImportService } from './wiki-import.service';
 
 /**
  * LLM Wiki 模块（P4）。
@@ -32,7 +33,7 @@ import { WikiPagesService } from './wiki-pages.service';
     RagModule,
   ],
   controllers: [WikiController, WikiPagesController],
-  providers: [WikiService, WikiPagesService],
+  providers: [WikiService, WikiPagesService, WikiImportService],
   exports: [WikiService, WikiPagesService],
 })
 export class WikiModule {}
