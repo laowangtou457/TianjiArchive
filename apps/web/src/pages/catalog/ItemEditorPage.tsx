@@ -23,6 +23,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  Pagination,
 } from '@mui/material';
 import { useParams } from 'react-router-dom';
 import { useSnackbar } from 'notistack';
@@ -46,6 +47,7 @@ import { FilePreview } from '../../components/FilePreview';
 import { FileUploader } from '../../components/FileUploader';
 import { MetadataForm, validateForm, type FormValues } from '../../components/MetadataForm';
 import { PermGate } from '../../components/PermGate';
+import { ViewLogsDialog } from '../../components/ViewLogsDialog';
 
 /**
  * 卷内文件著录（F-04）+ 电子文件挂接（F-08）+ 作废重编（合规唯一通道）。
@@ -66,11 +68,35 @@ export function ItemEditorPage(): ReactElement {
     enabled: Boolean(volumeId),
   });
 
+  // 卷内件列表：服务端分页（每页 50）+ 服务端阶段筛选。
+  // ⚠️ 必须走专用端点 volumeItems（/archive/volumes/:id/items）：曾用通用
+  // listItems 传 volumeId，但通用接口 controller 不接收该参数，过滤被丢弃，
+  // 导致每个案卷都显示同一批全库条目（串卷 bug）。
+  const [page, setPage] = useState(1);
+  const [stageFilter, setStageFilter] = useState<string>('ALL');
+  const PAGE_SIZE = 50;
   const itemsQuery = useQuery({
-    queryKey: ['items', volumeId],
-    queryFn: () => archiveApi.listItems({ volumeId, page: 1, size: 100 }),
+    queryKey: ['items', volumeId, page, stageFilter],
+    queryFn: () =>
+      archiveApi.volumeItems(volumeId as string, {
+        page,
+        size: PAGE_SIZE,
+        status: stageFilter === 'ALL' ? undefined : stageFilter,
+      }),
     enabled: Boolean(volumeId),
   });
+
+  // 阶段计数：服务端 GROUP BY 全卷统计（服务端分页后不能拿当前页当总数）
+  const statsQuery = useQuery({
+    queryKey: ['item-stats', volumeId],
+    queryFn: () => archiveApi.volumeItemStats(volumeId as string),
+    enabled: Boolean(volumeId),
+  });
+
+  // 换卷/换筛选时回到第一页
+  useEffect(() => {
+    setPage(1);
+  }, [volumeId, stageFilter]);
 
   const itemQuery = useQuery({
     queryKey: ['item', itemId],
@@ -86,6 +112,7 @@ export function ItemEditorPage(): ReactElement {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<ElectronicFileDto[]>([]);
   const [previewFile, setPreviewFile] = useState<ElectronicFileDto | null>(null);
+  const [viewLogsFile, setViewLogsFile] = useState<ElectronicFileDto | null>(null);
   const [voidDialog, setVoidDialog] = useState(false);
   const [voidReason, setVoidReason] = useState('');
 
@@ -274,12 +301,8 @@ export function ItemEditorPage(): ReactElement {
   });
 
   // ---------------------------------------------------------------- 左列阶段筛选
-  const [stageFilter, setStageFilter] = useState<string>('ALL');
-  const filteredItems = useMemo(() => {
-    const list = itemsQuery.data?.list ?? [];
-    if (stageFilter === 'ALL') return list;
-    return list.filter((it) => it.status === stageFilter);
-  }, [itemsQuery.data, stageFilter]);
+  // 阶段筛选已在服务端完成（queryKey 带 stageFilter），这里直接用返回页
+  const filteredItems = itemsQuery.data?.list ?? [];
 
   // ---------------------------------------------------------------- 申请借阅（检索利用链路入口）
   const [borrowDialog, setBorrowDialog] = useState(false);
@@ -363,13 +386,15 @@ export function ItemEditorPage(): ReactElement {
                 </PermGate>
               </Stack>
               <Divider sx={{ mb: 1 }} />
-              {/* 阶段筛选（对齐泰坦：未处理/预归档/待审核/已归档/无需归档） */}
+              {/* 阶段筛选（对齐泰坦：未处理/预归档/待审核/已归档/无需归档）
+                  计数来自服务端全卷统计（item-stats），跨页准确 */}
               <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
                 {['ALL', ...ITEM_STATUS_VALUES].map((s) => {
+                  const stats = statsQuery.data ?? {};
                   const count =
                     s === 'ALL'
-                      ? (itemsQuery.data?.list ?? []).length
-                      : (itemsQuery.data?.list ?? []).filter((it) => it.status === s).length;
+                      ? Object.values(stats).reduce((a, b) => a + b, 0)
+                      : (stats[s] ?? 0);
                   return (
                     <Chip
                       key={s}
@@ -414,6 +439,21 @@ export function ItemEditorPage(): ReactElement {
                   </Typography>
                 </Box>
               ))}
+              {(itemsQuery.data?.total ?? 0) > PAGE_SIZE && (
+                <Stack alignItems="center" sx={{ pt: 1, pb: 0.5, borderTop: '1px solid #e2e8f0' }}>
+                  <Pagination
+                    size="small"
+                    count={Math.ceil((itemsQuery.data?.total ?? 0) / PAGE_SIZE)}
+                    page={page}
+                    onChange={(_, p) => setPage(p)}
+                    color="primary"
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    共 {itemsQuery.data?.total ?? 0} 件 · 第 {page}/
+                    {Math.ceil((itemsQuery.data?.total ?? 0) / PAGE_SIZE)} 页
+                  </Typography>
+                </Stack>
+              )}
             </CardContent>
           </Card>
         )}
@@ -629,6 +669,9 @@ export function ItemEditorPage(): ReactElement {
                               <IconButton size="small" onClick={() => setPreviewFile(f)} title="预览">
                                 ◉
                               </IconButton>
+                              <Button size="small" onClick={() => setViewLogsFile(f)} title="查看记录（谁在何时预览/下载）">
+                                记录
+                              </Button>
                               <PermGate domain="FILE" op="WRITE">
                                 <Button
                                   size="small"
@@ -708,6 +751,7 @@ export function ItemEditorPage(): ReactElement {
 
       {/* 预览弹窗 */}
       <FilePreview file={previewFile} open={Boolean(previewFile)} onClose={() => setPreviewFile(null)} allowDownload={false} />
+      <ViewLogsDialog file={viewLogsFile} open={Boolean(viewLogsFile)} onClose={() => setViewLogsFile(null)} />
 
       {/* 作废重编 */}
       <Dialog open={voidDialog} onClose={() => setVoidDialog(false)} maxWidth="sm">

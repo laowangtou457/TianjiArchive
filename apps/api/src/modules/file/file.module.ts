@@ -9,11 +9,12 @@ import { ArchiveItem } from '../../infra/database/entities/archive-item.entity';
 import { DocumentText } from '../../infra/database/entities/document-text.entity';
 import { DictModule } from '../dict/dict.module';
 import { ParamModule } from '../param/param.module';
+import { AuditModule } from '../audit/audit.module';
 
 /**
  * 电子文件模块（F-08）。
  * 依赖：MinioService（StorageModule，@Global）、AccessFilterBuilder（AccessModule，@Global）、
- *      DictService（下载/水印开关）、抽取队列（QueueModule，@Global）。
+ *      DictService（下载/水印开关）、AuditLogService（文件查看留痕聚合）、抽取队列（QueueModule，@Global）。
  */
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { ParamModule } from '../param/param.module';
     BullModule.registerQueue({ name: QUEUE_NAME.EXTRACT }),
     DictModule,
     ParamModule,
+    AuditModule,
   ],
   controllers: [FileController],
   providers: [FileService],

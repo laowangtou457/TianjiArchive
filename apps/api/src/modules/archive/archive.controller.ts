@@ -317,16 +317,37 @@ export class ArchiveController {
     @Param('id') volumeId: string,
     @Query('page') page?: string,
     @Query('size') size?: string,
+    @Query('status') status?: ItemStatus,
     @Query('keyword') keyword?: string,
     @CurrentUser() user?: PermissionSnapshot,
   ): Promise<PageResult<ItemDto>> {
     return this.service.listItems({
       page: Number.parseInt(page ?? '1', 10) || 1,
-      size: Number.parseInt(size ?? '100', 10) || 100,
+      size: Number.parseInt(size ?? '50', 10) || 50,
       volumeId,
+      status,
       keyword,
       user,
     });
+  }
+
+  /**
+   * 卷内件按阶段统计（供左侧筛选徽标跨页准确计数——服务端分页后
+   * 不能再拿当前页的 list 数当各阶段件数）。
+   */
+  @Get('volumes/:id/item-stats')
+  @RequirePerm({
+    domain: 'ITEM',
+    op: 'READ',
+    checkScope: false,
+    objectType: 'ITEM',
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
+  public async volumeItemStats(
+    @Param('id') volumeId: string,
+    @CurrentUser() user?: PermissionSnapshot,
+  ): Promise<Record<string, number>> {
+    return this.service.volumeItemStats(volumeId, user);
   }
 
   @Get('items')
@@ -338,6 +359,7 @@ export class ArchiveController {
     @Query('year') year?: string,
     @Query('status') status?: ItemStatus,
     @Query('keyword') keyword?: string,
+    @Query('volumeId') volumeId?: string,
     @CurrentUser('fondsIds') fondsIds?: string[] | null,
   ): Promise<PageResult<ItemDto>> {
     return this.service.listItems({
@@ -347,6 +369,9 @@ export class ArchiveController {
       year: year ? Number.parseInt(year, 10) : undefined,
       status,
       keyword,
+      // ⚠️ volumeId 必须透传：之前 controller 不接收该参数，前端传了也被丢弃，
+      // 导致所有案卷的「卷内文件」都显示同一批（全库）条目。
+      volumeId,
       allowedFondsIds: fondsIds ?? null,
     });
   }

@@ -3,6 +3,7 @@
  * 页面只依赖本文件，不直接拼 URL。
  */
 import type {
+  AuditLogDto,
   BackupRecordDto,
   BorrowOrderDto,
   BorrowStatsReport,
@@ -178,6 +179,16 @@ export const archiveApi = {
     level?: string;
   }): Promise<PageResult<ItemDto>> => api.get('/archive/items', params),
 
+  /** 卷内件列表（专用端点：服务端按卷过滤 + status 筛选 + 分页，勿再用通用 listItems 传 volumeId） */
+  volumeItems: (
+    volumeId: string,
+    params?: { page?: number; size?: number; status?: string; keyword?: string },
+  ): Promise<PageResult<ItemDto>> => api.get(`/archive/volumes/${volumeId}/items`, params),
+
+  /** 卷内件按阶段统计（跨页准确计数：{ 未处理: n, ... }） */
+  volumeItemStats: (volumeId: string): Promise<Record<string, number>> =>
+    api.get(`/archive/volumes/${volumeId}/item-stats`),
+
   itemDetail: (id: string): Promise<ItemDto> => api.get(`/archive/items/${id}`),
 
   createItemInVolume: (volumeId: string, body: Record<string, unknown>): Promise<ItemDto> =>
@@ -272,6 +283,14 @@ export const fileApi = {
     api.post(`/files/${id}/integrity-check`),
   requeue: (id: string): Promise<{ queued: boolean }> => api.post(`/files/${id}/requeue-extract`),
   remove: (id: string): Promise<{ deleted: boolean }> => api.delete(`/files/${id}`),
+  /** 该文件的查看留痕（预览/下载审计记录，谁、何时、结果） */
+  viewLogs: (
+    id: string,
+    params?: { page?: number; size?: number },
+  ): Promise<PageResult<AuditLogDto>> => api.get(`/files/${id}/view-logs`, params),
+  /** 导出该文件的查看留痕为 CSV */
+  exportViewLogs: (id: string, filename?: string): Promise<void> =>
+    api.download(`/files/${id}/view-logs/export`, undefined, filename ?? '查看记录.csv'),
 };
 
 // ---------------------------------------------------------------- 借阅

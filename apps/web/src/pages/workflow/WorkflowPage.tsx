@@ -34,10 +34,13 @@ import {
   Typography,
 } from '@mui/material';
 import { useSnackbar } from 'notistack';
+import { useNavigate } from 'react-router-dom';
 import {
   ROLE_LABELS,
   WORKFLOW_BIZ_TYPE_LABELS,
   WORKFLOW_INSTANCE_STATUS_LABELS,
+  WorkflowBizType,
+  type CreateWorkflowDefDto,
   type RoleCode,
   type WorkflowDefDto,
   type WorkflowInstanceDto,
@@ -369,12 +372,23 @@ export function WorkflowPage(): ReactElement {
   );
 }
 
-/** 流程配置面板：查看/编辑环节（角色与回调是审批正确性的关键，做成一目了然的行内编辑） */
+/** 流程配置面板：新增/查看流程图/编辑环节（角色与回调是审批正确性的关键，做成一目了然的行内编辑） */
 function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactElement {
   const qc = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
+  const navigate = useNavigate();
   const [editing, setEditing] = useState<WorkflowDefDto | null>(null);
   const [nodes, setNodes] = useState<WorkflowNodeDto[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [createForm, setCreateForm] = useState<{
+    code: string;
+    name: string;
+    bizType: string;
+    description: string;
+  }>({ code: '', name: '', bizType: WorkflowBizType.OPEN_BATCH, description: '' });
+  const [createNodes, setCreateNodes] = useState<WorkflowNodeDto[]>([
+    { seq: 1, name: '档案管理员审核', roleCode: 'R1', allowReject: true },
+  ]);
 
   const saveMutation = useMutation({
     mutationFn: (p: { id: string; nodes: WorkflowNodeDto[] }) =>
@@ -385,6 +399,18 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
       void qc.invalidateQueries({ queryKey: ['workflow-defs'] });
     },
     onError: (err) => enqueueSnackbar(err instanceof ApiError ? err.message : '保存失败', { variant: 'error' }),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (body: CreateWorkflowDefDto) => workflowApi.createDef(body),
+    onSuccess: (d) => {
+      enqueueSnackbar(`流程「${d.name}」已创建${d.enabled ? '并启用（同类型旧流程已自动停用）' : ''}`, {
+        variant: 'success',
+      });
+      setCreating(false);
+      void qc.invalidateQueries({ queryKey: ['workflow-defs'] });
+    },
+    onError: (err) => enqueueSnackbar(err instanceof ApiError ? err.message : '创建失败', { variant: 'error' }),
   });
 
   const toggleMutation = useMutation({
@@ -399,6 +425,24 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
 
   return (
     <>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+        <Typography variant="body2" color="text.secondary">
+          共 {props.defs.length} 个流程定义；点击「流程图」查看节点链路与各环节审批角色
+        </Typography>
+        <PermGate domain="PARAM" op="WRITE">
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => {
+              setCreateForm({ code: '', name: '', bizType: WorkflowBizType.OPEN_BATCH, description: '' });
+              setCreateNodes([{ seq: 1, name: '档案管理员审核', roleCode: 'R1', allowReject: true }]);
+              setCreating(true);
+            }}
+          >
+            + 新增流程
+          </Button>
+        </PermGate>
+      </Stack>
       <Card variant="outlined">
         <Table size="small">
           <TableHead>
@@ -409,7 +453,7 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
               <TableCell width={80}>版本</TableCell>
               <TableCell width={90}>状态</TableCell>
               <TableCell>环节流向</TableCell>
-              <TableCell width={170}>操作</TableCell>
+              <TableCell width={250}>操作</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -433,8 +477,11 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
                     .join('  ›  ')}
                 </TableCell>
                 <TableCell>
-                  <PermGate domain="PARAM" op="WRITE">
-                    <Stack direction="row" spacing={1}>
+                  <Stack direction="row" spacing={1}>
+                    <Button size="small" onClick={() => navigate(`/workflow/defs/${d.id}/graph`)}>
+                      流程图
+                    </Button>
+                    <PermGate domain="PARAM" op="WRITE">
                       <Button
                         size="small"
                         onClick={() => {
@@ -451,8 +498,8 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
                       >
                         {d.enabled ? '停用' : '启用'}
                       </Button>
-                    </Stack>
-                  </PermGate>
+                    </PermGate>
+                  </Stack>
                 </TableCell>
               </TableRow>
             ))}
@@ -467,6 +514,79 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
         </Table>
       </Card>
 
+      {/* ---------------------------------------------------------- 新增流程 */}
+      <Dialog open={creating} onClose={() => setCreating(false)} maxWidth="md" fullWidth>
+        <DialogTitle>新增流程</DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            新流程默认「启用」——同一业务类型同时只允许一条启用流程，启用新流程会自动停用旧的。
+            环节按顺序执行，末环节的「通过回调」决定审批通过后执行什么业务动作。
+          </Alert>
+          <Stack direction="row" spacing={1.5} sx={{ mb: 1.5 }} useFlexGap flexWrap="wrap">
+            <TextField
+              size="small"
+              label="流程编码（唯一）"
+              value={createForm.code}
+              onChange={(e) => setCreateForm((f) => ({ ...f, code: e.target.value }))}
+              sx={{ width: 220 }}
+              helperText="如 WF-BORROW-APPROVE"
+            />
+            <TextField
+              size="small"
+              label="流程名称"
+              value={createForm.name}
+              onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
+              sx={{ width: 220 }}
+            />
+            <FormControl size="small" sx={{ width: 200 }}>
+              <InputLabel>业务类型</InputLabel>
+              <Select
+                label="业务类型"
+                value={createForm.bizType}
+                onChange={(e) => setCreateForm((f) => ({ ...f, bizType: e.target.value }))}
+              >
+                {(Object.values(WorkflowBizType) as string[]).map((b) => (
+                  <MenuItem key={b} value={b}>
+                    {WORKFLOW_BIZ_TYPE_LABELS[b as keyof typeof WORKFLOW_BIZ_TYPE_LABELS] ?? b}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField
+              size="small"
+              label="备注"
+              value={createForm.description}
+              onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))}
+              sx={{ flex: 1, minWidth: 200 }}
+            />
+          </Stack>
+          <NodeRowsEditor nodes={createNodes} onChange={setCreateNodes} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreating(false)}>取消</Button>
+          <Button
+            variant="contained"
+            disabled={
+              createMutation.isPending ||
+              createForm.code.trim().length === 0 ||
+              createForm.name.trim().length === 0 ||
+              createNodes.length === 0
+            }
+            onClick={() => {
+              createMutation.mutate({
+                code: createForm.code.trim(),
+                name: createForm.name.trim(),
+                bizType: createForm.bizType as CreateWorkflowDefDto['bizType'],
+                description: createForm.description.trim() || null,
+                nodes: createNodes.map((n, i) => ({ ...n, seq: i + 1 })),
+              });
+            }}
+          >
+            创建
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={Boolean(editing)} onClose={() => setEditing(null)} maxWidth="md" fullWidth>
         <DialogTitle>编辑环节：{editing?.name}</DialogTitle>
         <DialogContent>
@@ -474,84 +594,7 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
             环节按顺序执行；最后一个环节的「回调」决定审批通过后执行什么业务动作。
             改流程会生成新版本，**在途实例仍按原环节继续**。
           </Alert>
-          <Stack spacing={1.5}>
-            {nodes.map((n, idx) => (
-              <Stack key={idx} direction="row" spacing={1} alignItems="center">
-                <Typography sx={{ width: 24 }}>{idx + 1}</Typography>
-                <TextField
-                  size="small"
-                  label="环节名称"
-                  value={n.name}
-                  onChange={(e) =>
-                    setNodes((arr) => arr.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
-                  }
-                  sx={{ width: 200 }}
-                />
-                <FormControl size="small" sx={{ width: 130 }}>
-                  <InputLabel>处理角色</InputLabel>
-                  <Select
-                    label="处理角色"
-                    value={n.roleCode}
-                    onChange={(e) =>
-                      setNodes((arr) =>
-                        arr.map((x, i) => (i === idx ? { ...x, roleCode: e.target.value as RoleCode | '*' } : x)),
-                      )
-                    }
-                  >
-                    <MenuItem value="*">不限角色</MenuItem>
-                    {(Object.keys(ROLE_LABELS) as RoleCode[]).map((r) => (
-                      <MenuItem key={r} value={r}>
-                        {r} {ROLE_LABELS[r]}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <TextField
-                  size="small"
-                  label="权限域"
-                  value={n.permDomain ?? ''}
-                  onChange={(e) =>
-                    setNodes((arr) => arr.map((x, i) => (i === idx ? { ...x, permDomain: e.target.value } : x)))
-                  }
-                  sx={{ width: 150 }}
-                />
-                <TextField
-                  size="small"
-                  label="通过回调"
-                  value={n.onApprove ?? ''}
-                  onChange={(e) =>
-                    setNodes((arr) => arr.map((x, i) => (i === idx ? { ...x, onApprove: e.target.value } : x)))
-                  }
-                  sx={{ flex: 1 }}
-                  helperText={idx === nodes.length - 1 ? '仅末环节生效，如 OPEN_BATCH_APPLY' : undefined}
-                />
-                <Tooltip title="删除该环节">
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={nodes.length <= 1}
-                      onClick={() => setNodes((arr) => arr.filter((_, i) => i !== idx))}
-                    >
-                      ✕
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-            ))}
-            <Box>
-              <Button
-                size="small"
-                onClick={() =>
-                  setNodes((arr) => [
-                    ...arr,
-                    { seq: arr.length + 1, name: `环节 ${arr.length + 1}`, roleCode: 'R1', allowReject: true },
-                  ])
-                }
-              >
-                + 添加环节
-              </Button>
-            </Box>
-          </Stack>
+          <NodeRowsEditor nodes={nodes} onChange={setNodes} />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditing(null)}>取消</Button>
@@ -571,5 +614,89 @@ function DefsPanel(props: { defs: WorkflowDefDto[]; loading: boolean }): ReactEl
         </DialogActions>
       </Dialog>
     </>
+  );
+}
+
+/** 环节行编辑器（新增/编辑流程共用）：名称、处理角色、权限域、通过回调 */
+function NodeRowsEditor(props: {
+  nodes: WorkflowNodeDto[];
+  onChange: (nodes: WorkflowNodeDto[]) => void;
+}): ReactElement {
+  const { nodes, onChange } = props;
+  return (
+    <Stack spacing={1.5}>
+      {nodes.map((n, idx) => (
+        <Stack key={idx} direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+          <Typography sx={{ width: 24 }}>{idx + 1}</Typography>
+          <TextField
+            size="small"
+            label="环节名称"
+            value={n.name}
+            onChange={(e) => onChange(nodes.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+            sx={{ width: 200 }}
+          />
+          <FormControl size="small" sx={{ width: 130 }}>
+            <InputLabel>处理角色</InputLabel>
+            <Select
+              label="处理角色"
+              value={n.roleCode}
+              onChange={(e) =>
+                onChange(
+                  nodes.map((x, i) =>
+                    i === idx ? { ...x, roleCode: e.target.value as RoleCode | '*' } : x,
+                  ),
+                )
+              }
+            >
+              <MenuItem value="*">不限角色</MenuItem>
+              {(Object.keys(ROLE_LABELS) as RoleCode[]).map((r) => (
+                <MenuItem key={r} value={r}>
+                  {r} {ROLE_LABELS[r]}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            size="small"
+            label="权限域"
+            value={n.permDomain ?? ''}
+            onChange={(e) => onChange(nodes.map((x, i) => (i === idx ? { ...x, permDomain: e.target.value } : x)))}
+            sx={{ width: 150 }}
+          />
+          <TextField
+            size="small"
+            label="通过回调"
+            value={n.onApprove ?? ''}
+            onChange={(e) => onChange(nodes.map((x, i) => (i === idx ? { ...x, onApprove: e.target.value } : x)))}
+            sx={{ flex: 1, minWidth: 160 }}
+            helperText={idx === nodes.length - 1 ? '仅末环节生效，如 OPEN_BATCH_APPLY' : undefined}
+          />
+          <Tooltip title="删除该环节">
+            <span>
+              <IconButton
+                size="small"
+                disabled={nodes.length <= 1}
+                onClick={() => onChange(nodes.filter((_, i) => i !== idx))}
+              >
+                ✕
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Stack>
+      ))}
+      <Box>
+        <Button
+          size="small"
+          onClick={() =>
+            onChange([
+              ...nodes,
+              { seq: nodes.length + 1, name: `环节 ${nodes.length + 1}`, roleCode: 'R1', allowReject: true },
+            ])
+          }
+        >
+          + 添加环节
+        </Button>
+      </Box>
+    </Stack>
   );
 }

@@ -306,6 +306,35 @@ export class ArchiveService {
     };
   }
 
+  /**
+   * 卷内件按阶段统计（GROUP BY status，一次查询拿全卷计数）。
+   * 供卷内文件页左侧筛选徽标跨页准确计数——服务端分页后当前页的 list
+   * 只代表本页 50 条，不能当各阶段总数用。行级过滤与 listItems 一致。
+   */
+  public async volumeItemStats(
+    volumeId: string,
+    user?: PermissionSnapshot,
+  ): Promise<Record<string, number>> {
+    const qb = this.itemRepo
+      .createQueryBuilder('i')
+      .select('i.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .where('i.deleted = FALSE')
+      .andWhere('i.volumeId = :volumeId', { volumeId })
+      .groupBy('i.status');
+    if (user) {
+      const levels = this.accessBuilder.levelsAtMost(user.maxSecurityLevel);
+      if (levels.length === 0) return {};
+      qb.andWhere('i.securityLevel IN (:...levels)', { levels });
+      if (user.fondsIds !== null) {
+        if (user.fondsIds.length === 0) return {};
+        qb.andWhere('i.fondsId IN (:...scopeFonds)', { scopeFonds: user.fondsIds });
+      }
+    }
+    const rows: Array<{ status: string; count: string }> = await qb.getRawMany();
+    return Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
+  }
+
   /** 件详情 */
   /** 件详情（传入 user 时做密级+数据范围行级校验——检索利用链路的唯一防线） */
   public async itemDetail(id: string, user?: PermissionSnapshot): Promise<ItemDto> {

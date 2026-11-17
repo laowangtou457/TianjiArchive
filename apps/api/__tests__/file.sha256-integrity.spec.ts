@@ -148,6 +148,11 @@ function makeHarness(opts: { objectBytes?: Buffer } = {}) {
     getBool: vi.fn(async () => false),
   };
 
+  // AuditLogService：文件查看留痕聚合（本文件不覆盖，给空结果兜底）
+  const auditLogService = {
+    query: vi.fn(async () => ({ list: [], total: 0, page: 1, size: 20 })),
+  };
+
   const service = new FileService(
     fileRepo as never,
     itemRepo as never,
@@ -156,6 +161,7 @@ function makeHarness(opts: { objectBytes?: Buffer } = {}) {
     dict as never,
     accessBuilder as never,
     paramService as never,
+    auditLogService as never,
     extractQueue as never,
   );
 
@@ -171,6 +177,7 @@ function makeHarness(opts: { objectBytes?: Buffer } = {}) {
     queueAdds,
     dict,
     paramService,
+    auditLogService,
     accessBuilder,
   };
 }

@@ -13,10 +13,12 @@ import {
   PreviewKind,
   QUEUE_NAME,
   resolvePreviewKind,
+  type AuditLogDto,
   type CompleteUploadRequest,
   type ElectronicFileDto,
   type ExtractJobPayload,
   type IntegrityCheckResult,
+  type PageResult,
   type PermissionSnapshot,
   type PresignRequest,
   type PresignResponse,
@@ -31,6 +33,7 @@ import { DocumentText } from '../../infra/database/entities/document-text.entity
 import { MinioService } from '../../infra/storage/storage.module';
 import { DictService } from '../dict/dict.service';
 import { ParamService } from '../param/param.service';
+import { AuditLogService } from '../audit/audit-log.service';
 import { PARAM_KEY } from '../../common/constants/enums';
 import { AccessFilterBuilder } from '../../common/access/access-filter.builder';
 
@@ -100,6 +103,7 @@ export class FileService {
     private readonly dict: DictService,
     private readonly accessBuilder: AccessFilterBuilder,
     private readonly paramService: ParamService,
+    private readonly auditLogService: AuditLogService,
     @InjectQueue(QUEUE_NAME.EXTRACT) private readonly extractQueue: Queue,
   ) {}
 
@@ -477,6 +481,45 @@ export class FileService {
       'response-content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
     });
     return { url, filename: file.filename, expiresIn: 300 };
+  }
+
+  // ==========================================================================
+  // 查看留痕（每个文件附带「谁在何时查看」记录，可导出）
+  // ==========================================================================
+
+  /**
+   * 某文件的查看留痕（预览 PREVIEW / 下载 DOWNLOAD 审计记录，分页倒序）。
+   *
+   * 数据源就是强制留痕的 audit_log（@Audit mandatory），这里按文件聚合视图化；
+   * 权限沿用文件本身的 READ 口径——能看文件就能看它的查看记录。
+   */
+  public async viewLogs(
+    fileId: string,
+    user: PermissionSnapshot,
+    page = 1,
+    size = 20,
+  ): Promise<PageResult<AuditLogDto>> {
+    await this.requireAccessibleFile(fileId, user);
+    return this.auditLogService.query({
+      objectType: 'ELECTRONIC_FILE',
+      objectId: fileId,
+      action: ['PREVIEW', 'DOWNLOAD'],
+      page: Math.max(1, page),
+      size: Math.min(100, Math.max(1, size)),
+    });
+  }
+
+  /** 导出某文件的查看留痕（CSV 行；audit 查询单页上限 100，超量走系统操作日志页导出） */
+  public async exportViewLogs(fileId: string, user: PermissionSnapshot): Promise<AuditLogDto[]> {
+    await this.requireAccessibleFile(fileId, user);
+    const result = await this.auditLogService.query({
+      objectType: 'ELECTRONIC_FILE',
+      objectId: fileId,
+      action: ['PREVIEW', 'DOWNLOAD'],
+      page: 1,
+      size: 100,
+    });
+    return result.list;
   }
 
   /**

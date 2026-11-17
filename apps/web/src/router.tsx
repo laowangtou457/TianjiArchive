@@ -22,6 +22,7 @@ import { KbPage } from './pages/KbPage';
 import { AppraisalPage } from './pages/appraisal/AppraisalPage';
 import { OpenPage } from './pages/open/OpenPage';
 import { WorkflowPage } from './pages/workflow/WorkflowPage';
+import { WorkflowGraphPage } from './pages/workflow/WorkflowGraphPage';
 import { KnowledgePage } from './pages/knowledge/KnowledgePage';
 import { WikiHomePage } from './pages/wiki/WikiHomePage';
 
@@ -102,6 +103,14 @@ export function AppRoutes(): ReactElement {
           element={
             <RequireAuth>
               <WorkflowPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/workflow/defs/:defId/graph"
+          element={
+            <RequireAuth>
+              <WorkflowGraphPage />
             </RequireAuth>
           }
         />

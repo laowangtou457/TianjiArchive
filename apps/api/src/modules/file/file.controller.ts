@@ -1,9 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   BUCKET,
+  type AuditLogDto,
   type CompleteUploadRequest,
   type ElectronicFileDto,
   type IntegrityCheckResult,
+  type PageResult,
   type PermissionSnapshot,
   type PresignRequest,
   type PresignResponse,
@@ -97,6 +100,66 @@ export class FileController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ url: string; filename: string; expiresIn: number }> {
     return this.fileService.download(id, user as PermissionSnapshot);
+  }
+
+  /** 查看留痕：该文件的预览/下载审计记录（谁、何时、结果，分页倒序） */
+  @Get(':id/view-logs')
+  @RequirePerm({
+    domain: 'FILE',
+    op: 'READ',
+    checkScope: false,
+    objectType: 'FILE',
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
+  public async viewLogs(
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
+    @CurrentUser() user?: AuthenticatedUser,
+  ): Promise<PageResult<AuditLogDto>> {
+    return this.fileService.viewLogs(
+      id,
+      (user ?? null) as PermissionSnapshot,
+      Number.parseInt(page ?? '1', 10) || 1,
+      Number.parseInt(size ?? '20', 10) || 20,
+    );
+  }
+
+  /** 导出该文件的查看留痕为 CSV（Excel 直接打开；导出行为本身也留痕） */
+  @Get(':id/view-logs/export')
+  @RequirePerm({
+    domain: 'FILE',
+    op: 'READ',
+    checkScope: false,
+    objectType: 'FILE',
+    altPerm: { domain: 'SEARCH', op: 'READ' },
+  })
+  @Audit({ action: 'EXPORT', objectType: 'ELECTRONIC_FILE', objectIdPath: 'params.id' })
+  public async exportViewLogs(
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user?: AuthenticatedUser,
+  ): Promise<string> {
+    const rows = await this.fileService.exportViewLogs(id, (user ?? null) as PermissionSnapshot);
+    const header = ['时间', '操作人', '动作', '结果', 'IP', '耗时(ms)'];
+    const lines = [header.join(',')];
+    for (const r of rows) {
+      lines.push(
+        [
+          r.createdAt,
+          r.username ?? '',
+          r.action === 'PREVIEW' ? '在线预览' : '下载',
+          r.result,
+          r.ip ?? '',
+          r.durationMs ?? '',
+        ]
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      );
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="view-logs-${id}.csv"`);
+    return `\uFEFF${lines.join('\n')}`;
   }
 
   /** 四性检测（P0 实现完整性：重算 SHA-256） */
