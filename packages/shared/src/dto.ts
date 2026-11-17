@@ -896,6 +896,34 @@ export interface DashboardSummary {
   recentSearches: string[];
 }
 
+/** 工作台待办事项（对齐泰坦首页「待办事项」，逐条可跳转处理） */
+export interface DashboardTodo {
+  id: string;
+  /** 业务分类，用于图标/配色 */
+  category: 'CATALOG' | 'BORROW' | 'WORKFLOW' | 'APPRAISAL' | 'BACKUP' | 'RECYCLE';
+  title: string;
+  detail: string;
+  /** 任务时间（ISO 8601） */
+  timestamp: string;
+  /** 点击后跳转的前端路由 */
+  path: string;
+  level: 'high' | 'medium' | 'low';
+  /** 同类聚合数量 */
+  count: number;
+}
+
+/** 工作台数据统计（对齐泰坦首页四个页签） */
+export interface DashboardStats {
+  /** 档案统计：未归收集 / 归档管理 / 案卷管理 / 资料管理 */
+  archive: Array<{ name: string; value: number }>;
+  /** 原文统计：已抽取 / 待抽取 / 抽取失败 / 无电子文件 */
+  fulltext: Array<{ name: string; value: number }>;
+  /** 利用统计：检索 / 预览 / 下载 / 借阅 */
+  usage: Array<{ name: string; value: number }>;
+  /** 最近一周登录情况（按天） */
+  login: Array<{ name: string; value: number }>;
+}
+
 // ============================================================================
 // KB 预留（P0 仅契约）
 // ============================================================================

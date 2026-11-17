@@ -12,7 +12,9 @@ import type {
   CreateCategoryDto,
   CreateDanghaoRuleDto,
   CreateFondsDto,
+  DashboardStats,
   DashboardSummary,
+  DashboardTodo,
   DanghaoRuleDto,
   DictItemDto,
   ElectronicFileDto,
@@ -93,6 +95,8 @@ export const authApi = {
 // ---------------------------------------------------------------- 工作台
 export const dashboardApi = {
   summary: (): Promise<DashboardSummary> => api.get('/dashboard/summary'),
+  todos: (): Promise<DashboardTodo[]> => api.get('/dashboard/todos'),
+  stats: (): Promise<DashboardStats> => api.get('/dashboard/stats'),
 };
 
 // ---------------------------------------------------------------- 全宗 / 机构

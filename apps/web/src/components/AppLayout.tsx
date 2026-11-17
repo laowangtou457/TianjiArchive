@@ -1,6 +1,7 @@
 import { useState, type ReactElement, type ReactNode } from 'react';
 import type { PermissionDomain, PermissionSnapshot } from '@tianji/shared';
 import { useAuthStore } from '../stores/authStore';
+import { recordFeatureVisit } from '../utils/recentFeatures';
 
 /** 一级模块（对齐泰坦五大业务域 + 天玑新增能力平级） */
 export interface MenuSection {
@@ -243,6 +244,14 @@ export function AppLayout(props: AppLayoutProps): ReactElement {
                         key={m.key}
                         href={m.path}
                         title={m.label}
+                        onClick={() =>
+                          recordFeatureVisit({
+                            key: m.key,
+                            label: m.label,
+                            path: m.path,
+                            icon: m.icon,
+                          })
+                        }
                         style={{
                           display: 'flex',
                           alignItems: 'center',
