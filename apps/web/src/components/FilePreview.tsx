@@ -149,11 +149,8 @@ export function FilePreview(props: FilePreviewProps): ReactElement {
                 本预览已按要求叠加水印，请勿外传
               </Alert>
             )}
-            {preview.watermarked && (preview.kind === 'TEXT' || preview.kind === 'EBOOK') && (
-              <Alert severity="info" sx={{ m: 1 }}>
-                {preview.watermarkTemplate || '本预览已按要求叠加水印'}，请勿外传
-              </Alert>
-            )}
+            {/* 阅读器（EPUB/TEXT）不显示水印提示条：模板占位符（{username}{datetime}）
+                无实际渲染价值，访问留痕已由后端 PREVIEW 审计强制记录 */}
 
             {preview.kind === 'PDF' && (
               <iframe
@@ -343,6 +340,14 @@ function EpubReader(props: { url: string; fontScale: number; locateText?: string
   const bookRef = useRef<Book | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const locatedRef = useRef(false);
+  /** 当前页起始 CFI（relocated 时记录，字号重排后回显用） */
+  const lastCfiRef = useRef<string | null>(null);
+  /** spine 总章数（locations 未生成时的进度估算用） */
+  const spineTotalRef = useRef(0);
+  /** 分页位置表是否已生成（生成后 percentage 才有精确值） */
+  const locationsReadyRef = useRef(false);
+  /** 字号重排串行化：连续点 A-/A+ 时逐个回显，避免并发 display 打架 */
+  const remapRef = useRef<Promise<unknown>>(Promise.resolve());
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errMsg, setErrMsg] = useState('');
   const [progress, setProgress] = useState(0);
@@ -355,10 +360,20 @@ function EpubReader(props: { url: string; fontScale: number; locateText?: string
     setState('loading');
     locatedRef.current = false;
     setLocating(false);
+    setProgress(0);
+    lastCfiRef.current = null;
+    spineTotalRef.current = 0;
+    locationsReadyRef.current = false;
+    remapRef.current = Promise.resolve();
     let book: Book | null = null;
     try {
       book = ePub(url);
       bookRef.current = book;
+      const bk = book;
+      void book.loaded.spine.then((spine) => {
+        const items = (spine as unknown as { spineItems?: unknown[] }).spineItems;
+        spineTotalRef.current = Array.isArray(items) ? items.length : 0;
+      });
       const rendition = book.renderTo(holder, {
         width: '100%',
         height: '68vh',
@@ -377,10 +392,63 @@ function EpubReader(props: { url: string; fontScale: number; locateText?: string
         setState('error');
         setErrMsg(err instanceof Error ? err.message : 'EPUB 加载失败（可能是跨域限制）');
       });
-      rendition.on('relocated', (loc: { start?: { percentage?: number } }) => {
-        const pct = loc?.start?.percentage;
-        if (typeof pct === 'number') setProgress(Math.round(pct * 100));
-      });
+      rendition.on(
+        'relocated',
+        (loc: {
+          start?: {
+            index?: number;
+            cfi?: string;
+            percentage?: number;
+            displayed?: { page?: number; total?: number };
+          };
+        }) => {
+          const start = loc?.start;
+          if (!start) return;
+          if (typeof start.cfi === 'string') lastCfiRef.current = start.cfi;
+          // 进度三级策略：① locations 生成后按 CFI 精确换算（页级精度）；
+          // ② start.percentage（部分版本有值）；③ 章节序号+页内比例估算兜底。
+          // ⚠️ 不调 locations.generate 时 percentage 恒为 0（epub.js 已知行为）。
+          let pct: number | null = null;
+          if (locationsReadyRef.current && typeof start.cfi === 'string') {
+            const v = (
+              bk.locations as unknown as { percentageFromCFI?: (c: string) => number | undefined }
+            ).percentageFromCFI?.(start.cfi);
+            if (typeof v === 'number' && v >= 0) pct = v;
+          }
+          if (pct === null && typeof start.percentage === 'number' && start.percentage > 0) {
+            pct = start.percentage;
+          }
+          if (pct === null && spineTotalRef.current > 0 && typeof start.index === 'number') {
+            const d = start.displayed;
+            const pageFrac = d && d.total ? Math.min(1, ((d.page ?? 1) - 1) / d.total) : 1;
+            pct = Math.min(1, (start.index + pageFrac) / spineTotalRef.current);
+          }
+          if (pct !== null) setProgress(Math.round(Math.min(1, Math.max(0, pct)) * 100));
+        },
+      );
+      // 后台生成分页位置表（约 1KB/锚点）：完成后进度条精确到页，
+      // 并立刻按当前位置刷新一次百分比
+      void bk.ready
+        .then(() => bk.locations.generate(1024))
+        .then(() => {
+          if (cancelled) return;
+          locationsReadyRef.current = true;
+          const cur = (
+            rendition as unknown as {
+              currentLocation?: () => { start?: { cfi?: string } };
+            }
+          ).currentLocation?.();
+          const cfi = cur?.start?.cfi ?? lastCfiRef.current;
+          if (typeof cfi === 'string') {
+            const v = (
+              bk.locations as unknown as { percentageFromCFI?: (c: string) => number | undefined }
+            ).percentageFromCFI?.(cfi);
+            if (typeof v === 'number' && v >= 0) {
+              setProgress(Math.round(Math.min(1, Math.max(0, v)) * 100));
+            }
+          }
+        })
+        .catch(() => undefined);
     } catch (err) {
       setState('error');
       setErrMsg(err instanceof Error ? err.message : 'EPUB 初始化失败');
@@ -399,10 +467,19 @@ function EpubReader(props: { url: string; fontScale: number; locateText?: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
-  // 字号热调节
+  // 字号热调节：改字号会触发整章重排，epub.js 内部页码映射会过期，
+  // 之后翻页就按旧映射跨页 → 实测小字号下从版权页回翻直接跳过两卷。
+  // 修法：字号变更后显式 display(当前CFI) 重排并重映射（串行化防连点打架）。
   useEffect(() => {
     if (state !== 'ready') return;
-    renditionRef.current?.themes.fontSize(`${Math.round(16 * fontScale)}px`);
+    const rendition = renditionRef.current;
+    if (!rendition) return;
+    rendition.themes.fontSize(`${Math.round(16 * fontScale)}px`);
+    const cfi = lastCfiRef.current;
+    if (!cfi) return;
+    remapRef.current = remapRef.current
+      .then(() => rendition.display(cfi))
+      .catch(() => undefined);
   }, [fontScale, state]);
 
   // 定位搜索内容：渲染就绪后在书内搜索并跳转（只执行一次，换文件由主 effect 复位）
