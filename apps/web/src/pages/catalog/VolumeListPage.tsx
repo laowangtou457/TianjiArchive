@@ -26,12 +26,15 @@ import {
   RETENTION_VALUES,
   SECURITY_LEVEL_VALUES,
   SECURITY_LEVEL_LABELS,
+  type ItemDto,
   type Retention,
   type SecurityLevel,
   type VolumeDto,
 } from '@tianji/shared';
 import { archiveApi, categoryApi, fondsApi } from '../../api';
-import { ApiError } from '../../api/client';
+import { ApiError, api } from '../../api/client';
+import { downloadCsv } from '../../utils/exportItems';
+import { printVolume } from '../../utils/printCatalog';
 import { AppLayout } from '../../components/AppLayout';
 import { ArchiveNo, SecurityChip } from '../../components/ArchiveNo';
 import { PermGate } from '../../components/PermGate';
@@ -127,6 +130,25 @@ export function VolumeListPage(): ReactElement {
 
   const fondsOptions = useMemo(() => fondsQuery.data ?? [], [fondsQuery.data]);
   const categoryOptions = useMemo(() => categoryQuery.data ?? [], [categoryQuery.data]);
+
+  /** 导出该卷条目（CSV，服务端按用户权限过滤） */
+  const exportVolumeItems = (v: VolumeDto): void => {
+    void downloadCsv({ volumeId: v.id }).catch((err: unknown) =>
+      enqueueSnackbar(err instanceof ApiError ? err.message : '导出失败', { variant: 'error' }),
+    );
+  };
+
+  /** 打印卷封 + 卷内目录：先取该卷条目（单页上限 1000，足够编目打印） */
+  const printVolumeEntry = (v: VolumeDto): void => {
+    void api
+      .get<{ list: ItemDto[] }>(`/archive/volumes/${v.id}/items`, { page: 1, size: 1000 })
+      .then((res) => printVolume(v, res.list))
+      .catch((err: unknown) =>
+        enqueueSnackbar(err instanceof ApiError ? err.message : '加载卷内条目失败', {
+          variant: 'error',
+        }),
+      );
+  };
 
   const submit = (): void => {
     setFormError(null);
@@ -229,10 +251,18 @@ export function VolumeListPage(): ReactElement {
                   />
                 </TableCell>
                 <TableCell>
-                  <Stack direction="row" spacing={0.5}>
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                     <Button size="small" href={`/catalog/${v.id}`}>
                       卷内文件
                     </Button>
+                    <PermGate domain="ITEM" op="READ">
+                      <Button size="small" onClick={() => exportVolumeItems(v)}>
+                        导出
+                      </Button>
+                      <Button size="small" onClick={() => printVolumeEntry(v)}>
+                        打印
+                      </Button>
+                    </PermGate>
                     <PermGate domain="ARCHIVE_CONFIRM" op="APPROVE">
                       <Tooltip title={v.status === 'ARCHIVED' ? '已归档' : '确认归档并级联卷内件'}>
                         <span>

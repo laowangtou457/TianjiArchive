@@ -7,12 +7,15 @@ import {
   Post,
   Query,
   Delete,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ArrayNotEmpty,
   IsArray,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -196,6 +199,53 @@ class BatchUpdateBodyDto {
   @ValidateNested()
   @Type(() => CreateItemBodyDto)
   public patch!: Partial<CreateItemBodyDto>;
+
+  /** set=直接赋值；replace=对文本字段做查找替换（见 service.batchUpdate） */
+  @IsOptional()
+  @IsIn(['set', 'replace'])
+  public mode?: 'set' | 'replace';
+
+  /** replace 模式下要被替换的旧值（按子串匹配） */
+  @IsOptional()
+  @IsString()
+  public search?: string;
+}
+
+/** 批量调序请求体（按档号/题名排序后批量写回序号） */
+class BatchReorderBodyDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: '请选择要调序的条目' })
+  @IsUUID('all', { each: true })
+  public ids!: string[];
+
+  @IsIn(['danghao', 'title'])
+  public by!: 'danghao' | 'title';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  public order?: 'asc' | 'desc';
+}
+
+/** 条目导出查询参数（ids 优先；否则按 volumeId + status + keyword 过滤） */
+export class ExportItemsQueryDto {
+  @IsOptional()
+  @IsString()
+  public ids?: string;
+
+  @IsOptional()
+  @IsUUID()
+  public volumeId?: string;
+
+  @IsOptional()
+  @IsString()
+  public status?: string;
+
+  @IsOptional()
+  @IsString()
+  public keyword?: string;
+
+  @IsIn(['csv', 'xml'])
+  public format!: 'csv' | 'xml';
 }
 
 class VoidReassignBodyDto {
@@ -376,6 +426,48 @@ export class ArchiveController {
     });
   }
 
+  /**
+   * 条目导出（CSV / XML）。
+   * ⚠️ 必须声明在 items/:id 之前，否则 GET /items/export 会被 :id 通配抢先命中。
+   * 强制留痕（EXPORT 属 MANDATORY_AUDIT_ACTIONS），返回原始 Buffer，
+   * 由 service 按用户密级/数据范围做行级过滤后生成。
+   */
+  @Get('items/export')
+  @RequirePerm({ domain: 'ITEM', op: 'READ', checkScope: false, objectType: 'ITEM' })
+  @Audit({
+    action: 'EXPORT',
+    objectType: 'ITEM',
+    mandatory: true,
+    objectIdPath: 'query.volumeId',
+  })
+  public async exportItems(
+    @Query() q: ExportItemsQueryDto,
+    @CurrentUser() user: PermissionSnapshot,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Buffer> {
+    const file = await this.service.exportItems(
+      {
+        ids: q.ids
+          ? q.ids
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : undefined,
+        volumeId: q.volumeId,
+        status: q.status,
+        keyword: q.keyword,
+        format: q.format,
+      },
+      user,
+    );
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+    );
+    return file.buffer;
+  }
+
   @Get('items/:id')
   @RequirePerm({
     domain: 'ITEM',
@@ -534,12 +626,22 @@ export class ArchiveController {
     return this.service.confirmItems(dto.ids ?? []);
   }
 
-  /** 批量修改（≥500 条） */
+  /** 批量修改（≥500 条）；mode=replace 时对文本字段做查找替换 */
   @Post('items/batch-update')
   @RequirePerm({ domain: 'ITEM', op: 'WRITE', checkScope: false, objectType: 'ITEM' })
   @Audit({ action: 'UPDATE', objectType: 'ITEM' })
   public async batchUpdate(@Body() dto: BatchUpdateBodyDto): Promise<BatchUpdateResult> {
     return this.service.batchUpdate(dto);
+  }
+
+  /** 批量调序：按档号/题名排序后批量写回序号（务必留痕） */
+  @Post('items/batch-reorder')
+  @RequirePerm({ domain: 'ITEM', op: 'WRITE', checkScope: false, objectType: 'ITEM' })
+  @Audit({ action: 'UPDATE', objectType: 'ITEM' })
+  public async batchReorder(
+    @Body() dto: BatchReorderBodyDto,
+  ): Promise<{ requested: number; updated: number }> {
+    return this.service.batchReorder(dto);
   }
 
   /**

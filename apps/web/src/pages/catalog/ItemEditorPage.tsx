@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   Dialog,
   DialogActions,
@@ -13,6 +14,8 @@ import {
   DialogTitle,
   Divider,
   IconButton,
+  Menu,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -40,7 +43,7 @@ import {
   type VolumeDto,
 } from '@tianji/shared';
 import { archiveApi, borrowApi, categoryApi, fileApi } from '../../api';
-import { ApiError } from '../../api/client';
+import { ApiError, api } from '../../api/client';
 import { AppLayout } from '../../components/AppLayout';
 import { ArchiveNo, SecurityChip } from '../../components/ArchiveNo';
 import { FilePreview } from '../../components/FilePreview';
@@ -48,6 +51,57 @@ import { FileUploader } from '../../components/FileUploader';
 import { MetadataForm, validateForm, type FormValues } from '../../components/MetadataForm';
 import { PermGate } from '../../components/PermGate';
 import { ViewLogsDialog } from '../../components/ViewLogsDialog';
+import { downloadCsv, downloadXml } from '../../utils/exportItems';
+import { printCatalog, printItems, printVolume } from '../../utils/printCatalog';
+
+/** 批量修改可选的字段（档号不可改，故不在列表内） */
+interface BatchFieldDef {
+  key: string;
+  label: string;
+  type: 'text' | 'date' | 'number' | 'enum';
+  options?: Array<{ value: string; label: string }>;
+}
+const BATCH_FIELDS: BatchFieldDef[] = [
+  { key: 'title', label: '题名', type: 'text' },
+  { key: 'responsible', label: '责任者', type: 'text' },
+  { key: 'docNo', label: '文号', type: 'text' },
+  { key: 'docDate', label: '形成日期', type: 'date' },
+  { key: 'classNo', label: '分类号', type: 'text' },
+  { key: 'note', label: '备注', type: 'text' },
+  { key: 'pages', label: '页数', type: 'number' },
+  {
+    key: 'retention',
+    label: '保管期限',
+    type: 'enum',
+    options: [
+      { value: 'PERM', label: '永久' },
+      { value: 'Y30', label: '定期 30 年' },
+      { value: 'Y10', label: '定期 10 年' },
+    ],
+  },
+  {
+    key: 'securityLevel',
+    label: '密级',
+    type: 'enum',
+    options: [
+      { value: 'PUBLIC', label: '公开' },
+      { value: 'INTERNAL', label: '内部' },
+      { value: 'SECRET', label: '秘密' },
+    ],
+  },
+];
+
+interface BatchMutationBody {
+  ids: string[];
+  patch: Record<string, unknown>;
+  mode?: 'set' | 'replace';
+  search?: string;
+}
+interface ReorderMutationBody {
+  ids: string[];
+  by: 'danghao' | 'title';
+  order: 'asc' | 'desc';
+}
 
 /**
  * 卷内文件著录（F-04）+ 电子文件挂接（F-08）+ 作废重编（合规唯一通道）。
@@ -93,9 +147,10 @@ export function ItemEditorPage(): ReactElement {
     enabled: Boolean(volumeId),
   });
 
-  // 换卷/换筛选时回到第一页
+  // 换卷/换筛选时回到第一页，并清空跨页多选
   useEffect(() => {
     setPage(1);
+    setCheckedIds([]);
   }, [volumeId, stageFilter]);
 
   const itemQuery = useQuery({
@@ -115,6 +170,18 @@ export function ItemEditorPage(): ReactElement {
   const [viewLogsFile, setViewLogsFile] = useState<ElectronicFileDto | null>(null);
   const [voidDialog, setVoidDialog] = useState(false);
   const [voidReason, setVoidReason] = useState('');
+
+  // ---------------------------------------------------------------- P5 批量操作 / 导出 / 打印
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [batchDialog, setBatchDialog] = useState<{ mode: 'set' | 'replace' } | null>(null);
+  const [batchField, setBatchField] = useState('title');
+  const [batchValue, setBatchValue] = useState('');
+  const [batchSearch, setBatchSearch] = useState('');
+  const [reorderDialog, setReorderDialog] = useState(false);
+  const [reorderBy, setReorderBy] = useState<'danghao' | 'title'>('danghao');
+  const [reorderOrder, setReorderOrder] = useState<'asc' | 'desc'>('asc');
+  const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
+  const [printAnchor, setPrintAnchor] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     const it = itemQuery.data ?? null;
@@ -293,6 +360,41 @@ export function ItemEditorPage(): ReactElement {
       enqueueSnackbar(err instanceof ApiError ? err.message : '驳回失败', { variant: 'error' }),
   });
 
+  // ---------------------------------------------------------------- P5 批量修改 / 替换 / 调序
+  const batchMutation = useMutation({
+    mutationFn: (body: BatchMutationBody) =>
+      api.post<{ requested: number; updated: number; failed: Array<{ id: string; reason: string }> }>(
+        '/archive/items/batch-update',
+        body,
+      ),
+    onSuccess: (r) => {
+      const bad = r.failed ?? [];
+      enqueueSnackbar(
+        `批量操作完成：成功 ${r.updated}/${r.requested} 条${bad.length ? `，失败 ${bad.length} 条（${bad[0].reason}）` : ''}`,
+        { variant: bad.length ? 'warning' : 'success' },
+      );
+      setBatchDialog(null);
+      setCheckedIds([]);
+      void qc.invalidateQueries({ queryKey: ['items', volumeId] });
+      void qc.invalidateQueries({ queryKey: ['item-stats', volumeId] });
+    },
+    onError: (err: unknown) =>
+      enqueueSnackbar(err instanceof ApiError ? err.message : '批量操作失败', { variant: 'error' }),
+  });
+
+  const reorderMutation = useMutation({
+    mutationFn: (body: ReorderMutationBody) =>
+      api.post<{ requested: number; updated: number }>('/archive/items/batch-reorder', body),
+    onSuccess: (r) => {
+      enqueueSnackbar(`调序完成：已写入 ${r.updated}/${r.requested} 条序号`, { variant: 'success' });
+      setReorderDialog(false);
+      setCheckedIds([]);
+      void qc.invalidateQueries({ queryKey: ['items', volumeId] });
+    },
+    onError: (err: unknown) =>
+      enqueueSnackbar(err instanceof ApiError ? err.message : '调序失败', { variant: 'error' }),
+  });
+
   // ---------------------------------------------------------------- 流转记录
   const stageLogsQuery = useQuery({
     queryKey: ['stageLogs', selected?.id],
@@ -331,6 +433,49 @@ export function ItemEditorPage(): ReactElement {
   // ---------------------------------------------------------------- 视图
   const volume: VolumeDto | undefined = volumeQuery.data;
   const readOnly = selected?.status === 'ARCHIVED' || selected?.status === 'VOID';
+
+  // 勾选优先：有勾选则针对勾选条目，否则针对当前卷/当前页全部
+  const selectedItems = filteredItems.filter((it) => checkedIds.includes(it.id));
+  const exportParams =
+    checkedIds.length > 0
+      ? { ids: checkedIds }
+      : { volumeId: volumeId ?? '' };
+  const printSource = checkedIds.length > 0 ? selectedItems : filteredItems;
+  const fieldOptions = batchDialog?.mode === 'replace'
+    ? BATCH_FIELDS.filter((f) => f.type === 'text')
+    : BATCH_FIELDS;
+  const currentField = BATCH_FIELDS.find((f) => f.key === batchField) ?? BATCH_FIELDS[0];
+
+  const showApiError = (err: unknown, fallback: string): void => {
+    enqueueSnackbar(err instanceof ApiError ? err.message : fallback, { variant: 'error' });
+  };
+
+  const runExport = (format: 'csv' | 'xml'): void => {
+    const task = format === 'xml' ? downloadXml(exportParams) : downloadCsv(exportParams);
+    void task.catch((err: unknown) => showApiError(err, '导出失败'));
+  };
+
+  const doPrintItems = (): void => {
+    if (printSource.length === 0) {
+      enqueueSnackbar('当前没有可打印的条目', { variant: 'warning' });
+      return;
+    }
+    printItems(printSource, volume ? `卷内文件目录 · ${volume.danghao}` : '档案条目目录');
+  };
+  const doPrintVolume = (): void => {
+    if (!volume) {
+      enqueueSnackbar('未加载案卷信息', { variant: 'warning' });
+      return;
+    }
+    printVolume(volume, printSource);
+  };
+  const doPrintCatalog = (): void => {
+    if (printSource.length === 0) {
+      enqueueSnackbar('当前没有可编目的条目', { variant: 'warning' });
+      return;
+    }
+    printCatalog(printSource);
+  };
 
   const doSave = (): void => {
     const errs = validateForm(itemFields, formValues);
@@ -371,21 +516,48 @@ export function ItemEditorPage(): ReactElement {
             <CardContent sx={{ p: 1 }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                 <Typography variant="h6">卷内文件</Typography>
-                <PermGate domain="ITEM" op="WRITE">
-                  <Button
-                    size="small"
-                    onClick={() => {
-                      setSelected(null);
-                      setFormValues({ docDate: new Date().toISOString().slice(0, 10) });
-                      setFormErrors({});
-                      setFiles([]);
-                    }}
-                  >
-                    + 新增
-                  </Button>
-                </PermGate>
+                <Stack direction="row" spacing={0.25}>
+                  <PermGate domain="ITEM" op="READ">
+                    <Button size="small" onClick={(e) => setExportAnchor(e.currentTarget)}>
+                      导出
+                    </Button>
+                    <Button size="small" onClick={(e) => setPrintAnchor(e.currentTarget)}>
+                      打印
+                    </Button>
+                  </PermGate>
+                  <PermGate domain="ITEM" op="WRITE">
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setSelected(null);
+                        setFormValues({ docDate: new Date().toISOString().slice(0, 10) });
+                        setFormErrors({});
+                        setFiles([]);
+                      }}
+                    >
+                      + 新增
+                    </Button>
+                  </PermGate>
+                </Stack>
               </Stack>
               <Divider sx={{ mb: 1 }} />
+              {/* 本页全选（跨页请逐页勾选；导出/打印仅作用于已勾选或当前页） */}
+              <Box sx={{ display: 'flex', alignItems: 'center', px: 0.25, mb: 0.5 }}>
+                <Checkbox
+                  size="small"
+                  checked={filteredItems.length > 0 && checkedIds.length === filteredItems.length}
+                  indeterminate={checkedIds.length > 0 && checkedIds.length < filteredItems.length}
+                  disabled={filteredItems.length === 0}
+                  onChange={(e) =>
+                    setCheckedIds(e.target.checked ? filteredItems.map((it) => it.id) : [])
+                  }
+                  inputProps={{ 'aria-label': '全选本页条目' }}
+                  sx={{ p: 0.25, mr: 0.25 }}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  全选本页（{filteredItems.length}）
+                </Typography>
+              </Box>
               {/* 阶段筛选（对齐泰坦：未处理/预归档/待审核/已归档/无需归档）
                   计数来自服务端全卷统计（item-stats），跨页准确 */}
               <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
@@ -422,7 +594,7 @@ export function ItemEditorPage(): ReactElement {
                     setFormErrors({});
                   }}
                   sx={{
-                    p: 0.75,
+                    p: 0.5,
                     mb: 0.5,
                     cursor: 'pointer',
                     borderRadius: 1,
@@ -430,13 +602,29 @@ export function ItemEditorPage(): ReactElement {
                     '&:hover': { bgcolor: '#f7fafc' },
                   }}
                 >
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <ArchiveNo value={it.danghao} />
-                    <Chip size="small" label={ITEM_STATUS_LABELS[it.status]} variant="outlined" />
+                  <Stack direction="row" spacing={0.25} alignItems="flex-start">
+                    <Checkbox
+                      size="small"
+                      checked={checkedIds.includes(it.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) =>
+                        setCheckedIds((prev) =>
+                          e.target.checked ? [...prev, it.id] : prev.filter((x) => x !== it.id),
+                        )
+                      }
+                      inputProps={{ 'aria-label': `选择 ${it.danghao}` }}
+                      sx={{ p: 0.25 }}
+                    />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <ArchiveNo value={it.danghao} />
+                        <Chip size="small" label={ITEM_STATUS_LABELS[it.status]} variant="outlined" />
+                      </Stack>
+                      <Typography variant="caption" noWrap display="block">
+                        {it.title}
+                      </Typography>
+                    </Box>
                   </Stack>
-                  <Typography variant="caption" noWrap display="block">
-                    {it.title}
-                  </Typography>
                 </Box>
               ))}
               {(itemsQuery.data?.total ?? 0) > PAGE_SIZE && (
@@ -854,6 +1042,260 @@ export function ItemEditorPage(): ReactElement {
             onClick={() => borrowMutation.mutate()}
           >
             提交申请
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ---------------------------------------------------------- P5 批量操作浮动栏 */}
+      {checkedIds.length > 0 && (
+        <Paper
+          elevation={6}
+          sx={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 24,
+            transform: 'translateX(-50%)',
+            zIndex: 1300,
+            px: 2,
+            py: 1,
+            maxWidth: '92vw',
+            overflowX: 'auto',
+          }}
+        >
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography variant="body2" noWrap>
+              已选 {checkedIds.length} 条
+            </Typography>
+            <Divider orientation="vertical" flexItem />
+            <PermGate domain="ITEM" op="WRITE">
+              <Button
+                size="small"
+                onClick={() => {
+                  setBatchValue('');
+                  setBatchSearch('');
+                  setBatchDialog({ mode: 'set' });
+                }}
+              >
+                批量修改
+              </Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  setBatchValue('');
+                  setBatchSearch('');
+                  setBatchDialog({ mode: 'replace' });
+                }}
+              >
+                批量替换
+              </Button>
+              <Button size="small" onClick={() => setReorderDialog(true)}>
+                调序
+              </Button>
+              <Button
+                size="small"
+                onClick={() =>
+                  enqueueSnackbar('批量著录暂未提供：请点击「+ 新增」逐件著录，后续将支持表格粘贴批量著录', {
+                    variant: 'info',
+                  })
+                }
+              >
+                批量插入
+              </Button>
+            </PermGate>
+            <Button size="small" onClick={() => runExport('csv')}>
+              导出 CSV
+            </Button>
+            <Button size="small" onClick={doPrintItems}>
+              打印所选
+            </Button>
+            <Button size="small" color="inherit" onClick={() => setCheckedIds([])}>
+              清空
+            </Button>
+          </Stack>
+        </Paper>
+      )}
+
+      {/* 导出菜单 */}
+      <Menu anchorEl={exportAnchor} open={Boolean(exportAnchor)} onClose={() => setExportAnchor(null)}>
+        <MenuItem
+          onClick={() => {
+            setExportAnchor(null);
+            runExport('csv');
+          }}
+        >
+          导出 CSV（Excel，UTF-8 BOM）
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setExportAnchor(null);
+            runExport('xml');
+          }}
+        >
+          导出 XML
+        </MenuItem>
+      </Menu>
+
+      {/* 打印菜单 */}
+      <Menu anchorEl={printAnchor} open={Boolean(printAnchor)} onClose={() => setPrintAnchor(null)}>
+        <MenuItem
+          onClick={() => {
+            setPrintAnchor(null);
+            doPrintItems();
+          }}
+        >
+          打印条目目录
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setPrintAnchor(null);
+            doPrintVolume();
+          }}
+        >
+          打印卷内目录（含卷封）
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setPrintAnchor(null);
+            doPrintCatalog();
+          }}
+        >
+          打印编目清册（含分类统计）
+        </MenuItem>
+      </Menu>
+
+      {/* 批量修改 / 替换 */}
+      <Dialog
+        open={Boolean(batchDialog)}
+        onClose={() => setBatchDialog(null)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>{batchDialog?.mode === 'replace' ? '批量替换字段值' : '批量修改字段'}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Alert severity="info">
+              将对已选 {checkedIds.length} 条记录执行
+              {batchDialog?.mode === 'replace' ? '查找替换（仅文本字段生效）' : '统一赋值'}；档号不可修改。
+            </Alert>
+            {batchDialog?.mode === 'replace' && (
+              <TextField
+                label="查找值（子串匹配）"
+                value={batchSearch}
+                onChange={(e) => setBatchSearch(e.target.value)}
+                fullWidth
+                helperText="在选定字段中查找该值，并替换为下方新值"
+              />
+            )}
+            <TextField
+              select
+              label="字段"
+              value={batchField}
+              onChange={(e) => {
+                setBatchField(e.target.value);
+                setBatchValue('');
+              }}
+              fullWidth
+            >
+              {fieldOptions.map((f) => (
+                <MenuItem key={f.key} value={f.key}>
+                  {f.label}
+                </MenuItem>
+              ))}
+            </TextField>
+            {currentField.type === 'enum' ? (
+              <TextField
+                select
+                label="新值"
+                value={batchValue}
+                onChange={(e) => setBatchValue(e.target.value)}
+                fullWidth
+              >
+                {(currentField.options ?? []).map((o) => (
+                  <MenuItem key={o.value} value={o.value}>
+                    {o.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+            ) : (
+              <TextField
+                label="新值"
+                type={currentField.type === 'number' ? 'number' : currentField.type === 'date' ? 'date' : 'text'}
+                value={batchValue}
+                onChange={(e) => setBatchValue(e.target.value)}
+                fullWidth
+                InputLabelProps={currentField.type === 'date' ? { shrink: true } : undefined}
+              />
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBatchDialog(null)}>取消</Button>
+          <Button
+            variant="contained"
+            disabled={
+              batchMutation.isPending ||
+              (batchDialog?.mode === 'replace' && batchSearch.trim() === '')
+            }
+            onClick={() => {
+              const mode = batchDialog?.mode ?? 'set';
+              const value =
+                currentField.type === 'number'
+                  ? batchValue === ''
+                    ? null
+                    : Number(batchValue)
+                  : batchValue;
+              batchMutation.mutate({
+                ids: checkedIds,
+                patch: { [batchField]: value },
+                ...(mode === 'replace' ? { mode, search: batchSearch } : {}),
+              });
+            }}
+          >
+            确认{batchDialog?.mode === 'replace' ? '替换' : '修改'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 批量调序 */}
+      <Dialog open={reorderDialog} onClose={() => setReorderDialog(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>批量调序（已选 {checkedIds.length} 条）</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Alert severity="info">
+              按选定字段排序后批量写回序号（存入条目扩展字段 sortNo，物理表无独立列）。
+            </Alert>
+            <TextField
+              select
+              label="排序依据"
+              value={reorderBy}
+              onChange={(e) => setReorderBy(e.target.value as 'danghao' | 'title')}
+              fullWidth
+            >
+              <MenuItem value="danghao">档号</MenuItem>
+              <MenuItem value="title">题名</MenuItem>
+            </TextField>
+            <TextField
+              select
+              label="顺序"
+              value={reorderOrder}
+              onChange={(e) => setReorderOrder(e.target.value as 'asc' | 'desc')}
+              fullWidth
+            >
+              <MenuItem value="asc">升序</MenuItem>
+              <MenuItem value="desc">降序</MenuItem>
+            </TextField>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReorderDialog(false)}>取消</Button>
+          <Button
+            variant="contained"
+            disabled={reorderMutation.isPending}
+            onClick={() =>
+              reorderMutation.mutate({ ids: checkedIds, by: reorderBy, order: reorderOrder })
+            }
+          >
+            确认调序
           </Button>
         </DialogActions>
       </Dialog>

@@ -41,3 +41,8 @@ export * from './wiki-space.entity';
 export * from './wiki-page.entity';
 export * from './wiki-page-version.entity';
 export * from './wiki-chunk.entity';
+export * from './import-batch.entity';
+export * from './retention-plan.entity';
+export * from './destroy-batch.entity';
+export * from './destroy-entry.entity';
+export * from './extension-record.entity';

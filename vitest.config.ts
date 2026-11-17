@@ -45,6 +45,7 @@ export default defineConfig({
     include: [
       'packages/shared/__tests__/**/*.spec.ts',
       'apps/api/__tests__/**/*.spec.ts',
+      'apps/api/src/modules/**/__tests__/**/*.spec.ts',
       'apps/cli-migrator/__tests__/**/*.spec.ts',
       'apps/extractor/__tests__/**/*.spec.ts',
     ],

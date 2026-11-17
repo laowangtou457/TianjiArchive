@@ -7,6 +7,9 @@ import {
   ItemStatus,
   ITEM_STAGE_ACTION_LABELS,
   ITEM_STAGE_TRANSITIONS,
+  ITEM_STATUS_LABELS,
+  RETENTION_LABELS,
+  SECURITY_LEVEL_LABELS,
   OpenFlag,
   Retention,
   SecurityLevel,
@@ -42,6 +45,36 @@ import { DanghaoRuleService } from '../danghao/rule.service';
 import { FondsService } from '../fonds/fonds.service';
 import { CategoryService } from '../category/category.service';
 import { RecycleService } from '../recycle/recycle.service';
+
+/** 批量修改扩展参数（共享层不改动，本地扩展 replace 语义） */
+interface BatchUpdateExtendedDto extends BatchUpdateItemsDto {
+  mode?: 'set' | 'replace';
+  search?: string;
+}
+
+/** 批量调序参数 */
+interface BatchReorderDto {
+  ids: string[];
+  by: 'danghao' | 'title';
+  order?: 'asc' | 'desc';
+}
+
+/** 条目导出参数 */
+export interface ExportItemsParams {
+  ids?: string[];
+  volumeId?: string;
+  status?: string;
+  keyword?: string;
+  format: 'csv' | 'xml';
+}
+
+/** 导出文件结果 */
+export interface ExportFileResult {
+  filename: string;
+  contentType: string;
+  buffer: Buffer;
+  count: number;
+}
 
 /**
  * 著录服务（F-03 案卷 / F-04 件级）。
@@ -688,7 +721,7 @@ export class ArchiveService {
    * 批量修改（NFR-7：≥500 条 <30s）。
    * 使用单条 UPDATE ... WHERE id = ANY(...) 完成，避免逐条往返。
    */
-  public async batchUpdate(dto: BatchUpdateItemsDto): Promise<BatchUpdateResult> {
+  public async batchUpdate(dto: BatchUpdateExtendedDto): Promise<BatchUpdateResult> {
     if (!Array.isArray(dto.ids) || dto.ids.length === 0) {
       throw new BizException(ErrorCode.BAD_REQUEST, '请选择要修改的条目');
     }
@@ -703,8 +736,19 @@ export class ArchiveService {
       throw new BizException(ErrorCode.DANGHAO_IMMUTABLE, '批量修改不允许变更档号');
     }
 
+    const replaceMode = (dto.mode ?? 'set') === 'replace';
+    if (replaceMode && (typeof dto.search !== 'string' || dto.search.length === 0)) {
+      throw new BizException(ErrorCode.BAD_REQUEST, '查找替换必须提供要查找的值');
+    }
+
     const setClauses: string[] = [];
-    const params: Record<string, unknown> = { ids: dto.ids };
+    // 位置参数：$1 固定为 ids 数组；其余值按顺序追加，避免命名参数未绑定。
+    const values: unknown[] = [];
+    const addParam = (value: unknown): string => {
+      values.push(value);
+      return `$${values.length + 1}`;
+    };
+
     const assignable: Array<keyof CreateItemDto> = [
       'title',
       'responsible',
@@ -719,11 +763,28 @@ export class ArchiveService {
       'note',
       'openFlag',
     ];
+    /** replace 仅对文本字段生效（数组/枚举/数字字段直接 set 没有替换语义） */
+    const textFields = new Set<string>([
+      'title',
+      'responsible',
+      'docNo',
+      'categoryCode',
+      'classNo',
+      'note',
+    ]);
+    const replacedColumns: string[] = [];
+
     for (const key of assignable) {
       const value = (patch as Record<string, unknown>)[key];
-      if (value !== undefined) {
-        params[key] = value;
-        setClauses.push(`"${this.camelToSnake(key)}" = :${key}`);
+      if (value === undefined) continue;
+      const col = this.camelToSnake(key);
+      if (replaceMode && textFields.has(key as string)) {
+        const searchParam = addParam(dto.search as string);
+        const valueParam = addParam(String(value));
+        setClauses.push(`"${col}" = replace("${col}", ${searchParam}, ${valueParam})`);
+        replacedColumns.push(col);
+      } else if (!replaceMode) {
+        setClauses.push(`"${col}" = ${addParam(value)}`);
       }
     }
     if (setClauses.length === 0) {
@@ -731,10 +792,17 @@ export class ArchiveService {
     }
     setClauses.push(`"updated_at" = now()`);
 
+    // replace 模式只更新「至少有一个目标字段包含 search」的行，updated 数才准确
+    let extraWhere = '';
+    if (replaceMode && replacedColumns.length > 0) {
+      const like = addParam(`%${dto.search}%`);
+      extraWhere = ` AND (${replacedColumns.map((c) => `"${c}" ILIKE ${like}`).join(' OR ')})`;
+    }
+
     const result = await this.itemRepo.query(
       `UPDATE "archive_item" SET ${setClauses.join(', ')}
-        WHERE "id" = ANY($1::uuid[]) AND "deleted" = FALSE AND "status" <> 'VOID'`,
-      [dto.ids],
+        WHERE "id" = ANY($1::uuid[]) AND "deleted" = FALSE AND "status" <> 'VOID'${extraWhere}`,
+      [dto.ids, ...values],
     );
 
     // 校验失败项：VOID/不存在
@@ -757,6 +825,217 @@ export class ArchiveService {
       failed,
     };
   }
+  /**
+   * 批量调序：按档号/题名排序后批量写回序号。
+   *
+   * 说明：archive_item 物理表没有 sort_no 列（见 entity 定义），为避免越权改动
+   * schema/迁移，序号落在既有 jsonb 字段 extra.sortNo 上；写入走 QueryBuilder
+   * 事务更新，任一行失败整批回滚。档号/题名均来自数据库白名单字段，排序值
+   * 只作为正整数参与 SQL，无注入面。
+   */
+  public async batchReorder(dto: BatchReorderDto): Promise<{ requested: number; updated: number }> {
+    const ids = Array.isArray(dto.ids) ? dto.ids : [];
+    if (ids.length === 0) throw new BizException(ErrorCode.BAD_REQUEST, '请选择要调序的条目');
+    if (ids.length > BATCH_UPDATE_MAX) {
+      throw new BizException(
+        ErrorCode.BAD_REQUEST,
+        `单次批量调序不得超过 ${BATCH_UPDATE_MAX} 条`,
+      );
+    }
+
+    const rows = (await this.itemRepo.find({
+      where: { id: In(ids), deleted: false },
+      select: ['id', 'danghao', 'title'],
+    })) as Array<Pick<ArchiveItem, 'id' | 'danghao' | 'title'>>;
+
+    const dir = dto.order === 'desc' ? -1 : 1;
+    const key = dto.by === 'title' ? 'title' : 'danghao';
+    rows.sort((a, b) => String(a[key] ?? '').localeCompare(String(b[key] ?? ''), 'zh-CN') * dir);
+
+    await this.dataSource.transaction(async (manager) => {
+      for (let i = 0; i < rows.length; i += 1) {
+        const sortNo = i + 1;
+        await manager
+          .createQueryBuilder()
+          .update(ArchiveItem)
+          .set({
+            extra: () =>
+              `jsonb_set(COALESCE("extra", '{}'::jsonb), '{sortNo}', to_jsonb(${sortNo}))`,
+          })
+          .where('id = :id', { id: rows[i].id })
+          .execute();
+      }
+    });
+
+    return { requested: ids.length, updated: rows.length };
+  }
+
+  /**
+   * 条目导出（CSV / XML）。
+   *
+   * 按 ids 精确导出，或按 volumeId + status + keyword 过滤导出；无论哪条路径，
+   * 都复用 listItems 的行级过滤口径（密级上限 + 数据范围），越权数据不入导出文件。
+   * CSV 带 UTF-8 BOM，Excel 直接打开中文不乱码。
+   */
+  public async exportItems(
+    dto: ExportItemsParams,
+    user?: PermissionSnapshot,
+  ): Promise<ExportFileResult> {
+    if (dto.format !== 'csv' && dto.format !== 'xml') {
+      throw new BizException(ErrorCode.BAD_REQUEST, '导出格式仅支持 csv / xml');
+    }
+    const ids = Array.isArray(dto.ids) ? dto.ids.filter(Boolean) : [];
+    if (ids.length > 5000) {
+      throw new BizException(ErrorCode.BAD_REQUEST, '单次导出不得超过 5000 条');
+    }
+    if (ids.length === 0 && !dto.volumeId) {
+      throw new BizException(ErrorCode.BAD_REQUEST, '请选择要导出的条目或案卷');
+    }
+
+    let rows: ArchiveItem[] = [];
+    let denied = false;
+    if (user) {
+      const levels = this.accessBuilder.levelsAtMost(user.maxSecurityLevel);
+      if (levels.length === 0) denied = true;
+      if (!denied && user.fondsIds !== null && user.fondsIds.length === 0) denied = true;
+      if (!denied) {
+        const qb = this.buildExportQuery(dto, ids, user, levels);
+        rows = await qb.getMany();
+      }
+    } else {
+      rows = await this.buildExportQuery(dto, ids, null, null).getMany();
+    }
+
+    const items = rows.map((r) => this.toItemDto(r));
+    const stamp = this.exportStamp();
+    if (dto.format === 'csv') {
+      return {
+        filename: `档案条目_${stamp}.csv`,
+        contentType: 'text/csv; charset=utf-8',
+        buffer: this.buildItemsCsv(items),
+        count: items.length,
+      };
+    }
+    return {
+      filename: `档案条目_${stamp}.xml`,
+      contentType: 'application/xml; charset=utf-8',
+      buffer: Buffer.from(this.buildItemsXml(items), 'utf8'),
+      count: items.length,
+    };
+  }
+
+  /** 构造导出查询（过滤条件与 listItems 对齐） */
+  private buildExportQuery(
+    dto: ExportItemsParams,
+    ids: string[],
+    user: PermissionSnapshot | null,
+    levels: string[] | null,
+  ) {
+    const qb = this.itemRepo.createQueryBuilder('i').where('i.deleted = FALSE');
+    if (ids.length > 0) qb.andWhere('i.id IN (:...ids)', { ids });
+    if (dto.volumeId) qb.andWhere('i.volumeId = :volumeId', { volumeId: dto.volumeId });
+    if (dto.status) qb.andWhere('i.status = :status', { status: dto.status });
+    if (dto.keyword) {
+      qb.andWhere('(i.title ILIKE :kw OR i.danghao ILIKE :kw OR i.responsible ILIKE :kw)', {
+        kw: `%${dto.keyword}%`,
+      });
+    }
+    if (user && levels) {
+      qb.andWhere('i.securityLevel IN (:...levels)', { levels });
+      if (user.fondsIds !== null) {
+        qb.andWhere('i.fondsId IN (:...scopeFonds)', { scopeFonds: user.fondsIds });
+      }
+    }
+    return qb.orderBy('i.danghao', 'ASC').take(5000);
+  }
+
+  private exportStamp(): string {
+    const d = new Date();
+    const p = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+
+  private buildItemsCsv(items: ItemDto[]): Buffer {
+    const headers = [
+      '档号',
+      '题名',
+      '责任者',
+      '文号',
+      '形成日期',
+      '年度',
+      '保管期限',
+      '密级',
+      '分类号',
+      '关键词',
+      '页数',
+      '备注',
+      '状态',
+    ];
+    const cell = (v: unknown): string => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.map(cell).join(',')];
+    for (const it of items) {
+      lines.push(
+        [
+          it.danghao,
+          it.title,
+          it.responsible,
+          it.docNo,
+          it.docDate,
+          it.year,
+          RETENTION_LABELS[it.retention],
+          SECURITY_LEVEL_LABELS[it.securityLevel],
+          it.classNo,
+          it.keywords.join(' '),
+          it.pages,
+          it.note,
+          ITEM_STATUS_LABELS[it.status],
+        ]
+          .map(cell)
+          .join(','),
+      );
+    }
+    // UTF-8 BOM：Excel 识别中文的关键
+    return Buffer.concat([Buffer.from('\uFEFF', 'utf8'), Buffer.from(lines.join('\r\n'), 'utf8')]);
+  }
+
+  private buildItemsXml(items: ItemDto[]): string {
+    const tag = (name: string, v: unknown): string => {
+      const s = String(v ?? '');
+      const esc = s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+      return `    <${name}>${esc}</${name}>`;
+    };
+    const body = items
+      .map((it) =>
+        [
+          '  <item>',
+          tag('danghao', it.danghao),
+          tag('title', it.title),
+          tag('responsible', it.responsible),
+          tag('docNo', it.docNo),
+          tag('docDate', it.docDate),
+          tag('year', it.year),
+          tag('retention', RETENTION_LABELS[it.retention]),
+          tag('securityLevel', SECURITY_LEVEL_LABELS[it.securityLevel]),
+          tag('classNo', it.classNo),
+          tag('keywords', it.keywords.join(' ')),
+          tag('pages', it.pages),
+          tag('note', it.note),
+          tag('status', ITEM_STATUS_LABELS[it.status]),
+          '  </item>',
+        ].join('\n'),
+      )
+      .join('\n');
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<items>\n${body}\n</items>`;
+  }
+
   /**
    * 作废重编 —— 档号唯一可变通道（PRD 合规底线②）。
    *
