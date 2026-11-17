@@ -48,6 +48,7 @@ export default defineConfig({
       'apps/api/src/modules/**/__tests__/**/*.spec.ts',
       'apps/cli-migrator/__tests__/**/*.spec.ts',
       'apps/extractor/__tests__/**/*.spec.ts',
+      'apps/web/src/**/__tests__/**/*.spec.ts',
     ],
     exclude: ['**/node_modules/**', '**/dist/**'],
     reporters: ['default'],

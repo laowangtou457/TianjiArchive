@@ -38,16 +38,10 @@ import type { DashboardTodo } from '@tianji/shared';
 import { dashboardApi } from '../api';
 import { AppLayout, MENU } from '../components/AppLayout';
 import { useAuthStore } from '../stores/authStore';
+import { getVisibleGuides, USER_GUIDES } from '../utils/userGuides';
 import { getRecentFeatures } from '../utils/recentFeatures';
 
-/** 用户操作指南 PDF（随前端静态资源发布，位于 apps/web/public/） */
-const GUIDES = [
-  { label: '用户操作指南', filename: '天玑档案管理系统-用户操作指南.pdf', desc: '全功能操作与 FAQ' },
-  { label: '利用平台指南', filename: '天玑档案管理系统-利用平台指南.pdf', desc: '检索 / 借阅 / 智能问答' },
-  { label: '管理维护指南', filename: '天玑档案管理系统-管理维护指南.pdf', desc: '部署 / 备份 / 运维' },
-] as const;
-
-const GUIDE_URL = encodeURI(`/${GUIDES[0].filename}`);
+const GUIDE_URL = encodeURI(`/${USER_GUIDES[0].filename}`);
 
 /** 待办分类 → 图标与配色 */
 const TODO_META: Record<DashboardTodo['category'], { color: string; icon: ReactElement }> = {
@@ -128,6 +122,9 @@ export function DashboardPage(): ReactElement {
   const todos = todoQuery.data ?? [];
   const stats = statsQuery.data;
 
+  const userRoles = profile?.roles ?? [];
+  const visibleGuides = getVisibleGuides(userRoles);
+
   const features = useMemo(() => {
     const stored = getRecentFeatures(12);
     if (stored.length > 0) return stored;
@@ -190,7 +187,7 @@ export function DashboardPage(): ReactElement {
       actions={
         <Stack direction="row" spacing={1} alignItems="center">
           <Chip size="small" label={`全宗授权：${profile?.fondsIds === null ? '全部' : `${profile?.fondsIds?.length ?? 0} 个`}`} />
-          <Button size="small" href={GUIDE_URL} download={GUIDES[0].filename} startIcon={<DownloadIcon />}>
+          <Button size="small" href={GUIDE_URL} download={USER_GUIDES[0].filename} startIcon={<DownloadIcon />}>
             操作指南
           </Button>
           <Button size="small" onClick={() => void logout()}>
@@ -295,7 +292,7 @@ export function DashboardPage(): ReactElement {
             <CardContent sx={{ pb: 1 }}>
               <Typography variant="h6" sx={{ mb: 0.5 }}>使用指南</Typography>
               <List dense disablePadding>
-                {GUIDES.map((g) => (
+                {visibleGuides.map((g) => (
                   <ListItemButton
                     key={g.filename}
                     component="a"
