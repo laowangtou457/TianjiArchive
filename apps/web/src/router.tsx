@@ -25,6 +25,30 @@ import { WorkflowPage } from './pages/workflow/WorkflowPage';
 import { WorkflowGraphPage } from './pages/workflow/WorkflowGraphPage';
 import { KnowledgePage } from './pages/knowledge/KnowledgePage';
 import { WikiHomePage } from './pages/wiki/WikiHomePage';
+import { FeaturePlaceholder } from './pages/FeaturePlaceholder';
+
+/** P5–P8 规划中功能的占位页配置（真实页面落地后逐个替换） */
+const PLACEHOLDERS: Record<string, { title: string; section: string; features: string[] }> = {
+  '/import': { title: '数据导入', section: '档案收集', features: ['建立批次', '模板配置', '数据导入', '确认', '记录明细'] },
+  '/receive': { title: '档案接收', section: '档案收集', features: ['上传接收包', '查看接收包', '确认', '退回', '打印', '检测方案'] },
+  '/datalink': { title: '电子文件挂接', section: '档案收集', features: ['建立批次', '规则设置', '上传挂接包', '预挂接管理', '确认挂接', '挂接明细'] },
+  '/retention': { title: '保管期限表', section: '档案管理', features: ['增加', '删除', '修改', '期限依据文档'] },
+  '/category': { title: '门类管理', section: '档案管理', features: ['门类模板化著录', '照片/录音/录像档案', '资料管理', '专业档案', '会计档案'] },
+  '/destroy': { title: '销毁批次', section: '档案管理', features: ['建立销毁批次', '审核', '执行销毁', '还原', '销毁清册'] },
+  '/transfer': { title: '移交管理', section: '档案管理', features: ['实体档案移交', '电子档案移交', '管理条目', '查看移交包', '下载', '检测方案'] },
+  '/erms': { title: '长期保管', section: '档案管理', features: ['查看封装包', '手工执行', '计划设置', '任务设置', '状态重置', '电子库房'] },
+  '/stkf': { title: '实体库房', section: '档案管理', features: ['增加库房', '库房初始化', '进入库房', '库位管理', '上架/下架'] },
+  '/auxentity': { title: '辅助实体', section: '档案管理', features: ['入库', '出库', '更新', '装具管理', '查看明细'] },
+  '/compilation': { title: '编研管理', section: '档案利用', features: ['编研成果', '发布/取消发布', '下载', '编研成果信息管理'] },
+  '/usage-log': { title: '利用日志', section: '档案利用', features: ['利用登记', '查看借阅单', '利用情况管理'] },
+  '/template': { title: '分类模板', section: '系统设置', features: ['档号设置', '主题词管理', '列表视图管理', '著录视图管理', '著录字段设置', '复制模板', '导入/导出模板'] },
+  '/metadata': { title: '元数据标准', section: '系统设置', features: ['元数据字段定义', '字段类型', '校验规则'] },
+  '/notice': { title: '公告管理', section: '系统设置', features: ['增加', '修改', '删除', '发布', '撤销'] },
+  '/download': { title: '下载中心', section: '系统设置', features: ['增加', '修改', '删除', '发布', '撤销', '下载'] },
+  '/report-design': { title: '报表管理', section: '系统设置', features: ['报表分类', '字段设置', '数据源设置', '报表样式上传下载', '隐藏/取消隐藏'] },
+  '/ercheck': { title: '四性检测', section: '系统安全', features: ['检测项设置', '增加/删除/修改', '真实性检测', '完整性检测', '可用性检测', '安全性检测'] },
+  '/ask': { title: '智能问答', section: 'RAG', features: ['自然语言提问', '带引用回答', '打开原件定位', '检索片段溯源'] },
+};
 
 /** 路由守卫：未登录跳 /login */
 function RequireAuth(props: { children: ReactElement }): ReactElement {
@@ -250,6 +274,18 @@ export function AppRoutes(): ReactElement {
             </RequireAuth>
           }
         />
+        {/* ------------------------------------------------ P5–P8 规划功能（占位，逐个替换为真实页） */}
+        {Object.entries(PLACEHOLDERS).map(([path, cfg]) => (
+          <Route
+            key={path}
+            path={path}
+            element={
+              <RequireAuth>
+                <FeaturePlaceholder title={cfg.title} section={cfg.section} features={cfg.features} />
+              </RequireAuth>
+            }
+          />
+        ))}
         <Route path="*" element={ready ? <Navigate to="/" replace /> : <Box sx={{ p: 4 }}>加载中…</Box>} />
       </Routes>
     </BrowserRouter>

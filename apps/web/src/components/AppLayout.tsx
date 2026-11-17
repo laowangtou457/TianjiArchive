@@ -2,44 +2,97 @@ import { useState, type ReactElement, type ReactNode } from 'react';
 import type { PermissionDomain, PermissionSnapshot } from '@tianji/shared';
 import { useAuthStore } from '../stores/authStore';
 
+/** 一级模块（对齐泰坦五大业务域 + 天玑新增能力平级） */
+export interface MenuSection {
+  key: string;
+  label: string;
+  icon: string;
+}
+
 /** 侧栏菜单项 */
 export interface MenuItem {
   key: string;
   label: string;
   path: string;
   icon: string;
-  /** 分组标题（同级相同则归为一组） */
-  group: string;
+  /** 归属的一级模块 key */
+  section: string;
   /**
    * 可见性所需的功能域（任一命中即显示；缺省 = 恒显示，如工作台）。
-   * 判据：grants[domain] 存在且 mode !== NONE。与后端角色权限矩阵同源，
-   * 菜单只做「引导」，服务端 PermissionGuard 仍是最终裁决。
+   * 判据：grants[domain] 存在且 mode !== NONE。菜单只做引导，
+   * 服务端 PermissionGuard 仍是最终裁决。
    */
   domains?: PermissionDomain[];
 }
 
+export const SECTIONS: MenuSection[] = [
+  { key: 'overview', label: '概览', icon: '◧' },
+  { key: 'collection', label: '档案收集', icon: '⇩' },
+  { key: 'management', label: '档案管理', icon: '▤' },
+  { key: 'utilization', label: '档案利用', icon: '⇄' },
+  { key: 'settings', label: '系统设置', icon: '⚙' },
+  { key: 'security', label: '系统安全', icon: '⛨' },
+  { key: 'rag', label: 'RAG', icon: '✧' },
+  { key: 'llmwiki', label: 'LLM Wiki', icon: '✎' },
+];
+
 /** 菜单定义（与路由表一致） */
 export const MENU: MenuItem[] = [
-  { key: 'dashboard', label: '工作台', path: '/', icon: '◧', group: '概览' },
-  { key: 'search', label: '综合检索', path: '/search', icon: '⌕', group: '检索利用', domains: ['SEARCH'] },
-  { key: 'borrow', label: '借阅管理', path: '/borrow', icon: '⇄', group: '检索利用', domains: ['BORROW_APPLY', 'BORROW_APPROVE', 'BORROW_RETURN'] },
-  { key: 'kb', label: '片段检索', path: '/kb', icon: '◈', group: '检索利用', domains: ['KB'] },
-  { key: 'knowledge', label: '档案知识库', path: '/knowledge', icon: '✧', group: '检索利用', domains: ['SEARCH', 'KB'] },
-  { key: 'wiki', label: '知识 Wiki', path: '/wiki', icon: '✎', group: '检索利用', domains: ['WIKI'] },
-  { key: 'workflow', label: '审批中心', path: '/workflow', icon: '⇉', group: '检索利用', domains: ['APPRAISAL', 'BORROW_APPROVE'] },
-  { key: 'fonds', label: '全宗管理', path: '/fonds', icon: '▤', group: '档案业务', domains: ['FONDS'] },
-  { key: 'catalog', label: '档案著录', path: '/catalog', icon: '▥', group: '档案业务', domains: ['VOLUME', 'ITEM'] },
-  { key: 'rule', label: '档号规则', path: '/rules', icon: '⌗', group: '档案业务', domains: ['DANGHAO_RULE'] },
-  { key: 'appraisal', label: '档案鉴定', path: '/appraisal', icon: '⚖', group: '档案业务', domains: ['APPRAISAL'] },
-  { key: 'open', label: '开放管理', path: '/open', icon: '⛨', group: '档案业务', domains: ['APPRAISAL'] },
-  { key: 'recycle', label: '回收站', path: '/recycle', icon: '⌫', group: '档案业务', domains: ['RECYCLE'] },
-  { key: 'report', label: '统计报表', path: '/report', icon: '◔', group: '统计与运维', domains: ['REPORT'] },
-  { key: 'backup', label: '备份恢复', path: '/backup', icon: '⌸', group: '统计与运维', domains: ['BACKUP'] },
-  { key: 'audit', label: '操作日志', path: '/audit', icon: '☰', group: '系统管理', domains: ['AUDIT_LOG'] },
-  { key: 'users', label: '用户与角色', path: '/system/users', icon: '☗', group: '系统管理', domains: ['USER'] },
-  { key: 'dict', label: '数据字典', path: '/system/dict', icon: '≡', group: '系统管理', domains: ['DICT'] },
-  { key: 'synonyms', label: '检索同义词', path: '/system/synonyms', icon: '⇋', group: '系统管理', domains: ['PARAM'] },
-  { key: 'params', label: '系统参数', path: '/system/params', icon: '⚙', group: '系统管理', domains: ['PARAM'] },
+  // ---------------------------------------------------------------- 概览
+  { key: 'dashboard', label: '工作台', path: '/', icon: '◧', section: 'overview' },
+
+  // ---------------------------------------------------------------- 档案收集
+  { key: 'catalog', label: '档案著录', path: '/catalog', icon: '▥', section: 'collection', domains: ['VOLUME', 'ITEM'] },
+  { key: 'import', label: '数据导入', path: '/import', icon: '⇩', section: 'collection', domains: ['IMPORT_EXPORT'] },
+  { key: 'receive', label: '档案接收', path: '/receive', icon: '⇥', section: 'collection', domains: ['IMPORT_EXPORT'] },
+  { key: 'datalink', label: '电子文件挂接', path: '/datalink', icon: '⊞', section: 'collection', domains: ['IMPORT_EXPORT'] },
+
+  // ---------------------------------------------------------------- 档案管理
+  { key: 'fonds', label: '全宗管理', path: '/fonds', icon: '▤', section: 'management', domains: ['FONDS'] },
+  { key: 'rules', label: '档号规则', path: '/rules', icon: '⌗', section: 'management', domains: ['DANGHAO_RULE'] },
+  { key: 'retention', label: '保管期限表', path: '/retention', icon: '⏳', section: 'management', domains: ['DANGHAO_RULE'] },
+  { key: 'category', label: '门类管理', path: '/category', icon: '▦', section: 'management', domains: ['PARAM'] },
+  { key: 'appraisal', label: '档案鉴定', path: '/appraisal', icon: '⚖', section: 'management', domains: ['APPRAISAL'] },
+  { key: 'open', label: '开放管理', path: '/open', icon: '⛨', section: 'management', domains: ['APPRAISAL'] },
+  { key: 'destroy', label: '销毁批次', path: '/destroy', icon: '✕', section: 'management', domains: ['RECYCLE'] },
+  { key: 'recycle', label: '回收站', path: '/recycle', icon: '⌫', section: 'management', domains: ['RECYCLE'] },
+  { key: 'transfer', label: '移交管理', path: '/transfer', icon: '⇄', section: 'management', domains: ['IMPORT_EXPORT'] },
+  { key: 'erms', label: '长期保管', path: '/erms', icon: '⏳', section: 'management', domains: ['BACKUP'] },
+  { key: 'stkf', label: '实体库房', path: '/stkf', icon: '▣', section: 'management', domains: ['PARAM'] },
+  { key: 'auxentity', label: '辅助实体', path: '/auxentity', icon: '◫', section: 'management', domains: ['PARAM'] },
+
+  // ---------------------------------------------------------------- 档案利用
+  { key: 'search', label: '综合检索', path: '/search', icon: '⌕', section: 'utilization', domains: ['SEARCH'] },
+  { key: 'borrow', label: '借阅管理', path: '/borrow', icon: '⇄', section: 'utilization', domains: ['BORROW_APPLY', 'BORROW_APPROVE', 'BORROW_RETURN'] },
+  { key: 'report', label: '统计报表', path: '/report', icon: '◔', section: 'utilization', domains: ['REPORT'] },
+  { key: 'compilation', label: '编研管理', path: '/compilation', icon: '✎', section: 'utilization', domains: ['COMPILATION'] },
+  { key: 'usagelog', label: '利用日志', path: '/usage-log', icon: '☰', section: 'utilization', domains: ['AUDIT_LOG'] },
+
+  // ---------------------------------------------------------------- 系统设置
+  { key: 'users', label: '用户与角色', path: '/system/users', icon: '☗', section: 'settings', domains: ['USER'] },
+  { key: 'workflow', label: '审批设置', path: '/workflow', icon: '⇉', section: 'settings', domains: ['APPRAISAL', 'BORROW_APPROVE'] },
+  { key: 'dict', label: '数据字典', path: '/system/dict', icon: '≡', section: 'settings', domains: ['DICT'] },
+  { key: 'synonyms', label: '检索同义词', path: '/system/synonyms', icon: '⇋', section: 'settings', domains: ['PARAM'] },
+  { key: 'params', label: '系统参数', path: '/system/params', icon: '⚙', section: 'settings', domains: ['PARAM'] },
+  { key: 'template', label: '分类模板', path: '/template', icon: '▦', section: 'settings', domains: ['PARAM'] },
+  { key: 'metadata', label: '元数据标准', path: '/metadata', icon: '⊞', section: 'settings', domains: ['PARAM'] },
+  { key: 'notice', label: '公告管理', path: '/notice', icon: '◈', section: 'settings', domains: ['PARAM'] },
+  { key: 'download', label: '下载中心', path: '/download', icon: '⇩', section: 'settings', domains: ['PARAM'] },
+  { key: 'reportdesign', label: '报表管理', path: '/report-design', icon: '▤', section: 'settings', domains: ['REPORT'] },
+
+  // ---------------------------------------------------------------- 系统安全
+  { key: 'audit', label: '操作日志', path: '/audit', icon: '☰', section: 'security', domains: ['AUDIT_LOG'] },
+  { key: 'backup', label: '备份恢复', path: '/backup', icon: '⌸', section: 'security', domains: ['BACKUP'] },
+  { key: 'ercheck', label: '四性检测', path: '/ercheck', icon: '✓', section: 'security', domains: ['BACKUP'] },
+  { key: 'roles', label: '权限设置', path: '/system/roles', icon: '☑', section: 'security', domains: ['USER'] },
+
+  // ---------------------------------------------------------------- RAG（新增能力，平级）
+  { key: 'knowledge', label: '档案知识库', path: '/knowledge', icon: '✧', section: 'rag', domains: ['SEARCH', 'KB'] },
+  { key: 'kb', label: '片段检索', path: '/kb', icon: '◈', section: 'rag', domains: ['KB'] },
+  { key: 'ask', label: '智能问答', path: '/ask', icon: '❔', section: 'rag', domains: ['SEARCH'] },
+
+  // ---------------------------------------------------------------- LLM Wiki（新增能力，平级）
+  { key: 'wiki', label: '知识 Wiki', path: '/wiki', icon: '✎', section: 'llmwiki', domains: ['WIKI'] },
 ];
 
 /** 菜单可见性：任一声明域为非 NONE 授权即显示（工作台无声明恒显示） */
@@ -66,15 +119,25 @@ export interface AppLayoutProps {
 }
 
 /**
- * 应用主框架：左侧导航 + 顶部栏 + 内容区。
- * 高密度政务风格：固定 220px 侧栏，内容区自适应，最小支持 1366×768（PRD §7.4）。
- * 侧栏菜单按当前用户 grants 过滤——不同角色看到不同模块（检索利用/档案业务/系统管理）。
+ * 应用主框架：左侧两级导航（一级模块可折叠）+ 顶部栏 + 内容区。
+ * 一级模块对齐泰坦五大业务域（收集/管理/利用/设置/安全），
+ * 天玑新增的 RAG、LLM Wiki 作为平级模块。
+ * 侧栏按当前用户 grants 过滤；服务端 PermissionGuard 仍是最终裁决。
  */
 export function AppLayout(props: AppLayoutProps): ReactElement {
   const { title, subtitle, actions, children } = props;
   const profile = useAuthStore((s) => s.profile);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('tianji.sidebarCollapsed') === '1';
+  });
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('tianji.expandedSections');
+      if (raw) return new Set<string>(JSON.parse(raw) as string[]);
+    } catch {
+      /* ignore */
+    }
+    return new Set(SECTIONS.map((s) => s.key));
   });
 
   const toggle = (): void => {
@@ -83,8 +146,21 @@ export function AppLayout(props: AppLayoutProps): ReactElement {
     localStorage.setItem('tianji.sidebarCollapsed', next ? '1' : '0');
   };
 
+  const toggleSection = (key: string): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      localStorage.setItem('tianji.expandedSections', JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   const visible = MENU.filter((m) => menuVisible(profile, m));
-  const groups = Array.from(new Set(visible.map((m) => m.group)));
+  const sections = SECTIONS.map((s) => ({
+    section: s,
+    items: visible.filter((m) => m.section === s.key),
+  })).filter((g) => g.items.length > 0);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -124,50 +200,70 @@ export function AppLayout(props: AppLayoutProps): ReactElement {
         </div>
 
         <nav style={{ padding: '8px 0', flex: 1 }}>
-          {groups.map((g) => (
-            <div key={g}>
-              {!collapsed && (
-                <div
+          {sections.map(({ section, items }) => {
+            const open = collapsed || expanded.has(section.key);
+            return (
+              <div key={section.key} style={{ marginBottom: 2 }}>
+                <button
+                  type="button"
+                  onClick={() => toggleSection(section.key)}
+                  title={section.label}
                   style={{
-                    padding: '8px 16px 4px',
-                    fontSize: 10,
-                    letterSpacing: 1,
-                    color: 'rgba(226,232,240,.55)',
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: collapsed ? '8px 18px' : '8px 16px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'rgba(226,232,240,.62)',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    letterSpacing: 0.5,
+                    textAlign: 'left',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  {g}
-                </div>
-              )}
-              {visible.filter((m) => m.group === g).map((m) => {
-                const active =
-                  m.path === '/'
-                    ? window.location.pathname === '/'
-                    : window.location.pathname.startsWith(m.path);
-                return (
-                  <a
-                    key={m.key}
-                    href={m.path}
-                    title={m.label}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: collapsed ? '9px 18px' : '9px 16px',
-                      color: active ? '#ffffff' : 'rgba(226,232,240,.82)',
-                      backgroundColor: active ? 'rgba(79,110,247,.28)' : 'transparent',
-                      borderLeft: active ? '3px solid #4f6ef7' : '3px solid transparent',
-                      textDecoration: 'none',
-                      fontSize: 13,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    <span style={{ width: 14, textAlign: 'center', opacity: 0.9 }}>{m.icon}</span>
-                    {!collapsed && <span>{m.label}</span>}
-                  </a>
-                );
-              })}
-            </div>
-          ))}
+                  <span style={{ width: 14, textAlign: 'center' }}>{section.icon}</span>
+                  {!collapsed && (
+                    <>
+                      <span style={{ flex: 1 }}>{section.label}</span>
+                      <span style={{ fontSize: 9, opacity: 0.7 }}>{open ? '▾' : '▸'}</span>
+                    </>
+                  )}
+                </button>
+                {open &&
+                  items.map((m) => {
+                    const active =
+                      m.path === '/'
+                        ? window.location.pathname === '/'
+                        : window.location.pathname.startsWith(m.path);
+                    return (
+                      <a
+                        key={m.key}
+                        href={m.path}
+                        title={m.label}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: collapsed ? '7px 18px' : '6px 16px 6px 30px',
+                          color: active ? '#ffffff' : 'rgba(226,232,240,.82)',
+                          backgroundColor: active ? 'rgba(79,110,247,.28)' : 'transparent',
+                          borderLeft: active ? '3px solid #4f6ef7' : '3px solid transparent',
+                          textDecoration: 'none',
+                          fontSize: 13,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <span style={{ width: 14, textAlign: 'center', opacity: 0.9 }}>{m.icon}</span>
+                        {!collapsed && <span>{m.label}</span>}
+                      </a>
+                    );
+                  })}
+              </div>
+            );
+          })}
         </nav>
 
         <button
