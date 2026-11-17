@@ -16,9 +16,15 @@ import {
   Typography,
 } from '@mui/material';
 import ReactECharts from 'echarts-for-react';
+import DownloadIcon from '@mui/icons-material/Download';
+import MenuBookIcon from '@mui/icons-material/MenuBook';
 import { dashboardApi } from '../api';
 import { AppLayout } from '../components/AppLayout';
 import { useAuthStore } from '../stores/authStore';
+
+/** 用户操作指南 PDF（随前端静态资源发布，位于 apps/web/public/） */
+const GUIDE_FILENAME = '天玑档案管理系统-用户操作指南.pdf';
+const GUIDE_URL = encodeURI(`/${GUIDE_FILENAME}`);
 
 /** 指标卡 */
 function StatCard(props: { label: string; value: number | string; hint?: string; color?: string }): ReactElement {
@@ -80,6 +86,9 @@ export function DashboardPage(): ReactElement {
       actions={
         <Stack direction="row" spacing={1} alignItems="center">
           <Chip size="small" label={`全宗授权：${profile?.fondsIds === null ? '全部' : `${profile?.fondsIds?.length ?? 0} 个`}`} />
+          <Button size="small" href={GUIDE_URL} download={GUIDE_FILENAME} startIcon={<DownloadIcon />}>
+            操作指南
+          </Button>
           <Button size="small" onClick={() => void logout()}>
             退出
           </Button>
@@ -100,6 +109,47 @@ export function DashboardPage(): ReactElement {
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard label="鉴定到期（P1 预留）" value={data?.appraisalDue ?? 0} color="#718096" />
+        </Grid>
+
+        {/* 用户操作指南下载入口：PDF 随前端静态资源发布，可离线阅读 / 分发 */}
+        <Grid item xs={12}>
+          <Card sx={{ background: 'linear-gradient(90deg,#1a2b7a 0%,#3f5bd6 100%)', color: '#fff' }}>
+            <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1.5}
+                alignItems={{ xs: 'flex-start', sm: 'center' }}
+                justifyContent="space-between"
+              >
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <MenuBookIcon sx={{ fontSize: 36, opacity: 0.9 }} />
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                      用户操作指南
+                    </Typography>
+                    <Typography variant="body2" sx={{ opacity: 0.88 }}>
+                      登录、著录、检索、借阅、审批、RAG / Wiki 等全部功能的操作说明与 FAQ（PDF · 18 页）
+                    </Typography>
+                  </Box>
+                </Stack>
+                <Button
+                  variant="contained"
+                  disableElevation
+                  href={GUIDE_URL}
+                  download={GUIDE_FILENAME}
+                  startIcon={<DownloadIcon />}
+                  sx={{
+                    bgcolor: '#fff',
+                    color: '#1a2b7a',
+                    whiteSpace: 'nowrap',
+                    '&:hover': { bgcolor: '#eef1ff' },
+                  }}
+                >
+                  下载操作指南
+                </Button>
+              </Stack>
+            </CardContent>
+          </Card>
         </Grid>
 
         <Grid item xs={12} md={4}>
