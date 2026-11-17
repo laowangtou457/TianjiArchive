@@ -229,25 +229,41 @@ function normForLocate(s: string, stripPunct: boolean): string {
 }
 
 /**
- * 由待定位文本构造候选串：从长到短取前缀（整串太长容易因抽取差异对不上）。
- * 先试仅去空白的原形，再试去标点的宽松形；最短候选 12 字，避免误跳到无关处。
+ * 由待定位文本构造搜索锚点。
+ *
+ * ⚠️ 不能直接拿「内容前缀」当锚点：档案全文抽取的切片头部常拼着 Gutenberg
+ * 英文元数据（"Language: Chinese…"），这些字在原书 EPUB 里根本不存在，
+ * 拿它搜索必然全书落空。因此锚点按可靠性排序：
+ *   1. 章节标题锚（第X回/章/卷… + 题名，最长 50 字）—— 最强定位信号；
+ *   2. 首个 ≥10 连续汉字段 —— 跳过开头拉丁字母/标点的元数据；
+ *   3. 原文前缀兜底（内容本身干净时仍可用）。
  */
 function locateNeedles(text: string): string[] {
-  const out = new Set<string>();
-  for (const stripPunct of [false, true]) {
-    const t = normForLocate(text, stripPunct);
-    if (t.length === 0) continue;
-    for (const n of [60, 36, 20, 12]) {
-      if (t.length >= n) out.add(t.slice(0, n));
-    }
-    if (t.length < 12) out.add(t);
+  const out: string[] = [];
+  const compact = text.replace(/\s+/g, '');
+  const heading = compact.match(
+    /第[0-9〇零一二三四五六七八九十百千两]+[回章节節卷篇][^。！？!?]{2,50}/,
+  );
+  if (heading && heading[0].length >= 8) {
+    // 16 字短锚：正文里「第一回 XXX」独立成行（比 50 字长锚更可能逐字命中标题元素）
+    out.push(heading[0].slice(0, 16));
+    if (heading[0].length > 16) out.push(heading[0]);
   }
-  return [...out];
+  const hanRun = compact.match(/[\u4e00-\u9fff]{10,}/);
+  if (hanRun) out.push(hanRun[0].slice(0, 60));
+  for (const n of [60, 36, 20, 12]) {
+    if (compact.length >= n) out.push(compact.slice(0, n));
+  }
+  if (compact.length > 0 && compact.length < 12) out.push(compact);
+  return [...new Set(out)].filter((s) => s.length >= 8);
 }
 
 /**
  * 在 EPUB 各章节正文中搜索定位文本，命中后跳转到该处并叠加高亮。
- * 逐章加载文档搜索：单章失败跳过；全书搜不到时保持原位置（封面）。
+ *
+ * 匹配策略：同章内多个元素都包含锚点时（如目录页 vs 正文标题）取**文本最短**
+ * 的元素——正文里「第一回 XXX」独立成行，最短即最准。封面/目录等非正文章节
+ * （linear=false）跳过。全书搜不到时保持原位置。
  */
 async function locateInBook(
   book: Book,
@@ -256,18 +272,20 @@ async function locateInBook(
 ): Promise<boolean> {
   const needles = locateNeedles(locateText);
   if (needles.length === 0) return false;
-  // 高亮样式注入 iframe（themes.default 的 CSS 会进入每个内容文档）
+  // 高亮样式注入 iframe（override 追加进默认主题，不覆盖字号/缩进设置）
   try {
-    rendition.themes.default({ '.tj-locate': { 'background-color': 'rgba(255, 200, 0, 0.4)' } });
+    rendition.themes.override('.tj-locate', 'background-color: rgba(255, 200, 0, 0.4)');
   } catch {
     /* 忽略主题注入失败 */
   }
   await book.loaded.spine;
-  const items = (book.spine as unknown as { spineItems?: unknown[] }).spineItems ?? [];
+  const items = (book.spine as unknown as { spineItems?: Array<Record<string, unknown>> })
+    .spineItems ?? [];
   // 先在段落级元素找（精确），再退回容器级 div（整章容器匹配也能跳对章）
   const selectorPasses = ['p, li, blockquote, td, h1, h2, h3, h4, h5, h6', 'div, section'];
   for (const spineItem of items) {
-    const item = spineItem as {
+    if (spineItem.linear === false) continue; // 封面/目录等非正文章节
+    const item = spineItem as unknown as {
       load: (req?: unknown) => Promise<unknown>;
       unload: () => Promise<void> | void;
       cfiFromElement: (el: Element) => string;
@@ -275,28 +293,30 @@ async function locateInBook(
     try {
       const doc = (await item.load(book.load)) as unknown as Document;
       try {
+        let best: { el: HTMLElement; tLen: number } | null = null;
         for (const selector of selectorPasses) {
           const elements = Array.from(doc.querySelectorAll(selector));
           for (const el of elements) {
             const raw = el.textContent ?? '';
             if (raw.trim().length === 0) continue;
-            for (const stripPunct of [false, true]) {
-              const t = normForLocate(raw, stripPunct);
-              const needle = needles.find((n) => n.length >= 8 && t.includes(n));
-              if (needle) {
-                const cfi = item.cfiFromElement(el as HTMLElement);
-                if (cfi) {
-                  await item.unload();
-                  await rendition.display(cfi);
-                  try {
-                    rendition.annotations.highlight(cfi, {}, () => undefined, 'tj-locate');
-                  } catch {
-                    /* 高亮失败不影响跳转 */
-                  }
-                  return true;
-                }
-              }
+            const t = normForLocate(raw, false);
+            if (!needles.some((n) => t.includes(n))) continue;
+            if (!best || t.length < best.tLen) {
+              best = { el: el as HTMLElement, tLen: t.length };
             }
+          }
+        }
+        if (best) {
+          const cfi = item.cfiFromElement(best.el);
+          if (cfi) {
+            await item.unload();
+            await rendition.display(cfi);
+            try {
+              rendition.annotations.highlight(cfi, {}, () => undefined, 'tj-locate');
+            } catch {
+              /* 高亮失败不影响跳转 */
+            }
+            return true;
           }
         }
       } finally {
@@ -408,7 +428,11 @@ function EpubReader(props: { url: string; fontScale: number; locateText?: string
   return (
     <Box sx={{ position: 'relative', backgroundColor: '#fbf7f0' }}>
       {state === 'loading' && (
-        <Stack alignItems="center" justifyContent="center" sx={{ height: 380 }}>
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          sx={{ position: 'absolute', inset: 0, height: '68vh', backgroundColor: '#fbf7f0', zIndex: 1 }}
+        >
           <CircularProgress size={26} />
           <Typography variant="body2" sx={{ mt: 2 }}>
             正在打开图书…
@@ -429,11 +453,28 @@ function EpubReader(props: { url: string; fontScale: number; locateText?: string
         </Box>
       )}
       {state === 'error' && (
-        <Box sx={{ p: 2 }}>
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            height: '68vh',
+            backgroundColor: '#fbf7f0',
+            zIndex: 1,
+            p: 2,
+          }}
+        >
           <Alert severity="warning">图书加载失败：{errMsg}。可申请下载原件阅读。</Alert>
         </Box>
       )}
-      <div ref={holderRef} style={{ height: '68vh', display: state === 'ready' ? 'block' : 'none' }} />
+      <div
+        ref={holderRef}
+        style={{
+          height: '68vh',
+          // ⚠️ 不能用 display:none：epub.js 在隐藏容器上 renderTo 量到 0 尺寸，
+          // 首屏会渲染成整页空白（翻一页才恢复）。用 visibility + 覆盖层替代。
+          visibility: state === 'error' ? 'hidden' : 'visible',
+        }}
+      />
       {state === 'ready' && (
         <>
           <Box
