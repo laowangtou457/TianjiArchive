@@ -443,8 +443,8 @@ export class ArchiveController {
   public async exportItems(
     @Query() q: ExportItemsQueryDto,
     @CurrentUser() user: PermissionSnapshot,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<Buffer> {
+    @Res() res: Response,
+  ): Promise<void> {
     const file = await this.service.exportItems(
       {
         ids: q.ids
@@ -465,7 +465,7 @@ export class ArchiveController {
       'Content-Disposition',
       `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
     );
-    return file.buffer;
+    res.send(file.buffer);
   }
 
   @Get('items/:id')
