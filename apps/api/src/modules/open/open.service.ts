@@ -213,6 +213,47 @@ export class OpenService implements OnModuleInit {
   }
 
   /**
+   * 跨批次按结论查询明细 —— 对齐泰坦「未处理 / 条目开放 / 原文开放 / 不开放 / 再审查」五个页签。
+   * 只取未应用（applied_at IS NULL）且批次未作废的记录，避免把历史批次重复计入。
+   */
+  public async decisionQueue(
+    query: OpenReviewQuery,
+  ): Promise<{
+    items: Array<OpenReviewDto & { batchNo: string | null }>;
+    total: number;
+    page: number;
+    size: number;
+  }> {
+    const page = Math.max(1, Number(query.page ?? 1));
+    const size = Math.min(200, Math.max(1, Number(query.size ?? 20)));
+    const qb = this.reviewRepo
+      .createQueryBuilder('r')
+      .innerJoin(OpenBatch, 'b', 'b.id = r.batch_id')
+      .where('r.applied_at IS NULL')
+      .andWhere(`b.status <> 'CANCELLED'`);
+    if (query.decision) qb.andWhere('r.decision = :d', { d: query.decision });
+    if (query.keyword) {
+      qb.andWhere('(r.danghao ILIKE :kw OR r.title ILIKE :kw)', { kw: `%${query.keyword}%` });
+    }
+    qb.orderBy('r.danghao', 'ASC')
+      .skip((page - 1) * size)
+      .take(size);
+    const [rows, total] = await qb.getManyAndCount();
+
+    const batchIds = [...new Set(rows.map((r) => r.batchId))];
+    const batches =
+      batchIds.length > 0 ? await this.batchRepo.find({ where: { id: In(batchIds) } }) : [];
+    const batchNoMap = new Map(batches.map((b) => [b.id, b.batchNo]));
+    const names = await this.userNameMap(rows.map((r) => r.reviewerId));
+    return {
+      items: rows.map((r) => ({ ...this.toReviewDto(r, names), batchNo: batchNoMap.get(r.batchId) ?? null })),
+      total,
+      page,
+      size,
+    };
+  }
+
+  /**
    * 提交审核结论（批量）。
    * APPROVING 状态下拒绝再改：审批看到的必须是最终结论。
    */
@@ -234,7 +275,7 @@ export class OpenService implements OnModuleInit {
     if (ids.length > BATCH_LIMIT) {
       throw new BizException(ErrorCode.BAD_REQUEST, `单次审核不得超过 ${BATCH_LIMIT} 条`);
     }
-    if (!OPEN_DECISION_SCOPE[dto.decision] && dto.decision !== 'REREVIEW') {
+    if (!OPEN_DECISION_SCOPE[dto.decision] && dto.decision !== 'REREVIEW' && dto.decision !== 'PENDING') {
       throw new BizException(ErrorCode.BAD_REQUEST, '审核结论不合法');
     }
     const reason = dto.reason?.trim() || null;
@@ -250,7 +291,8 @@ export class OpenService implements OnModuleInit {
       .update(OpenReview)
       .set({
         decision: dto.decision,
-        reason,
+        // 撤销结论（PENDING）不保留理由，避免残留上次的「不开放」原因
+        reason: dto.decision === 'PENDING' ? null : reason,
         reviewerId: user.userId,
         reviewedAt: new Date(),
       })

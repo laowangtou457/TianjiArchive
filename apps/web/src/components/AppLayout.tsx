@@ -44,6 +44,7 @@ export const MENU: MenuItem[] = [
 
   // ---------------------------------------------------------------- 档案收集
   { key: 'catalog', label: '档案著录', path: '/catalog', icon: '▥', section: 'collection', domains: ['VOLUME', 'ITEM'] },
+  { key: 'staging', label: '未归文件搜集', path: '/collection/staging', icon: '⌸', section: 'collection', domains: ['ITEM'] },
   { key: 'import', label: '数据导入', path: '/import', icon: '⇩', section: 'collection', domains: ['IMPORT_EXPORT'] },
   { key: 'receive', label: '档案接收', path: '/receive', icon: '⇥', section: 'collection', domains: ['IMPORT_EXPORT'] },
   { key: 'datalink', label: '电子文件挂接', path: '/datalink', icon: '⊞', section: 'collection', domains: ['IMPORT_EXPORT'] },
@@ -55,9 +56,9 @@ export const MENU: MenuItem[] = [
   { key: 'category', label: '门类管理', path: '/category', icon: '▦', section: 'management', domains: ['PARAM'] },
   { key: 'appraisal', label: '档案鉴定', path: '/appraisal', icon: '⚖', section: 'management', domains: ['APPRAISAL'] },
   { key: 'open', label: '开放管理', path: '/open', icon: '⛨', section: 'management', domains: ['APPRAISAL'] },
-  { key: 'destroy', label: '销毁批次', path: '/destroy', icon: '✕', section: 'management', domains: ['RECYCLE'] },
+  { key: 'destroy', label: '销毁数据管理', path: '/destroy', icon: '✕', section: 'management', domains: ['RECYCLE'] },
   { key: 'recycle', label: '回收站', path: '/recycle', icon: '⌫', section: 'management', domains: ['RECYCLE'] },
-  { key: 'transfer', label: '移交管理', path: '/transfer', icon: '⇄', section: 'management', domains: ['IMPORT_EXPORT'] },
+  { key: 'transfer', label: '档案移交', path: '/transfer', icon: '⇄', section: 'management', domains: ['IMPORT_EXPORT'] },
   { key: 'erms', label: '长期保管', path: '/erms', icon: '⏳', section: 'management', domains: ['BACKUP'] },
   { key: 'stkf', label: '实体库房', path: '/stkf', icon: '▣', section: 'management', domains: ['PARAM'] },
   { key: 'auxentity', label: '辅助实体', path: '/auxentity', icon: '◫', section: 'management', domains: ['PARAM'] },
@@ -68,9 +69,11 @@ export const MENU: MenuItem[] = [
   { key: 'report', label: '统计报表', path: '/report', icon: '◔', section: 'utilization', domains: ['REPORT'] },
   { key: 'compilation', label: '编研管理', path: '/compilation', icon: '✎', section: 'utilization', domains: ['COMPILATION'] },
   { key: 'usagelog', label: '利用日志', path: '/usage-log', icon: '☰', section: 'utilization', domains: ['AUDIT_LOG'] },
+  { key: 'cdexport', label: '光盘导出', path: '/export-cd', icon: '◎', section: 'utilization', domains: ['REPORT'] },
 
   // ---------------------------------------------------------------- 系统设置
   { key: 'users', label: '用户与角色', path: '/system/users', icon: '☗', section: 'settings', domains: ['USER'] },
+  { key: 'org', label: '机构管理', path: '/system/org', icon: '⌂', section: 'settings', domains: ['PARAM'] },
   { key: 'workflow', label: '审批设置', path: '/workflow', icon: '⇉', section: 'settings', domains: ['APPRAISAL', 'BORROW_APPROVE'] },
   { key: 'dict', label: '数据字典', path: '/system/dict', icon: '≡', section: 'settings', domains: ['DICT'] },
   { key: 'synonyms', label: '检索同义词', path: '/system/synonyms', icon: '⇋', section: 'settings', domains: ['PARAM'] },
@@ -86,6 +89,7 @@ export const MENU: MenuItem[] = [
   { key: 'backup', label: '备份恢复', path: '/backup', icon: '⌸', section: 'security', domains: ['BACKUP'] },
   { key: 'ercheck', label: '四性检测', path: '/ercheck', icon: '✓', section: 'security', domains: ['BACKUP'] },
   { key: 'roles', label: '权限设置', path: '/system/roles', icon: '☑', section: 'security', domains: ['USER'] },
+  { key: 'patch', label: '补丁管理', path: '/system/patch', icon: '⛭', section: 'security', domains: ['BACKUP'] },
 
   // ---------------------------------------------------------------- RAG（新增能力，平级）
   { key: 'knowledge', label: '档案知识库', path: '/knowledge', icon: '✧', section: 'rag', domains: ['SEARCH', 'KB'] },

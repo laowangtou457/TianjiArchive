@@ -181,6 +181,7 @@ export const archiveApi = {
     status?: string;
     keyword?: string;
     level?: string;
+    categoryCode?: string;
   }): Promise<PageResult<ItemDto>> => api.get('/archive/items', params),
 
   /** 卷内件列表（专用端点：服务端按卷过滤 + status 筛选 + 分页，勿再用通用 listItems 传 volumeId） */
@@ -528,6 +529,18 @@ export const openApi = {
     size?: number;
   }): Promise<{ items: OpenReviewDto[]; total: number; page: number; size: number }> =>
     api.get('/open/rereview', params),
+  /** 跨批次按结论查询（未处理/条目开放/原文开放/不开放/再审查） */
+  queue: (params?: {
+    decision?: string;
+    keyword?: string;
+    page?: number;
+    size?: number;
+  }): Promise<{
+    items: Array<OpenReviewDto & { batchNo: string | null }>;
+    total: number;
+    page: number;
+    size: number;
+  }> => api.get('/open/queue', params),
 };
 
 // ---------------------------------------------------------------- 审批流（P3-C）

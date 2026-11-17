@@ -290,6 +290,8 @@ export class ArchiveService {
     year?: number;
     status?: ItemStatus;
     keyword?: string;
+    /** 门类编码（文书/照片/录音/录像…），用于「未归文件搜集」按门类分页签 */
+    categoryCode?: string;
     allowedFondsIds?: string[] | null;
     /** 传入时按密级+数据范围行级过滤（检索利用链路） */
     user?: PermissionSnapshot;
@@ -305,6 +307,7 @@ export class ArchiveService {
     if (params.fondsId) qb.andWhere('i.fondsId = :fondsId', { fondsId: params.fondsId });
     if (params.year) qb.andWhere('i.year = :year', { year: params.year });
     if (params.status) qb.andWhere('i.status = :status', { status: params.status });
+    if (params.categoryCode) qb.andWhere('i.categoryCode = :categoryCode', { categoryCode: params.categoryCode });
     if (params.keyword) {
       qb.andWhere('(i.title ILIKE :kw OR i.danghao ILIKE :kw OR i.responsible ILIKE :kw)', {
         kw: `%${params.keyword}%`,

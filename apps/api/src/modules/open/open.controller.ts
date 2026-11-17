@@ -38,8 +38,9 @@ export class CreateOpenBatchBodyDto {
 
 export class ReviewOpenBodyDto {
   @IsArray() @IsUUID('4', { each: true }) public ids!: string[];
-  @IsIn(OPEN_DECISION_VALUES.filter((d) => d !== 'PENDING'))
-  public decision!: Exclude<OpenDecision, 'PENDING'>;
+  /** PENDING 表示撤销结论（对齐泰坦「撤销开放 / 撤销不开放 / 撤销再审查」） */
+  @IsIn(OPEN_DECISION_VALUES)
+  public decision!: OpenDecision;
   @IsOptional() @IsString() @MaxLength(500) public reason?: string | null;
 }
 
@@ -155,5 +156,19 @@ export class OpenController {
     @Query() q: OpenReviewQueryDto,
   ): Promise<{ items: OpenReviewDto[]; total: number; page: number; size: number }> {
     return this.openService.rereviewQueue(q);
+  }
+
+  /** 跨批次按结论查询（未处理 / 条目开放 / 原文开放 / 不开放 / 再审查） */
+  @Get('queue')
+  @RequirePerm({ domain: 'APPRAISAL', op: 'READ', checkScope: false, objectType: 'OPEN_BATCH' })
+  public async queue(
+    @Query() q: OpenReviewQueryDto,
+  ): Promise<{
+    items: Array<OpenReviewDto & { batchNo: string | null }>;
+    total: number;
+    page: number;
+    size: number;
+  }> {
+    return this.openService.decisionQueue(q);
   }
 }

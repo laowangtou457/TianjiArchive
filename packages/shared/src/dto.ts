@@ -1108,10 +1108,10 @@ export interface CreateOpenBatchDto {
   unopenedOnly?: boolean;
 }
 
-/** 审核结论提交（批量） */
+/** 审核结论提交（批量）；decision = PENDING 表示撤销已有结论 */
 export interface ReviewOpenBatchDto {
   ids: string[];
-  decision: Exclude<OpenDecision, 'PENDING'>;
+  decision: OpenDecision;
   /** DENY / REREVIEW 建议填理由 */
   reason?: string | null;
 }

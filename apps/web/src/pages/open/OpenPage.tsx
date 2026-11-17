@@ -77,6 +77,10 @@ export function OpenPage(): ReactElement {
   const [status, setStatus] = useState('');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(0);
+  /** 开放数据页签：未处理 / 条目开放 / 原文开放 / 不开放 / 再审查（对齐泰坦） */
+  const [queueDecision, setQueueDecision] = useState<OpenDecision>('PENDING');
+  const [queueKeyword, setQueueKeyword] = useState('');
+  const [queuePage, setQueuePage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [active, setActive] = useState<OpenBatchDto | null>(null);
   const [reviewPage, setReviewPage] = useState(0);
@@ -92,13 +96,25 @@ export function OpenPage(): ReactElement {
     queryKey: ['open-batches', status, keyword, page],
     queryFn: () =>
       openApi.list({ status: status || undefined, keyword: keyword || undefined, page: page + 1, size: 20 }),
+    enabled: tab === 1,
+  });
+
+  const queueQuery = useQuery({
+    queryKey: ['open-queue', queueDecision, queueKeyword, queuePage],
+    queryFn: () =>
+      openApi.queue({
+        decision: queueDecision,
+        keyword: queueKeyword || undefined,
+        page: queuePage + 1,
+        size: 20,
+      }),
     enabled: tab === 0,
   });
 
   const rereviewQuery = useQuery({
     queryKey: ['open-rereview', page],
     queryFn: () => openApi.rereview({ page: page + 1, size: 20 }),
-    enabled: tab === 1,
+    enabled: tab === 2,
   });
 
   const reviewsQuery = useQuery({
@@ -180,6 +196,33 @@ export function OpenPage(): ReactElement {
   const rows = listQuery.data?.items ?? [];
   const reviewRows = reviewsQuery.data?.items ?? [];
 
+  /** 撤销结论：把明细退回「未处理」（对齐泰坦「撤销开放 / 撤销不开放 / 撤销再审查」） */
+  const undoMutation = useMutation({
+    mutationFn: (row: { batchId: string; id: string }) =>
+      openApi.review(row.batchId, { ids: [row.id], decision: 'PENDING' }),
+    onSuccess: () => {
+      enqueueSnackbar('已撤销结论，退回未处理', { variant: 'success' });
+      refresh();
+      void qc.invalidateQueries({ queryKey: ['open-queue'] });
+    },
+    onError: (err) =>
+      enqueueSnackbar(err instanceof ApiError ? err.message : '撤销失败', { variant: 'error' }),
+  });
+
+  /** 从逐件清单跳到所属批次的明细抽屉 */
+  const openBatchOf = async (batchId: string): Promise<void> => {
+    try {
+      const b = await openApi.detail(batchId);
+      setActive(b);
+      setTab(1);
+      setReviewPage(0);
+      setDecisionFilter('');
+      setSelected([]);
+    } catch (err) {
+      enqueueSnackbar(err instanceof ApiError ? err.message : '批次加载失败', { variant: 'error' });
+    }
+  };
+
   const submitReview = (decision: Exclude<OpenDecision, 'PENDING'>): void => {
     if (selected.length === 0) {
       enqueueSnackbar('请先勾选要审核的条目', { variant: 'warning' });
@@ -196,7 +239,7 @@ export function OpenPage(): ReactElement {
   return (
     <AppLayout title="开放管理">
       <Stack spacing={2}>
-        <Card variant="outlined" sx={{ p: 2 }}>
+        <Card variant="outlined" sx={{ p: 2, display: tab === 1 ? 'block' : 'none' }}>
           <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
             <TextField
               size="small"
@@ -236,11 +279,124 @@ export function OpenPage(): ReactElement {
         </Card>
 
         <Tabs value={tab} onChange={(_, v) => { setTab(v); setPage(0); }}>
+          <Tab label="开放数据" />
           <Tab label="开放批次" />
           <Tab label={`再审查队列${rereviewQuery.data?.total ? `（${rereviewQuery.data.total}）` : ''}`} />
         </Tabs>
 
         {tab === 0 && (
+          <Card variant="outlined">
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ p: 1.5 }}>
+              <Tabs
+                value={queueDecision}
+                onChange={(_e, v: OpenDecision) => {
+                  setQueueDecision(v);
+                  setQueuePage(0);
+                }}
+                variant="scrollable"
+                scrollButtons="auto"
+              >
+                <Tab value="PENDING" label="未处理" />
+                <Tab value="OPEN_ENTRY" label="条目开放" />
+                <Tab value="OPEN_FULLTEXT" label="原文开放" />
+                <Tab value="DENY" label="不开放" />
+                <Tab value="REREVIEW" label="再审查" />
+              </Tabs>
+              <Box sx={{ flex: 1 }} />
+              <TextField
+                size="small"
+                label="档号 / 题名"
+                value={queueKeyword}
+                onChange={(e) => {
+                  setQueueKeyword(e.target.value);
+                  setQueuePage(0);
+                }}
+                sx={{ width: 200 }}
+              />
+              <Button size="small" onClick={() => window.print()}>
+                打印
+              </Button>
+            </Stack>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell width={150}>档号</TableCell>
+                  <TableCell>题名</TableCell>
+                  <TableCell width={70}>年度</TableCell>
+                  <TableCell width={80}>密级</TableCell>
+                  <TableCell width={130}>批次</TableCell>
+                  <TableCell width={100}>结论</TableCell>
+                  <TableCell width={110}>审核人</TableCell>
+                  <TableCell width={200} align="right">
+                    操作
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {(queueQuery.data?.items ?? []).length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={8} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                      {queueQuery.isLoading
+                        ? '加载中…'
+                        : `「${OPEN_DECISION_LABELS[queueDecision]}」下暂无数据`}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {(queueQuery.data?.items ?? []).map((r) => (
+                  <TableRow key={r.id} hover>
+                    <TableCell>
+                      <ArchiveNo value={r.danghao} />
+                    </TableCell>
+                    <TableCell>{r.title}</TableCell>
+                    <TableCell>{r.year ?? '—'}</TableCell>
+                    <TableCell>{SECURITY_LEVEL_LABELS[r.securityLevel]}</TableCell>
+                    <TableCell>{r.batchNo ?? '—'}</TableCell>
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        label={OPEN_DECISION_LABELS[r.decision]}
+                        color={DECISION_COLOR[r.decision]}
+                      />
+                    </TableCell>
+                    <TableCell>{r.reviewerName ?? '—'}</TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                      <Button
+                        size="small"
+                        disabled={!r.itemId}
+                        onClick={() => window.open(`/items/${r.itemId}`, '_blank')}
+                      >
+                        查看
+                      </Button>
+                      <Button size="small" onClick={() => void openBatchOf(r.batchId)}>
+                        开放设置
+                      </Button>
+                      {r.decision !== 'PENDING' && (
+                        <Button
+                          size="small"
+                          color="warning"
+                          onClick={() => undoMutation.mutate({ batchId: r.batchId, id: r.id })}
+                        >
+                          撤销
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <TablePagination
+              component="div"
+              count={queueQuery.data?.total ?? 0}
+              page={queuePage}
+              onPageChange={(_e, p) => setQueuePage(p)}
+              rowsPerPage={20}
+              rowsPerPageOptions={[20]}
+              labelRowsPerPage="每页"
+            />
+          </Card>
+        )}
+
+        {tab === 1 && (
           <Card variant="outlined">
             <Table size="small">
               <TableHead>
@@ -349,7 +505,7 @@ export function OpenPage(): ReactElement {
           </Card>
         )}
 
-        {tab === 1 && (
+        {tab === 2 && (
           <Card variant="outlined">
             <Alert severity="info" sx={{ m: 2 }}>
               再审查件不改变任何开放标识（仍是控制使用）。补足依据后请**新建批次**重审，

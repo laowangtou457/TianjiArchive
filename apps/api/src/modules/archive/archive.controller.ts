@@ -410,6 +410,7 @@ export class ArchiveController {
     @Query('status') status?: ItemStatus,
     @Query('keyword') keyword?: string,
     @Query('volumeId') volumeId?: string,
+    @Query('categoryCode') categoryCode?: string,
     @CurrentUser('fondsIds') fondsIds?: string[] | null,
   ): Promise<PageResult<ItemDto>> {
     return this.service.listItems({
@@ -419,6 +420,7 @@ export class ArchiveController {
       year: year ? Number.parseInt(year, 10) : undefined,
       status,
       keyword,
+      categoryCode,
       // ⚠️ volumeId 必须透传：之前 controller 不接收该参数，前端传了也被丢弃，
       // 导致所有案卷的「卷内文件」都显示同一批（全库）条目。
       volumeId,

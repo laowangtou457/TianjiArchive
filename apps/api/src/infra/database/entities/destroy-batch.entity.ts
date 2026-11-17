@@ -1,7 +1,7 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-/** 销毁批次状态：待审核 → 已审核 → 已销毁 */
-export type DestroyBatchStatus = 'PENDING' | 'APPROVED' | 'DESTROYED';
+/** 销毁批次状态：待审核 → 已审核 → 已销毁（可整批还原 → 已还原） */
+export type DestroyBatchStatus = 'PENDING' | 'APPROVED' | 'DESTROYED' | 'RESTORED';
 
 /**
  * 销毁批次 P5（建立批次 → 审核 → 执行销毁）。

@@ -261,6 +261,7 @@ describe('DestroyService（销毁批次）', () => {
   let batchRepo: Record<string, unknown>;
   let entryRepo: Record<string, unknown>;
   let itemRepo: Record<string, unknown>;
+  let recycleRepo: Record<string, unknown>;
   let archiveService: { softDeleteItem: ReturnType<typeof vi.fn> };
   let service: DestroyService;
 
@@ -268,11 +269,14 @@ describe('DestroyService（销毁批次）', () => {
     batchRepo = mockRepo();
     entryRepo = mockRepo();
     itemRepo = mockRepo();
+    // 新增 RecycleBin 仓储（还原链路），构造参数位置必须与 Service 一致
+    recycleRepo = mockRepo();
     archiveService = { softDeleteItem: vi.fn().mockResolvedValue({ deleted: true }) };
     service = new DestroyService(
       batchRepo as never,
       entryRepo as never,
       itemRepo as never,
+      recycleRepo as never,
       archiveService as never,
     );
   });

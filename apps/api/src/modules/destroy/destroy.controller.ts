@@ -1,11 +1,13 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ArrayNotEmpty, IsArray, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Audit, CurrentUser, RequirePerm } from '../../common/decorators/require-perm.decorator';
 import {
   DestroyService,
   type DestroyBatchDto,
+  type DestroyCandidateDto,
   type DestroyEntryDto,
   type DestroyExecuteResult,
+  type DestroyRestoreResult,
 } from './destroy.service';
 
 /** 建立销毁批次请求体 */
@@ -80,5 +82,31 @@ export class DestroyController {
   @RequirePerm({ domain: 'RECYCLE', op: 'READ', checkScope: false, objectType: 'DESTROY_BATCH' })
   public async entries(@Param('id') id: string): Promise<DestroyEntryDto[]> {
     return this.service.entries(id);
+  }
+
+  /**
+   * 待销毁候选（自动补全）。
+   * ⚠️ 必须声明在 batches/:id 之前，避免 'candidates' 被 :id 吞掉。
+   */
+  @Get('candidates')
+  @RequirePerm({ domain: 'RECYCLE', op: 'READ', checkScope: false, objectType: 'ITEM' })
+  public async candidates(
+    @Query('keyword') keyword?: string,
+    @Query('size') size?: string,
+    @CurrentUser('fondsIds') fondsIds?: string[] | null,
+  ): Promise<DestroyCandidateDto[]> {
+    return this.service.candidates(
+      keyword,
+      fondsIds ?? null,
+      Number.parseInt(size ?? '20', 10) || 20,
+    );
+  }
+
+  /** 还原整批已销毁数据（对齐泰坦「销毁数据管理 → 还原」） */
+  @Post('batches/:id/restore')
+  @RequirePerm({ domain: 'RECYCLE', op: 'WRITE', checkScope: false, objectType: 'DESTROY_BATCH' })
+  @Audit({ action: 'UPDATE', objectType: 'DESTROY_BATCH', objectIdPath: 'params.id', mandatory: true })
+  public async restore(@Param('id') id: string): Promise<DestroyRestoreResult> {
+    return this.service.restoreBatch(id);
   }
 }

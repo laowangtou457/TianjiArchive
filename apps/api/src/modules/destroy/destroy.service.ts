@@ -9,6 +9,7 @@ import {
 } from '../../infra/database/entities/destroy-batch.entity';
 import { DestroyEntry } from '../../infra/database/entities/destroy-entry.entity';
 import { ArchiveItem } from '../../infra/database/entities/archive-item.entity';
+import { RecycleBin } from '../../infra/database/entities/recycle-bin.entity';
 
 /** 销毁批次 DTO */
 export interface DestroyBatchDto {
@@ -46,6 +47,24 @@ export interface DestroyExecuteResult {
   failed: number;
 }
 
+/** 待销毁候选（供前端自动补全） */
+export interface DestroyCandidateDto {
+  id: string;
+  danghao: string;
+  title: string;
+  year: number;
+  retention: string;
+  securityLevel: string;
+  fondsId: string;
+}
+
+/** 还原结果 */
+export interface DestroyRestoreResult {
+  restored: number;
+  failed: number;
+  batch: DestroyBatchDto;
+}
+
 /**
  * 销毁批次服务 P5（RECYCLE 域）。
  * 建立 → 审核 → 执行；执行调用 ArchiveService.softDeleteItem 完成软删除 + 回收站留痕。
@@ -61,6 +80,8 @@ export class DestroyService {
     private readonly entryRepo: Repository<DestroyEntry>,
     @InjectRepository(ArchiveItem)
     private readonly itemRepo: Repository<ArchiveItem>,
+    @InjectRepository(RecycleBin)
+    private readonly recycleRepo: Repository<RecycleBin>,
     private readonly archiveService: ArchiveService,
   ) {}
 
@@ -182,6 +203,83 @@ export class DestroyService {
     await this.mustBatch(id);
     const rows = await this.entryRepo.find({ where: { batchId: id }, order: { createdAt: 'ASC' } });
     return rows.map((r) => this.toEntryDto(r));
+  }
+
+  /**
+   * 待销毁候选检索（供前端自动补全）。
+   * 只返回未删除、已归档的条目——草稿/待审核件不该出现在销毁清单里。
+   */
+  public async candidates(
+    keyword: string | undefined,
+    allowedFondsIds: string[] | null,
+    size = 20,
+  ): Promise<DestroyCandidateDto[]> {
+    const qb = this.itemRepo
+      .createQueryBuilder('i')
+      .where('i.deleted = FALSE')
+      .andWhere(`i.status = 'ARCHIVED'`);
+    if (keyword && keyword.trim()) {
+      qb.andWhere('(i.danghao ILIKE :kw OR i.title ILIKE :kw OR i.responsible ILIKE :kw)', {
+        kw: `%${keyword.trim()}%`,
+      });
+    }
+    if (allowedFondsIds !== null) {
+      if (allowedFondsIds.length === 0) return [];
+      qb.andWhere('i.fondsId IN (:...fonds)', { fonds: allowedFondsIds });
+    }
+    const rows = await qb
+      .orderBy('i.danghao', 'ASC')
+      .take(Math.min(50, Math.max(1, size)))
+      .getMany();
+    return rows.map((r) => ({
+      id: r.id,
+      danghao: r.danghao,
+      title: r.title,
+      year: r.year,
+      retention: r.retention,
+      securityLevel: r.securityLevel,
+      fondsId: r.fondsId,
+    }));
+  }
+
+  /** 还原已销毁批次：把批次内条目从回收站恢复，并解除回收站记录 */
+  public async restoreBatch(batchId: string): Promise<DestroyRestoreResult> {
+    const batch = await this.mustBatch(batchId);
+    if (batch.status !== 'DESTROYED') {
+      throw new BizException(ErrorCode.CONFLICT, '只有「已销毁」的批次可以还原');
+    }
+    const entries = await this.entryRepo.find({ where: { batchId } });
+    let restored = 0;
+    let failed = 0;
+    for (const entry of entries) {
+      if (!entry.itemId) {
+        failed += 1;
+        continue;
+      }
+      const item = await this.itemRepo.findOne({ where: { id: entry.itemId } });
+      const rec = await this.recycleRepo.findOne({ where: { objectId: entry.itemId } });
+      if (!item || !rec || rec.purgeAfter.getTime() <= Date.now()) {
+        failed += 1;
+        continue;
+      }
+      const conflict = await this.itemRepo.count({
+        where: { danghao: entry.danghao, deleted: false },
+      });
+      if (conflict > 0) {
+        failed += 1;
+        continue;
+      }
+      await this.itemRepo.update({ id: entry.itemId }, { deleted: false });
+      if (item.volumeId) {
+        await this.itemRepo.manager.increment('volume', { id: item.volumeId }, 'item_count', 1);
+      }
+      await this.recycleRepo.delete({ id: rec.id });
+      await this.entryRepo.update({ id: entry.id }, { result: 'RESTORED' });
+      restored += 1;
+    }
+    await this.batchRepo.update({ id: batchId }, { status: 'RESTORED', updatedAt: new Date() });
+    this.logger.log(`销毁批次 ${batch.batchNo} 还原：成功 ${restored}，失败 ${failed}`);
+    return { restored, failed, batch: this.toBatchDto(await this.mustBatch(batchId)) };
   }
 
   private async mustBatch(id: string): Promise<DestroyBatch> {
